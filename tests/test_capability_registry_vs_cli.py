@@ -1,6 +1,6 @@
 """The capability registry against the CLI people actually type (v3 stage 2, tasks 8 and 9).
 
-Stage 2 declares all 139 capabilities in `rig_workbench/registry/`, and stage 2 changes no
+Stage 2 declares every capability in `rig_workbench/registry/`, and stage 2 changes no
 execution. `rig-wb` still dispatches through the three hand-written registration mechanisms
 `docs/v3-architecture-design-brief.ja.md` §2 counts — an if/elif chain in
 `rig_workbench/cli.py`, ~51 `add_parser` calls in `rig_workbench/workbench/cli.py`, a
@@ -49,32 +49,38 @@ two-word paths are real; if it runs, the one-word path is real too and is kept a
 Today exactly one verb in the whole surface is shaped that way, and it refuses.
 
 *The top level* — from source, not from help, and that difference is task 9's subject.
-`rig-wb --help` lists 24 verbs while 39 are dispatchable, so help cannot be the reader here.
+`rig-wb --help` lists 24 verbs while 37 are dispatchable, so help cannot be the reader here.
 `main()` in `rig_workbench/cli.py` is parsed with `ast`: every `sub == "<verb>"` branch plus
 every member of the `_orch_delegates` set it falls through to. `--version` is dropped, being a
 flag spelling of `version` rather than a verb of its own.
 
 ## The known gap this file freezes (task 9)
 
-Fifteen top-level verbs are dispatchable and appear in neither `rig-wb --help` nor the frozen
-contract in tests/test_cli_surface_contract.py. They are written out as literals below and
-asserted to be *exactly* that set.
+Thirteen top-level verbs are dispatchable and appear in neither `rig-wb --help` nor the
+frozen contract in tests/test_cli_surface_contract.py. They are written out as literals below
+and asserted to be *exactly* that set.
 
-Reducing that number to zero is a stage-3 decision — either the fifteen join the help text, or
-the ones nobody wants are removed from the dispatcher — and it is not made here. Until it is
-made, this test exists so the number cannot drift unnoticed: a sixteenth undocumented verb, or
-one of these fifteen quietly disappearing, fails rather than passes silently.
+Reducing that number to zero is a stage-3 decision — either the thirteen join the help text,
+or the ones nobody wants are removed from the dispatcher — and it is not made here. Until it
+is made, this test exists so the number cannot drift unnoticed: a fourteenth undocumented
+verb, or one of these thirteen quietly disappearing, fails rather than passes silently.
 
-Two of the fifteen are worse than undocumented. `list` and `review` sit in `_orch_delegates`
-but were never added to orchestrate's `COMMANDS`, so `rig-wb list` prints the orchestrator's
-module docstring and exits 1 — a verb the dispatcher accepts and nothing implements. That is
-asserted here from both ends, statically and by running them, so that a dead verb starting to
-work and a live one dying both fail this file.
+They were fifteen. Two of them, `list` and `review`, were worse than undocumented: both sat
+in `_orch_delegates` and neither was ever added to orchestrate's `COMMANDS`, so `rig-wb list`
+printed the orchestrator's module docstring and exited 1 — a verb the dispatcher accepted and
+nothing implemented. Stage 3 took that decision in the removal direction, so the two names are
+gone from `_orch_delegates` and from the registry, and the tests that pinned their dead
+behaviour went with them: there is no longer a behaviour to pin. What now catches the shape
+of that bug is
+`test_every_verb_delegated_to_the_orchestrator_is_a_command_the_orchestrator_registers`, which
+demands the delegate set carry no name `COMMANDS` lacks — so a third dead verb fails here
+rather than being frozen as a known gap. `rig-wb wb review` is a different verb under a
+different parent (it records a per-persona verdict) and was never in question.
 
 One more disagreement is recorded rather than asserted away: `validate` is in
 `_orch_delegates` and in no `COMMANDS` dict, but `main()` answers `sub == "validate"` in an
-earlier branch, so the delegate entry is unreachable rather than dead. It is subtracted where
-the dead verbs are counted, with the reason written at the subtraction.
+earlier branch, so the delegate entry is unreachable rather than dead. It is excepted by name
+where the delegates are checked, with the reason written at the exception.
 """
 
 from __future__ import annotations
@@ -109,16 +115,25 @@ SUBPROCESS_TIMEOUT = max(
 # nesting", at the group level and one level further down, and it is the only thing read.
 SUBPARSER_CHOICES = re.compile(r"\{([^{}]+)\}\s+\.\.\.")
 
-# The fifteen of task 9. Dispatchable, documented nowhere. See the module docstring: this is
-# a recorded gap awaiting a stage-3 decision, not an approval of the gap.
+# The thirteen of task 9. Dispatchable, documented nowhere. See the module docstring: this is
+# a recorded gap awaiting a stage-3 decision, not an approval of the gap. It was fifteen until
+# `list` and `review` left the dispatcher.
 TOP_LEVEL_VERBS_MISSING_FROM_HELP = frozenset({
     "approve", "bench-invariance", "check", "fleet", "graph", "init", "install-shim",
-    "list", "models", "next", "otel", "perf", "probe", "review", "verdict",
+    "models", "next", "otel", "perf", "probe", "verdict",
 })
 
-# Delegated to orchestrate by `rig_workbench/cli.py` and absent from orchestrate's own
-# `COMMANDS`, so the dispatcher accepts them and nothing implements them.
-DELEGATED_VERBS_ORCHESTRATE_NEVER_REGISTERED = frozenset({"list", "review"})
+# `validate` is delegated to orchestrate and orchestrate has no command by that name, but
+# `main()` answers `sub == "validate"` in a branch several lines before the delegation and
+# hands it to `scripts/validate.py`. So the delegate entry is unreachable rather than dead,
+# and it is the one name the check below excepts — by name and with the reason, not by a
+# blanket subtraction of every branched verb, because a branch is what makes this one
+# harmless and a future dead delegate may well have no branch at all.
+DELEGATE_UNREACHABLE_BECAUSE_A_BRANCH_ANSWERS_FIRST = frozenset({"validate"})
+
+# Removed from `_orch_delegates` rather than implemented, because each reached no handler.
+# Kept here so the refusal a person now meets is pinned, not merely assumed.
+_REMOVED_TOP_LEVEL_VERBS = frozenset({"list", "review"})
 
 
 # ── reading the CLI, through the real process ────────────────────────────────
@@ -327,15 +342,17 @@ def _orch_delegates() -> frozenset[str]:
 def _branched_top_level_verbs() -> frozenset[str]:
     """Verbs `main()` handles in a branch of its own, read out of `main()`.
 
-    Source rather than `--help`, because the two disagree by fifteen verbs and help is the
-    side that is wrong (task 9). `main()` is a chain of `if sub == "<verb>"` branches ending
-    in `if sub in _orch_delegates`; this is the first shape. `--version` is dropped: it is
-    the flag spelling of `version`, handled in the same branch, not a verb of its own.
+    Source rather than `--help`, because the two disagree by every verb in
+    TOP_LEVEL_VERBS_MISSING_FROM_HELP and help is the side that is wrong (task 9). `main()`
+    is a chain of `if sub == "<verb>"` branches ending in `if sub in _orch_delegates`; this
+    is the first shape. `--version` is dropped: it is the flag spelling of `version`,
+    handled in the same branch, not a verb of its own.
 
     Kept apart from the delegated set because the order of the chain matters. A verb in both
     is served by its branch and never reaches the orchestrator — `validate` is exactly that
-    today, which is why it is not counted among the dead verbs further down even though
-    orchestrate has no `validate` command either.
+    today, which is why it is the one name in
+    DELEGATE_UNREACHABLE_BECAUSE_A_BRANCH_ANSWERS_FIRST even though orchestrate has no
+    `validate` command either.
     """
     tree = ast.parse(TOP_LEVEL_CLI_SOURCE.read_text(encoding="utf-8"))
     main = next(
@@ -437,8 +454,9 @@ def test_the_verbs_the_top_level_dispatcher_accepts_are_exactly_the_ones_the_reg
 ):
     """The top level, read from the dispatcher's source rather than from its help.
 
-    `rig-wb --help` is fifteen verbs short of what `main()` accepts, so comparing the
-    registry against help would fail for a reason that is nothing to do with drift. What the
+    `rig-wb --help` is short of what `main()` accepts by exactly
+    TOP_LEVEL_VERBS_MISSING_FROM_HELP, so comparing the registry against help would fail for
+    a reason that is nothing to do with drift. What the
     registry claims to describe is what a person can *run*, so what a person can run is what
     it is compared against; the shortfall in help is task 9's own test below.
     """
@@ -474,15 +492,17 @@ def test_pack_source_is_read_as_three_two_word_verbs_because_its_sub_subparser_i
     )
 
 
-# ── task 9: the fifteen verbs no help text mentions ──────────────────────────
+# ── task 9: the thirteen verbs no help text mentions ─────────────────────────
 
-def test_exactly_fifteen_dispatchable_top_level_verbs_are_missing_from_the_help_text(rig_wb):
-    """The known gap, frozen at fifteen so it cannot grow or shrink unnoticed.
+def test_exactly_thirteen_dispatchable_top_level_verbs_are_missing_from_the_help_text(rig_wb):
+    """The known gap, frozen at thirteen so it cannot grow or shrink unnoticed.
 
     Reducing this to zero is a stage-3 decision — put them in the help text, or take the
     unwanted ones out of the dispatcher — and this test does not make it. It makes the number
     impossible to change by accident: a new verb wired into `main()` without a help entry
-    turns this red, and so does one of the fifteen vanishing.
+    turns this red, and so does one of the thirteen vanishing. It went fifteen to thirteen
+    when `list` and `review` were removed from the dispatcher, which is the stage-3 decision
+    taken for those two.
     """
     result = rig_wb("--help")
     assert result.returncode == 0, result.stderr
@@ -513,66 +533,90 @@ def test_exactly_fifteen_dispatchable_top_level_verbs_are_missing_from_the_help_
     )
 
 
-def test_the_two_delegated_verbs_orchestrate_never_registered_are_still_exactly_list_and_review(
+def test_every_verb_delegated_to_the_orchestrator_is_a_command_the_orchestrator_registers(
 ):
-    """`rig-wb list` and `rig-wb review` are accepted by the dispatcher and implemented by
-    nobody.
+    """No name in `_orch_delegates` may be missing from orchestrate's `COMMANDS`.
 
-    Read statically from both ends — `_orch_delegates` in `rig_workbench/cli.py` against
-    `COMMANDS` in `rig_workbench/orchestrate/cli.py` — so this catches the gap growing as
-    well as it catches the gap closing. A live verb dropping out of `COMMANDS` shows up here
-    as a third dead verb, which is the failure worth having.
+    `list` and `review` used to be exactly that — accepted by the dispatcher, implemented by
+    nobody, answering with ninety lines of orchestrate's module docstring and exit 1 — and
+    this file froze the pair as a known gap. They were removed instead, so the assertion
+    turns around: the set is now empty and is required to stay empty, which catches a third
+    verb falling into the same hole on the commit that digs it rather than a stage later.
 
-    `validate` is subtracted rather than counted: it is listed in `_orch_delegates` and
-    orchestrate has no command by that name either, but `main()` answers `sub == "validate"`
-    in a branch several lines earlier and hands it to `scripts/validate.py`, so the delegate
-    entry is unreachable rather than broken. Recorded here rather than asserted away, because
-    an unreachable entry is a real (if harmless) piece of drift inside the dispatcher.
+    Read statically from both ends — the `_orch_delegates` set literal in
+    `rig_workbench/cli.py` against the `COMMANDS` dict literal in
+    `rig_workbench/orchestrate/cli.py` — so a name can be caught before anyone runs it.
+
+    `validate` is excepted by name: it is in `_orch_delegates`, orchestrate has no command by
+    that name either, but `main()` answers `sub == "validate"` in a branch several lines
+    earlier and hands it to `scripts/validate.py`. The delegate entry is unreachable rather
+    than broken. The exception is one named verb rather than "any verb with a branch", so a
+    future dead delegate that happens to share a branch cannot slip through with it.
     """
     delegated = _orch_delegates()
     implemented = _dict_keys_literal(
         ast.parse(ORCHESTRATE_CLI_SOURCE.read_text(encoding="utf-8")), "COMMANDS")
-    dead = delegated - implemented - _branched_top_level_verbs()
-    assert dead == DELEGATED_VERBS_ORCHESTRATE_NEVER_REGISTERED, (
-        "the set of top-level verbs delegated to the orchestrator with nothing behind them "
-        "has changed.\n"
-        f"  now implemented (good — drop them from the literal): "
-        f"{sorted(DELEGATED_VERBS_ORCHESTRATE_NEVER_REGISTERED - dead)}\n"
-        f"  newly dead (a verb was removed from orchestrate's COMMANDS but is still "
-        f"delegated to it): {sorted(dead - DELEGATED_VERBS_ORCHESTRATE_NEVER_REGISTERED)}\n"
-        "  Every one of these is a verb `rig-wb` accepts and then answers with a module "
-        "docstring and exit 1."
+    dead = delegated - implemented - DELEGATE_UNREACHABLE_BECAUSE_A_BRANCH_ANSWERS_FIRST
+    assert dead == frozenset(), (
+        "these top-level verbs are delegated to the orchestrator with nothing behind them: "
+        f"{sorted(dead)}.\n"
+        "  `rig-wb <verb>` accepts each one, falls through to orchestrate, matches no command "
+        "and answers with that module's docstring and exit 1 — no mention of the word the "
+        "person typed. Either register the name in orchestrate's COMMANDS or take it out of "
+        "`_orch_delegates` (and out of rig_workbench/registry/entries_cli.py with it), which "
+        "is what was done to `list` and `review`."
     )
-    assert dead <= _dispatched_top_level_verbs()
+    assert DELEGATE_UNREACHABLE_BECAUSE_A_BRANCH_ANSWERS_FIRST <= _branched_top_level_verbs(), (
+        "`validate` is excepted above because a `sub == \"validate\"` branch answers before "
+        "the delegation is reached. That branch is gone, so the exception now hides a dead "
+        "verb rather than recording a harmless one."
+    )
 
 
-@pytest.mark.parametrize("verb", sorted(DELEGATED_VERBS_ORCHESTRATE_NEVER_REGISTERED))
-def test_a_delegated_verb_with_no_command_behind_it_prints_the_module_docstring_and_exits_one(
+@pytest.mark.parametrize("verb", sorted(_REMOVED_TOP_LEVEL_VERBS))
+def test_a_verb_removed_from_the_dispatcher_is_refused_by_name_instead_of_half_answered(
         verb, rig_wb):
-    """The static gap above, confirmed by running it — the behaviour a user actually meets.
+    """`rig-wb list` and `rig-wb review` now say what happened, in one line, on stderr.
 
-    Pinned as what happens, not as what should happen. `orchestrate.cli.main()` falls through
-    to `print(__doc__); sys.exit(1)` for any argv it does not recognise, so the person who
-    typed `rig-wb list` gets ninety lines of orchestrator usage and a failure, with no
-    mention of the word they typed. If either of these verbs is implemented, or removed from
-    `_orch_delegates`, this fails and the decision gets recorded in the diff.
+    The old behaviour is what this replaces and is worth naming: exit 1, ninety lines of
+    orchestrate's module docstring on stdout, nothing on stderr, and no mention of the word
+    typed. What a person meets now is `main()`'s unknown-sub-command path — exit 2, the verb
+    quoted back, and a pointer to `--help`. Pinned so that re-adding either name to
+    `_orch_delegates` without a command behind it fails here.
+
+    `rig-wb wb review` is untouched and is checked alongside, because it is the live verb
+    these two are easiest to confuse with: removing a top-level name must not reach it.
     """
     result = rig_wb(verb)
-    assert result.returncode == 1, (
-        f"`rig-wb {verb}` exited {result.returncode}, not 1. It is delegated to the "
-        "orchestrator, which has no command by that name, so it should still be falling "
-        f"through to the docstring.\n--- stdout ---\n{result.stdout[:400]}"
-        f"\n--- stderr ---\n{result.stderr}"
+    assert result.returncode == 2, (
+        f"`rig-wb {verb}` exited {result.returncode}, not 2. It was removed from the "
+        "dispatcher, so it should be refused as an unknown sub-command.\n"
+        f"--- stdout ---\n{result.stdout[:400]}\n--- stderr ---\n{result.stderr}"
     )
-    assert "rig computational orchestrator" in result.stdout, (
-        f"`rig-wb {verb}` no longer answers with orchestrate's module docstring. If the verb "
-        "gained an implementation, remove it from "
-        "DELEGATED_VERBS_ORCHESTRATE_NEVER_REGISTERED and from "
-        f"TOP_LEVEL_VERBS_MISSING_FROM_HELP if it is documented now.\n--- stdout ---\n"
-        f"{result.stdout[:400]}"
+    assert f"Unknown sub-command: {verb!r}" in result.stderr, result.stderr
+    assert not result.stdout.strip(), (
+        f"`rig-wb {verb}` writes to stdout. Measured, it writes nothing at all: the whole "
+        "answer is the two stderr lines above. The failure this guards against is the verb "
+        "reaching the orchestrator again and dumping its module docstring, but the "
+        "assertion is emptiness rather than the absence of that one string — a refusal "
+        f"should not print a page of anything.\n--- stdout ---\n{result.stdout[:400]}"
     )
-    assert not result.stderr.strip(), (
-        f"`rig-wb {verb}` now says something on stderr. Today it fails silently there — the "
-        "whole answer is a docstring on stdout with no line naming the verb the person typed "
-        f"— so a diagnostic appearing is a change worth recording.\n{result.stderr}"
+
+
+def test_the_workbench_review_verb_is_untouched_by_the_top_level_removal(rig_wb):
+    """`rig-wb wb review` records a per-persona verdict and is a different verb.
+
+    Two verbs spelled `review` existed: a top-level delegate that reached no handler, and
+    this one, under `wb`, which `scripts/workbench.py` implements and which the engine's
+    flows call. Only the first was removed. This runs the second to say so.
+    """
+    result = rig_wb("wb", "review", "--help")
+    assert result.returncode == 0, result.stderr
+    assert "--set" in result.stdout, (
+        "`rig-wb wb review --help` no longer shows its `--set PERSONA=VERDICT` flag; the "
+        f"live workbench verb has been disturbed.\n--- stdout ---\n{result.stdout}"
+    )
+    assert "review" in _registry_verbs("wb"), (
+        "the registry no longer declares `wb review`; the top-level removal reached the "
+        "wrong entry."
     )

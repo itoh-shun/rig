@@ -248,13 +248,18 @@ _orch_delegates = {
     "verdict",
     "queue",
     "selftest",
-    "list",
     "validate",
     "graph",
     "models",
     "probe",
     "install-shim",
-    "review",
+    # `list` and `review` stood here for as long as this set has existed, and orchestrate's
+    # `COMMANDS` never had either name. So `rig-wb list` was accepted, fell through to the
+    # orchestrator, matched nothing, and answered with ninety lines of that module's
+    # docstring and exit 1 — no listing, and not one word about the verb that was typed.
+    # They are gone rather than implemented: nobody asked for what they promised, and the
+    # registry entries behind them said as much in their own `intent`. `rig-wb wb review`
+    # (record a per-persona verdict) is a different command and is untouched.
     # #501 and #502 shipped in 2.8.0 and the READMEs document them as `rig-wb otel` and
     # `rig-wb perf` — twelve times for perf, including a line meant to be pasted into CI.
     # Neither was on this list, so every one of those invocations answered "Unknown

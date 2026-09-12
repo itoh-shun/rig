@@ -99,10 +99,24 @@ class TestContainer:
     """The table exists, is populated, and is a tuple — stage 2 declares, it does not wire."""
 
     def test_every_dispatchable_verb_is_declared_once(self):
-        # 137: 39 top-level, 51 under wb, and 47 under the five other groups. The number is
+        # 135 = 37 top-level + 51 under wb + 47 across the five other groups. The number is
         # written out because a capability appearing or vanishing is a change to the command
         # surface, and this is the table the other surfaces are meant to be projections of.
-        assert len(CAPABILITIES) == 137
+        # It was 137 = 39 + 51 + 47 until `list` and `review` — dispatched at the top level
+        # and implemented by nobody — were taken out of `rig_workbench/cli.py`'s
+        # `_orch_delegates` and out of this table with them.
+        top_level = sum(1 for c in CAPABILITIES if c.parent is None)
+        under_wb = sum(1 for c in CAPABILITIES if c.parent == "wb")
+        assert len(CAPABILITIES) == 135, (
+            f"the capability table holds {len(CAPABILITIES)} entries, not 135.\n"
+            f"  declared: {top_level} top-level + {under_wb} under `wb` + "
+            f"{len(CAPABILITIES) - top_level - under_wb} across govern/pack/eval/baseline/"
+            "githooks\n"
+            "  expected: 37 + 51 + 47\n"
+            "  The term that moved says where to look. Edit the number here only once the "
+            "change to the command surface is the one that was meant — this table is what "
+            "every other surface is supposed to be a projection of."
+        )
         assert len({c.id for c in CAPABILITIES}) == len(CAPABILITIES), "duplicate id"
         assert len({c.command_path for c in CAPABILITIES}) == len(CAPABILITIES), "duplicate path"
 
@@ -460,7 +474,7 @@ class TestTwoAxes:
         """Omitting it would be a claim — "nothing leaves the machine" — made by silence.
 
         Same reason `preconditions` refuses to be empty: this table has to keep "checked,
-        and the answer is no" apart from "nobody filled this in", and 137 entries are about
+        and the answer is no" apart from "nobody filled this in", and 135 entries are about
         to be written by people who will occasionally not know.
         """
         fields = {
@@ -655,7 +669,7 @@ JAPANESE = re.compile(r"[぀-ヿ㐀-鿿！-｠　-〿]")
 #: alone — which is the same answer, applied to divergence in content rather than in script.
 #: It is swept for Japanese here exactly as `Flag.help` is, because `parser.py` prints it;
 #: `intent` stays in the sweep too, since it is still what prints wherever no summary is
-#: written (127 of the 137 capabilities today).
+#: written (125 of the 135 capabilities today).
 AUDIENCE = {
     ("Capability", "intent"): "the conversation and the shipped CLI",
     ("Capability", "summary"): "the shipped CLI, where `intent` is not the line it wants",

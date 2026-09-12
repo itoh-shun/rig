@@ -3,26 +3,27 @@
 `rig_workbench/cli.py:main` reaches these two ways and nothing else: an explicit
 `if sub == "..."` branch (twenty of them, `version` through `validate`), and membership of
 `_orch_delegates`, a set handed straight to `rig_workbench/orchestrate/cli.py`'s `COMMANDS`
-(twenty names, of which `validate` is also an explicit branch and the explicit branch wins,
-so nineteen of them are only reachable that way). Twenty plus nineteen is the thirty-nine
+(eighteen names, of which `validate` is also an explicit branch and the explicit branch wins,
+so seventeen of them are only reachable that way). Twenty plus seventeen is the thirty-seven
 declared below, and the arithmetic is the derivation: no third path exists, and a verb that
 is in neither place prints `Unknown sub-command` and exits 2.
 
-**Fifteen of the thirty-nine are dispatchable and documented nowhere.** `rig-wb --help`
+**Thirteen of the thirty-seven are dispatchable and documented nowhere.** `rig-wb --help`
 lists twenty-four, and `tests/test_cli_surface_contract.py` freezes exactly that
-twenty-four as the surface. The other fifteen — `approve`, `bench-invariance`, `check`,
-`fleet`, `graph`, `init`, `install-shim`, `list`, `models`, `next`, `otel`, `perf`,
-`probe`, `review`, `verdict` — answer when typed and appear in no help text, no contract
-test, and no README the contract test reads. They are declared here at full weight. Whether
-each one is then added to `--help` or removed from `_orch_delegates` is a stage-3 decision;
-what this table fixes is that the decision can no longer be made by forgetting.
+twenty-four as the surface. The other thirteen — `approve`, `bench-invariance`, `check`,
+`fleet`, `graph`, `init`, `install-shim`, `models`, `next`, `otel`, `perf`, `probe`,
+`verdict` — answer when typed and appear in no help text, no contract test, and no README
+the contract test reads. They are declared here at full weight. Whether each one is then
+added to `--help` or removed from `_orch_delegates` is a stage-3 decision; what this table
+fixes is that the decision can no longer be made by forgetting.
 
-Two of the fifteen are worse than undocumented and the entries say so rather than flatter
-them: `list` and `review` are in `_orch_delegates` but not in orchestrate's `COMMANDS`, so
-they fall through to `main`'s `sys.argv[1] not in COMMANDS` branch, print the orchestrator's
-module docstring and exit 1. Measured, not inferred — `python3 -m rig_workbench.cli list`
-returns 1. An `intent` that promised a listing would put a sentence in front of a person
-just before rig did nothing.
+They were fifteen until `list` and `review` were taken out of `_orch_delegates`. Those two
+were worse than undocumented: the set had them, orchestrate's `COMMANDS` never did, so each
+fell through to `main`'s `sys.argv[1] not in COMMANDS` branch and answered with the
+orchestrator's module docstring and exit 1 — measured, not inferred. Rather than write an
+`intent` that promised a listing a moment before rig did nothing, the verbs and their two
+entries are gone. `rig-wb wb review` records a per-persona verdict and is a different verb
+under a different parent; it is untouched.
 
 Declaration only, per `model.Capability`: no handler is imported and no callable is stored.
 The `output_schema` of every entry here is `None`, which is a finding and not an oversight —
@@ -690,20 +691,6 @@ CLI_CAPABILITIES: tuple[Capability, ...] = (
         exit_codes=(_OK, ExitCode(code=1, meaning="a transition no longer matches its golden")),
     ),
     Capability(
-        id="list",
-        parent=None,
-        verb="list",
-        # Undocumented AND dead: reachable, and behind it there is nothing. The intent names
-        # the want and the fact together, because a line that promised a listing would be
-        # shown to a person a moment before rig did nothing at all.
-        intent="list what the orchestrator knows about — a name that reaches no command today",
-        preconditions=(NO_PRECONDITION,),
-        effect_line="このサブコマンドは存在しません。orchestrate の使い方を表示して終了します（何も実行されません）",
-        effect_class=READ_ONLY,
-        network=NETWORK_NEVER,
-        exit_codes=(ExitCode(code=1, meaning="the name is dispatched but no command is registered behind it"),),
-    ),
-    Capability(
         id="graph",
         parent=None,
         verb="graph",
@@ -779,18 +766,6 @@ CLI_CAPABILITIES: tuple[Capability, ...] = (
             _OK,
             ExitCode(code=1, meaning="the shim source is missing, or the target exists without --force"),
         ),
-    ),
-    Capability(
-        id="review",
-        parent=None,
-        verb="review",
-        # The second dead name, alongside `list`. See that entry.
-        intent="review something through the orchestrator — a name that reaches no command today",
-        preconditions=(NO_PRECONDITION,),
-        effect_line="このサブコマンドは存在しません。orchestrate の使い方を表示して終了します（何もレビューされません）",
-        effect_class=READ_ONLY,
-        network=NETWORK_NEVER,
-        exit_codes=(ExitCode(code=1, meaning="the name is dispatched but no command is registered behind it"),),
     ),
     Capability(
         id="otel",

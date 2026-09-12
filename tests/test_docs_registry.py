@@ -148,14 +148,60 @@ def test_the_prompt_evaluation_gate_is_documented_where_the_other_evidence_is(re
 # ── a documented command has to be a command ────────────────────────────────
 
 
+#: What a reader is told to type in `rig-wb <sub>` form.
+RIG_WB_SUBCOMMAND = re.compile(r"rig-wb\s+([a-z][a-z0-9-]*)")
+
+#: Verbs one document names in order to argue about them rather than to tell anyone to type
+#: them, keyed by the document and listed one by one.
+#:
+#: `docs/v3-architecture-design-brief.ja.md` §11 row T4 quotes `rig-wb list` and `rig-wb
+#: review` as the two verbs it proposes to delete, and its measurement table quotes them
+#: again with the exit code they returned. A reader following those lines is being shown a
+#: removal, not given an instruction — and scanning them would leave the brief unable to
+#: record a verb it wants gone without this test demanding the verb be kept.
+#:
+#: Two names, not the document. Excusing the whole file would have taken its `rig-wb check`
+#: and `rig-wb pack` mentions out of the scan too, and those are ordinary instructions with
+#: nothing wrong with them: a broad exemption written for two sentences would have stopped
+#: checking the rest of the brief for as long as it stood.
+VERBS_A_DOCUMENT_QUOTES_RATHER_THAN_PRESCRIBES = {
+    "v3-architecture-design-brief.ja.md": frozenset({"list", "review"}),
+}
+
+
 def documented_rig_wb_subcommands() -> set[str]:
     """Every `rig-wb <sub>` a reader is told to type, across the READMEs and docs/."""
     names: set[str] = set()
     sources = [README_EN, README_JA, SKILL_MD, *sorted((REPO_ROOT / "docs").glob("*.md"))]
     for path in sources:
-        names |= set(re.findall(r"rig-wb\s+([a-z][a-z0-9-]*)",
-                                path.read_text(encoding="utf-8")))
+        found = set(RIG_WB_SUBCOMMAND.findall(path.read_text(encoding="utf-8")))
+        names |= found - VERBS_A_DOCUMENT_QUOTES_RATHER_THAN_PRESCRIBES.get(
+            path.name, frozenset())
     return names
+
+
+def test_every_excused_verb_is_still_quoted_in_the_document_it_was_excused_for():
+    """An exemption has to keep matching the sentences it was written for.
+
+    Not "the file still exists": the file outlives any wording, and an exemption that
+    survives the paragraph it was granted for is a hole nobody is looking at. So each name
+    is checked to be still quoted in that document. Reword the brief so it stops naming
+    `rig-wb list`, or delete the file, and the entry dies here instead of quietly excusing a
+    verb somebody has since put back.
+    """
+    for name, verbs in VERBS_A_DOCUMENT_QUOTES_RATHER_THAN_PRESCRIBES.items():
+        path = REPO_ROOT / "docs" / name
+        assert path.is_file(), (
+            f"docs/{name} is excused from the `rig-wb <sub>` scan and does not exist. "
+            "Drop the entry: an exemption that matches no file cannot be reviewed."
+        )
+        quoted = set(RIG_WB_SUBCOMMAND.findall(path.read_text(encoding="utf-8")))
+        stale = sorted(verbs - quoted)
+        assert not stale, (
+            f"docs/{name} no longer names `rig-wb {stale}`, which it is excused for. "
+            "Drop the name from the entry: the exemption is now excusing the verb "
+            "everywhere in that file for no reason anybody can read."
+        )
 
 
 def test_every_documented_subcommand_is_one_rig_wb_will_accept():

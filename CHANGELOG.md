@@ -49,7 +49,7 @@ decided by the pack's own evidence — there is no third rung above them to reac
 ### Added
 
 **One table of what rig can do — declaration only, nothing rewired.** `rig_workbench/registry/`
-now declares all 137 dispatchable capabilities as data: 39 top-level verbs, 51 under `rig-wb wb`,
+now declares all 135 dispatchable capabilities as data: 37 top-level verbs, 51 under `rig-wb wb`,
 and 47 across `govern`, `pack`, `eval`, `baseline` and `githooks`. Each record carries what
 argparse never asked anybody to write — what the person wanted (`intent`), what a machine can
 check before running (`preconditions`), the sentence to show immediately before it runs
@@ -65,10 +65,10 @@ wiring the surfaces onto the table is the third.
 
 **Writing the surface down found things nobody had counted, and they are recorded rather than
 fixed.** Closing any of them changes behaviour, which is a stage-3 decision, so each is pinned as
-a measurement that fails if it silently changes. Fifteen of the thirty-nine top-level verbs are
-dispatchable and appear in no help text, no contract test and no README. Two of those fifteen —
-`list` and `review` — are delegated to the orchestrator and were never registered there, so they
-print the orchestrator's module docstring and exit 1. Not one top-level verb emits a frozen
+a measurement that fails if it silently changes. Thirteen of the thirty-seven top-level verbs are
+dispatchable and appear in no help text, no contract test and no README. Two more were worse than
+undocumented — `list` and `review`, delegated to the orchestrator and never registered there — and
+those two were removed rather than pinned; see Removed below. Not one top-level verb emits a frozen
 `rig.<name>/v<N>` id; all 22 capabilities that declare one are `wb` and `govern` sub-verbs. The
 stdio MCP server offers `rig_orchestrate_status`, which reaches a verb `rig-wb status` answers
 with `Unknown sub-command`. `govern` defines its own `EXIT_OK, EXIT_ERROR, EXIT_NONCONFORMANT =
@@ -318,6 +318,23 @@ code and output schema is otherwise unchanged. Each of the seven is recorded in
 `tests/test_generated_parser_equivalence.py`, which renders both parsers in one process and compares
 all eleven screens byte for byte, so the next such change has to be a decision rather than a silent
 rewrite.
+
+### Removed
+
+**`rig-wb list` and `rig-wb review` are gone; both reached no handler.** Each was in
+`rig_workbench/cli.py`'s `_orch_delegates` and in no `COMMANDS` dict, so typing either one
+fell through to `rig_workbench/orchestrate/cli.py`, matched nothing, printed ninety lines of
+that module's docstring and exited 1 — no listing, no review, and not one word naming the
+verb that was typed. They now answer `[ERROR] Unknown sub-command: 'list'` on stderr and exit
+2, which is what every other unknown word has always got. Nothing else changes: no feature
+sat behind either name, which is why the two entries written for them when the capability
+table above was first filled in said as much in their own `intent` — "a name that reaches no
+command today" — and those entries are removed with the verbs.
+
+**`rig-wb wb review` is a different verb and is untouched.** It records a per-persona verdict
+(`rig-wb wb review <task_id> --set <persona>=<verdict>`), is what `/rig review` and the
+engine's flows call, and is unaffected by the removal above — the two only ever shared a
+word. Every prose line that spelled it `rig-wb review` is corrected to the form that runs.
 
 ### Fixed
 
