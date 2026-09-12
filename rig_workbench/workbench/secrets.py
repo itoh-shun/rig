@@ -26,9 +26,13 @@ node_modules/ or .git/. It also carries two content rules, independent of path,
 each keyed on the value's OWN key rather than on a word near it: a 64/128-hex token
 whose key is a digest key (sha256 / sha512 / *_sha256 / digest / checksum / …), and a
 40-hex token whose key is either a digest key or a git-id key (commit / blob / tree /
-object_id / oid) — 40 hex being a sha1 and a git object id alike. The named patterns
-still run in every case (a real token is a leak wherever it sits); only the entropy
-heuristic is silenced.
+object_id / oid) — 40 hex being a sha1 and a git object id alike. An unquoted
+`key=value` is split back into the two before those rules run, since `=` is in the
+token charset and would otherwise merge `api_key=<40 hex>` into one mixed-charset blob
+that is neither hex nor entropic enough to report; the merged token keeps its own
+score, so the split only ever adds a reason to report. The named patterns still run in
+every case (a real token is a leak wherever it sits); only the entropy heuristic is
+silenced.
 
 CLI: `workbench.py scan-secrets [paths...]` scans files/trees;
 `scan-secrets --diff <task-id>` scans only the task worktree's diff vs its
@@ -75,6 +79,19 @@ HEX_RE = re.compile(r"[0-9a-fA-F]{32,}")
 BASE64_ENTROPY_THRESHOLD = 4.5  # bits/char over the base64 charset
 HEX_ENTROPY_THRESHOLD = 3.0     # bits/char over the hex charset
 MIN_TOKEN_LEN = 32
+
+# `=` is in the token charset (it is base64's padding), so an unquoted `.env` line
+# arrives as ONE token: `api_key=<40 hex>` is 48 characters of mixed charset, which
+# fails HEX_RE.fullmatch and is then measured against the base64 threshold it cannot
+# reach — the key's own letters are what drag the entropy down. A 40-hex credential
+# written the way credentials are actually written was the one shape the detector
+# could not see. This splits such a token back into the key and the value it labels.
+#
+# The `:` form needs no branch here: `:` is NOT in the token charset, so `sha256:<hex>`
+# already arrives as a bare value with its key left on the line, which is exactly what
+# the label rules read. Only `=` merges the two.
+_KEY_VALUE_SEPARATOR = "="
+_IDENTIFIER_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 # Entropy-detector allowlist: lockfile hashes / vendored trees are high-entropy
 # by construction and never secrets. Named patterns are NOT silenced by these.
@@ -129,7 +146,8 @@ ALLOW_PATH_PREFIXES = (("evals", "evidence"),)
 # and that is what an AES-256 key, an HMAC key, a session key and a Sentry auth token
 # all look like. A `_`-joined PREFIX is allowed only before sha256/sha1/sha512/digest/
 # checksum (`body_sha256`, `source_excerpt_sha256`), never a suffix after them — a
-# suffix is how `digest_auth_secret` would have got in.
+# suffix is how `digest_auth_secret` would have got in. And the prefix itself must name
+# no key: `hmac_sha256` is a key, not a digest (_KEYISH_PREFIX_WORDS, below).
 #
 # Pure hex only, and only at digest lengths: 64 and 128 under a digest key, 40 under
 # either class (a sha1 and a git object id are the same 40 hex). A base64 or
@@ -143,10 +161,25 @@ ALLOW_PATH_PREFIXES = (("evals", "evidence"),)
 DIGEST_HEX_LENGTHS = frozenset({64, 128})  # sha256 / sha512, in hex
 SHARED_HEX_LENGTH = 40                     # sha1 — and a git object id, the same shape
 
+# A KEY-SHAPED PREFIX DOES NOT MAKE A DIGEST OF IT. `sha256` names the function, not
+# the input, so `<x>_sha256` reads "the sha256 of <x>" — until `<x>` is itself a key,
+# where the same name reads "that key, keyed-hashed", or simply names the key.
+# `hmac_sha256` is the ordinary spelling of an HMAC-SHA256 key, and an HMAC-SHA256 key
+# is 64 hex: the same shape as the digest it is not. `api_key_sha256`, `secret_digest`,
+# `token_checksum` and `session_key_sha256` are the same bargain with a different word.
+#
+# So these words, as whole `_`-separated words anywhere in the prefix, cost the prefix
+# its vouch. Whole words only: `keystore_sha256`, `authority_digest` and
+# `monkey_checksum` are untouched, because `keystore`, `authority` and `monkey` are not
+# `key`, `auth` and `key`. The rule stays one-directional — still a prefix, never a
+# suffix — so nothing the denylist misses gets in through `digest_auth_secret`.
+_KEYISH_PREFIX_WORDS = r"hmac|key|secret|token|password|passwd|auth"
+
 # The digest keys, whole. `sha3_256` / `blake2b` / `content_hash` stand alone; the
-# five common ones take a `_`-joined prefix and nothing else.
+# five common ones take a `_`-joined prefix, and only a prefix that names no key.
 _DIGEST_KEY = (
-    r"(?:[A-Za-z0-9_]+_)?(?:sha256|sha1|sha512|digest|checksum)"
+    r"(?:(?!(?:[A-Za-z0-9]+_)*(?:" + _KEYISH_PREFIX_WORDS + r")_)[A-Za-z0-9_]+_)?"
+    r"(?:sha256|sha1|sha512|digest|checksum)"
     r"|sha3[_-]?\d+"
     r"|blake2[bs]?"
     r"|content_hash"
@@ -222,6 +255,30 @@ def entropy_allowlisted(rel: str) -> bool:
     return any(parts[:len(prefix)] == prefix for prefix in ALLOW_PATH_PREFIXES)
 
 
+def split_key_value(token: str) -> tuple[str, str] | None:
+    """`api_key=<40 hex>` → `("api_key", "<40 hex>")`; None when the token is one value.
+
+    Exactly one separator, so there is never a choice of where to cut; an
+    identifier-shaped left part, so `<base64>=<base64>` is not a key and a value; and a
+    right part still long enough to be a token in its own right.
+
+    The left part must also be SHORTER than a token: a left part of token length is
+    itself a candidate value, and a finding names the value, not the key — so those
+    stay merged and keep the whole blob in the excerpt.
+
+    This function only proposes the cut. Whether the cut may LOWER a verdict is the
+    caller's rule, and the answer there is no: scan_line scores the merged token too.
+    """
+    if token.count(_KEY_VALUE_SEPARATOR) != 1:
+        return None
+    key, _, value = token.partition(_KEY_VALUE_SEPARATOR)
+    if len(key) >= MIN_TOKEN_LEN or len(value) < MIN_TOKEN_LEN:
+        return None
+    if not _IDENTIFIER_RE.fullmatch(key):
+        return None
+    return key, value
+
+
 def _key_before(rx: re.Pattern, line: str, start: int) -> bool:
     """True when the identifier directly before `start` on this line matches `rx`."""
     if start == 0 or line[start - 1] not in _SEPARATOR_TAIL:
@@ -253,6 +310,12 @@ def git_id_under_label(line: str, token: str, start: int) -> bool:
     return _key_before(GIT_ID_LABEL_RE, line, start)
 
 
+def over_entropy_threshold(token: str) -> bool:
+    """True when `token` beats the threshold for its OWN charset (hex, else base64)."""
+    threshold = HEX_ENTROPY_THRESHOLD if HEX_RE.fullmatch(token) else BASE64_ENTROPY_THRESHOLD
+    return shannon_entropy(token) > threshold
+
+
 def _finding(rel: str, lineno: int, kind: str, secret: str) -> dict:
     return {"path": rel, "line": lineno, "kind": kind, "masked_excerpt": mask(secret)}
 
@@ -272,16 +335,29 @@ def scan_line(line: str, rel: str, lineno: int, skip_entropy: bool | None = None
     for m in ENTROPY_TOKEN_RE.finditer(line):
         if any(m.start() < e and s < m.end() for s, e in spans):
             continue  # already reported by a named pattern
-        tok = m.group(0)
-        if HEX_RE.fullmatch(tok):
-            if digest_under_label(line, tok, m.start()):
-                continue  # a digest under a digest label is not a credential
-            if git_id_under_label(line, tok, m.start()):
-                continue  # …nor is a git object id under a git-id label
-            threshold = HEX_ENTROPY_THRESHOLD
-        else:
-            threshold = BASE64_ENTROPY_THRESHOLD
-        if shannon_entropy(tok) > threshold:
+        merged, start = m.group(0), m.start()
+        tok = merged
+        kv = split_key_value(merged)
+        if kv is not None:
+            # An unquoted `key=value`: the value is judged on its own charset, and the
+            # key stays where the label rules already look — directly before it, with
+            # the `=` as its separator. `body_sha256=<hex>` is still a digest under its
+            # own key; `api_key=<hex>` is a 40-hex credential that no longer hides
+            # behind the letters of its own name.
+            start += len(kv[0]) + len(_KEY_VALUE_SEPARATOR)
+            tok = kv[1]
+        if digest_under_label(line, tok, start):
+            continue  # a digest under a digest label is not a credential
+        if git_id_under_label(line, tok, start):
+            continue  # …nor is a git object id under a git-id label
+        # EITHER verdict reports, and the exemptions above are the only thing that
+        # silences both. Entropy per character is not monotone under taking a piece:
+        # a short base64 value can score BELOW its threshold while `api_key=` + that
+        # same value scores above it, because the key's own letters are characters the
+        # value does not repeat. Scoring only the piece would have made the split a
+        # detection regression for exactly the values it was written to catch — so the
+        # merged token keeps the score it had before there was a split at all.
+        if over_entropy_threshold(tok) or (kv is not None and over_entropy_threshold(merged)):
             findings.append(_finding(rel, lineno, "high_entropy", tok))
     return findings
 

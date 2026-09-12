@@ -19,14 +19,15 @@ import sys
 
 import pytest
 
-from rig_workbench.workbench.secrets import (apply_secret_sensor,
+from rig_workbench.workbench.secrets import (BASE64_ENTROPY_THRESHOLD,
+                                             apply_secret_sensor,
                                              digest_under_label,
                                              entropy_allowlisted,
                                              git_id_under_label, mask,
                                              scan_diff_text,
                                              scan_line, scan_paths,
                                              scan_worktree_diff,
-                                             shannon_entropy)
+                                             shannon_entropy, split_key_value)
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 WORKBENCH = REPO_ROOT / "scripts" / "workbench.py"
@@ -159,6 +160,11 @@ SHA512_HEX = hashlib.sha512(_FIXTURE_SEED).hexdigest()
 # The base64 counterpart, likewise derived rather than typed: 43 chars, the length a
 # base64-encoded sha256 lands on, and the charset the rule refuses to exempt.
 B64_OF_DIGEST_LEN = base64.urlsafe_b64encode(bytes.fromhex(SHA256_HEX)).decode().rstrip("=")
+# The same value with its padding left on: 44 chars ending in a single `=`. A base64
+# value of this length is what makes the separator COUNT load-bearing rather than
+# decorative — the padding is a second `=` in `api_key=<value>`, and the right part
+# after the first one is 44 characters, far past every length guard.
+B64_PADDED_OF_DIGEST_LEN = base64.urlsafe_b64encode(bytes.fromhex(SHA256_HEX)).decode()
 
 
 def test_the_fixtures_are_the_shapes_the_rules_turn_on():
@@ -303,6 +309,67 @@ def test_a_key_that_is_not_a_digest_key_reports_64_hex(key):
     assert [f["kind"] for f in findings] == ["high_entropy"]
 
 
+# The prefix words that cost a prefix its vouch, each in a name someone would really
+# write. `hmac_sha256` is the ordinary spelling of an HMAC-SHA256 key and is exactly 64
+# hex — the digest shape it is not; the rest are the same trade under another word.
+@pytest.mark.parametrize("key", [
+    "hmac_sha256", "api_key_sha256", "secret_digest", "token_checksum",
+    "session_key_sha256", "password_sha256", "passwd_digest", "auth_checksum",
+])
+def test_a_key_shaped_prefix_does_not_vouch_for_the_hex_beside_it(key):
+    """`sha256` names the function, not the input — unless the input is itself a key.
+
+    `<x>_sha256` reads "the sha256 of <x>", which is why the prefix rule exists. When
+    `<x>` names a key the same name reads "that key, keyed-hashed", or just names the
+    key; and an HMAC key, an API key and a session key are all 64 hex, exactly like the
+    digest the label claims. The prefix was accepting any `_`-joined word at all.
+    """
+    findings = scan_line(f'{key} = "{SHA256_HEX}"', "src/app.py", 1)
+    assert [f["kind"] for f in findings] == ["high_entropy"]
+    assert SHA256_HEX not in findings[0]["masked_excerpt"]
+
+
+def test_a_denied_prefix_is_denied_at_sha1_length():
+    # Not a property of 64 hex — and the 40-hex case is not rescued by the git-id
+    # class either, which has no prefix rule of its own to lose.
+    findings = scan_line(f'hmac_sha1 = "{SHA1_HEX}"', "src/app.py", 1)
+    assert [f["kind"] for f in findings] == ["high_entropy"]
+
+
+def test_a_denied_prefix_is_denied_at_sha512_length():
+    findings = scan_line(f'"secret_sha512": "{SHA512_HEX}"', "src/app.py", 1)
+    assert [f["kind"] for f in findings] == ["high_entropy"]
+
+
+def test_the_whole_prefix_is_read_not_only_its_first_word():
+    # `my_secret_body_sha256` reads as a digest right up to the word in the middle.
+    findings = scan_line(f"my_secret_body_sha256: {SHA256_HEX}", "src/app.py", 1)
+    assert [f["kind"] for f in findings] == ["high_entropy"]
+
+
+def test_case_is_not_a_way_out_of_the_denylist():
+    # The labels are matched case-insensitively, so the denylist has to be too.
+    findings = scan_line(f'HMAC_SHA256 = "{SHA256_HEX}"', "src/app.py", 1)
+    assert [f["kind"] for f in findings] == ["high_entropy"]
+
+
+@pytest.mark.parametrize("key", ["keystore_sha256", "authority_digest", "monkey_checksum"])
+def test_the_denied_words_are_whole_words_not_substrings(key):
+    """The mirror of the S1 lesson, applied to the denylist itself.
+
+    `keystore` is not `key`, `authority` is not `auth`, `monkey` is not `key`. A
+    denylist matched on substrings would take the exemption away from ordinary names
+    the way the old label window handed it to ordinary names.
+    """
+    assert scan_line(f'{key} = "{SHA256_HEX}"', "src/app.py", 1) == []
+
+
+@pytest.mark.parametrize("key", ["body_sha256", "source_excerpt_sha256", "file_sha256", "blob_checksum"])
+def test_an_ordinary_prefix_still_vouches(key):
+    # The retained half: the attestation-table keys the prefix rule was added for.
+    assert scan_line(f'"{key}": "{SHA256_HEX}"', "src/composition.py", 1) == []
+
+
 def test_the_label_window_is_the_same_line_only():
     # A label on the previous line does not vouch for a value on this one — otherwise
     # any file with the word `digest` anywhere in it would silence the detector below.
@@ -351,6 +418,210 @@ def test_the_three_accepted_label_forms_and_nothing_else():
                  f'sha256, {SHA256_HEX}',
                  f'sha256("{SHA256_HEX}")'):
         assert [f["kind"] for f in scan_line(line, "src/app.py", 1)] == ["high_entropy"], line
+
+
+# ── an unquoted key=value line ────────────────────────────────────────────────
+# `=` is base64 padding, so it is in the token charset, so an unquoted `.env` line
+# arrives as ONE token: `api_key=<40 hex>` is 48 characters of mixed charset. It fails
+# the hex test because of its own key's letters, and is then measured against the
+# base64 threshold, which those same letters keep it below. The shape credentials are
+# most often written in was the one shape the detector could not see.
+def test_an_unquoted_env_line_is_scanned_as_a_value_under_its_key():
+    assert [f["kind"] for f in scan_line(f"api_key={SHA1_HEX}", ".env", 1)] == ["high_entropy"]
+    assert [f["kind"] for f in scan_line(f"secret_key={SHA256_HEX}", ".env", 2)] == ["high_entropy"]
+
+
+def test_the_finding_for_a_split_token_masks_the_value_not_the_key():
+    # The value is the secret, so the value is what gets masked — and the key, which is
+    # not a secret, is not smuggled into the excerpt as though it were part of one.
+    findings = scan_line(f"api_key={SHA1_HEX}", ".env", 1)
+    excerpt = findings[0]["masked_excerpt"]
+    assert SHA1_HEX not in excerpt and "api_key" not in excerpt
+    assert excerpt.startswith(SHA1_HEX[:4]) and excerpt.endswith(SHA1_HEX[-2:])
+
+
+def test_the_left_part_is_still_the_label_the_digest_rules_read():
+    """Splitting hands the value to the same rules, with the same key in front of it.
+
+    The point of the split is not to report more: it is to let the S1 rules see the
+    pair they were written for. An unquoted attestation line is still an attestation
+    line, and an unquoted credential line is now a credential line.
+    """
+    assert scan_line(f"body_sha256={SHA256_HEX}", "attest.env", 1) == []
+    assert scan_line(f"source_commit={SHA1_HEX}", "attest.env", 2) == []
+    # …including the denylist from the commit before this one.
+    assert [f["kind"] for f in scan_line(f"hmac_sha256={SHA256_HEX}", "attest.env", 3)] == ["high_entropy"]
+
+
+def test_the_colon_form_reports_and_exempts_without_any_split():
+    """`:` is not in the token charset, so a colon form arrives already separated.
+
+    The value comes through as a bare token with its key left on the line, which is
+    what the label rules read — so both answers below are the same ones the colon form
+    gave before the split rule existed.
+    """
+    assert [f["kind"] for f in scan_line(f"api_key:{SHA1_HEX}", ".env", 1)] == ["high_entropy"]
+    assert scan_line(f"sha256:{SHA256_HEX}", ".env", 2) == []
+
+
+def test_split_key_value_cuts_only_a_name_from_a_value():
+    assert split_key_value(f"api_key={SHA1_HEX}") == ("api_key", SHA1_HEX)
+    # A value with no separator is one value.
+    assert split_key_value(SHA256_HEX) is None
+    # Base64 padding is a second `=`, so there is no single place to cut — and the rule
+    # refuses rather than guessing at one. The padded value is 44 characters, so it is
+    # the separator COUNT refusing here and not a length guard: relax the count and this
+    # token splits at the wrong `=`, with the value's own tail read as a second field.
+    assert split_key_value(f"api_key={B64_PADDED_OF_DIGEST_LEN}") is None
+    assert split_key_value(f"{B64_OF_DIGEST_LEN}==") is None
+    # The left part must be a name: `<base64>=<base64>` is not a key and a value.
+    assert split_key_value(f"{RANDOM_B64_40[:8]}+x={SHA1_HEX}") is None
+    # …nor is anything that does not start like an identifier.
+    assert split_key_value(f"9key={SHA1_HEX}") is None
+    # The right part has to be long enough to be a token in its own right.
+    assert split_key_value(f"api_key={SHA1_HEX[:31]}") is None
+
+
+def test_a_left_part_of_token_length_is_left_merged():
+    """A finding names the value, not the key, so a key-length left part stays merged.
+
+    A left part 32 characters or longer is itself a candidate value; cutting there
+    would leave it out of the excerpt the finding carries. Those stay whole and are
+    scanned exactly as before.
+    """
+    long_name = "a" + SHA1_HEX[1:]  # identifier-shaped, and token length
+    assert split_key_value(f"{long_name}={SHA256_HEX}") is None
+    # The whole token is still what the detector sees, as it was before this change.
+    line = f"{long_name}={SHA256_HEX}"
+    assert [f["kind"] for f in scan_line(line, "src/app.py", 1)] == \
+        [f["kind"] for f in scan_line(line.replace("=", "+"), "src/app.py", 1)]
+
+
+def test_the_quoted_forms_are_untouched_by_the_split():
+    # A quote ends the token, so a quoted line never had the two merged in the first
+    # place; these are the S1 cases, and they answer exactly as they did.
+    assert [f["kind"] for f in scan_line(f'api_key = "{SHA1_HEX}"', "src/app.py", 1)] == ["high_entropy"]
+    assert scan_line(f'"body_sha256": "{SHA256_HEX}"', "src/app.py", 2) == []
+
+
+def _b64_value(seed: bytes, n: int) -> str:
+    """`n` characters of base64, derived from `seed` — computed here, never pasted."""
+    return base64.urlsafe_b64encode(hashlib.sha256(seed).digest()).decode()[:n]
+
+
+# The window the split opened, found by search over a fixed seed sequence rather than
+# pasted: a 32-char base64 value whose OWN entropy is below the base64 threshold while
+# `api_key=` + that same value is above it. Entropy per character is not monotone under
+# taking a piece — the key's letters are characters the value does not repeat — so a
+# rule that scored only the piece scored lower than the rule it replaced.
+SPLIT_WINDOW_B64 = next(
+    v for v in (_b64_value(b"split-window-%d" % i, 32) for i in range(1000))
+    if shannon_entropy(v) <= BASE64_ENTROPY_THRESHOLD < shannon_entropy(f"api_key={v}"))
+
+
+def test_the_split_does_not_lower_the_merged_tokens_score():
+    """The regression the split introduced, pinned at the value it was measured on.
+
+    `api_key=<32 chars of base64>` was reported before the split existed, because the
+    merged token clears the base64 threshold. Judging the value alone dropped it: the
+    value is shorter and its own characters repeat more. So both are scored, and either
+    one is enough to report.
+    """
+    assert shannon_entropy(SPLIT_WINDOW_B64) <= BASE64_ENTROPY_THRESHOLD
+    assert shannon_entropy(f"api_key={SPLIT_WINDOW_B64}") > BASE64_ENTROPY_THRESHOLD
+    findings = scan_line(f"api_key={SPLIT_WINDOW_B64}", ".env", 1)
+    assert [f["kind"] for f in findings] == ["high_entropy"]
+    # The excerpt still names the value, which is the secret — not the key, which is not.
+    assert SPLIT_WINDOW_B64 not in findings[0]["masked_excerpt"]
+    assert "api_key" not in findings[0]["masked_excerpt"]
+
+
+@pytest.mark.parametrize("n", [32, 34, 36])
+def test_the_split_never_lowers_what_the_merged_token_already_scored(n):
+    """The same property over 200 derived values per length, asserted per sample.
+
+    Cheap stand-in for the Monte Carlo a security review ran: whenever the pre-split
+    rule (score the merged token) would have reported, the rule in place now reports
+    too. The final assertion keeps the test from passing vacuously — the window where
+    the two rules disagree has to be exercised, or this proves nothing.
+    """
+    window = 0
+    for i in range(200):
+        value = _b64_value(b"monte-carlo-%d-%d" % (n, i), n)
+        line = f"api_key={value}"
+        merged_fires = shannon_entropy(line) > BASE64_ENTROPY_THRESHOLD
+        value_fires = shannon_entropy(value) > BASE64_ENTROPY_THRESHOLD
+        reported = bool(scan_line(line, ".env", 1))
+        assert reported or not merged_fires, f"lost a merged-token finding at sample {i}"
+        window += merged_fires and not value_fires
+    assert window > 0, "no sample landed in the window, so this asserted nothing"
+
+
+def test_an_unsplit_padded_base64_value_is_still_reported_whole():
+    """Refusing to split is not refusing to look: the merged token is scored either way.
+
+    `api_key=<44 chars of padded base64>` holds two `=` and stays one token, and the
+    merged-token rule — the one that was there before any split existed — reports it.
+    """
+    findings = scan_line(f"api_key={B64_PADDED_OF_DIGEST_LEN}", ".env", 1)
+    assert [f["kind"] for f in findings] == ["high_entropy"]
+    assert B64_PADDED_OF_DIGEST_LEN not in findings[0]["masked_excerpt"]
+
+
+def test_a_named_pattern_inside_an_unquoted_assignment_is_unaffected():
+    # The named patterns run before the entropy pass and are not split-sensitive.
+    kind, sample = SAMPLES[0]
+    assert [f["kind"] for f in scan_line(f"AWS_ACCESS_KEY_ID={sample}", ".env", 1)] == [kind]
+
+
+# ── the flooding corpus ───────────────────────────────────────────────────────
+# Every rule here trades false negatives against false positives, and the second half
+# of that trade is the one no single-case test measures: a rule that reports one more
+# credential and fifty more attestation rows is a worse rule. A whole-tree scan answers
+# that but is a one-off; this corpus is the durable, cheap form of the same question —
+# one line per shape the rules turn on, and a finding count pinned against both drifts.
+# Computed from the same seed as everything else, so no line is a pasted literal.
+def _flood_corpus() -> list[tuple[str, bool]]:
+    """(line, is expected to report) — the shapes, and the verdict each must keep."""
+    rows: list[tuple[str, bool]] = []
+    # Attestation tables: a digest or a git id under its own key, quoted. All exempt.
+    rows += [(f'    "{k}": "{SHA256_HEX}",', False)
+             for k in ("body_sha256", "source_excerpt_sha256", "blob_checksum", "content_hash")]
+    rows += [(f'    "{k}": "{SHA1_HEX}",', False)
+             for k in ("source_commit", "git_blob", "tree", "oid")]
+    # The same tables written unquoted, the way an env file writes them. Still exempt.
+    rows += [(f"body_sha256={SHA256_HEX}", False), (f"source_commit={SHA1_HEX}", False)]
+    # `.env` credentials: the shapes the split was written for, plus the short base64
+    # value that only the merged token scores.
+    rows += [(f"api_key={SHA1_HEX}", True), (f"secret_key={SHA256_HEX}", True),
+             (f"api_key={SPLIT_WINDOW_B64}", True)]
+    # Key-shaped prefixes: a digest word does not launder the key in front of it.
+    rows += [(f'{k} = "{SHA256_HEX}"', True)
+             for k in ("hmac_sha256", "api_key_sha256", "secret_digest", "token_checksum",
+                       "session_key_sha256", "password_sha256", "passwd_digest", "auth_checksum")]
+    # The S1 bypass lines: ordinary key names that contain a label without being one.
+    rows += [(f'{k} = "{SHA1_HEX}"', True)
+             for k in ("prev_api_key", "revenue_api_token", "revoked_key", "committee_api_key",
+                       "street_service_key", "blobstore_key", "commit_token")]
+    rows += [(f'{k} = "{SHA256_HEX}"', True)
+             for k in ("digest_auth_secret", "password_hash", "session_hash")]
+    # …and ordinary code, which must stay silent however much of it there is.
+    rows += [("def add(a, b):", False), ("    return a + b", False),
+             ("GREETING = 'hello world'", False), ("# an ordinary comment", False),
+             ("from pathlib import Path  # noqa", False)]
+    return rows
+
+
+def test_the_flooding_corpus_reports_exactly_the_lines_it_should(tmp_path):
+    corpus = _flood_corpus()
+    (tmp_path / "corpus.txt").write_text(
+        "\n".join(line for line, _ in corpus) + "\n", encoding="utf-8")
+    findings = scan_paths([tmp_path])
+    assert {f["kind"] for f in findings} <= {"high_entropy"}
+    assert {f["line"] for f in findings} == {i for i, (_, leak) in enumerate(corpus, 1) if leak}
+    # One finding per reporting line, and the count is pinned: a rule that starts
+    # reporting the attestation half, or stops reporting the credential half, moves it.
+    assert len(findings) == 21
 
 
 # ── clean tree ────────────────────────────────────────────────────────────────
