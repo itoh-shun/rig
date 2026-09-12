@@ -602,9 +602,9 @@ max-parallel の既定 3 は `orchestrate/queueing.py:519`——`:696` ではな
 | # | 目的（1 行） | 触るファイル | 検証 | 依存 | バケツ | 並列 |
 |---|---|---|---|---|---|---|
 | T0 | hook の指示文を `/rig:go` 名指しに直し、入口に要る分だけ先に読ませる | `hooks/inject-talk-mode.sh`・`skills/engine/SKILL.md` | `sh hooks/inject-talk-mode.sh` に `rig:rig` が出ず `/rig:go` が出る ＋ `pytest tests/test_first_run_cost.py -q` | — | 決 | 単独（実行中） |
-| T1 | `compose()` に「中継した測定値」節を足し、3 値を必須にする | `rig_workbench/workbench/task_package.py`・`tests/test_task_package_provenance.py`（新設） | `pytest tests/test_task_package_provenance.py -q` | — | 足 | **P1** |
-| T2 | 並列 dispatch 前に「触るファイル」列を parse して重なりを拒む | `rig_workbench/orchestrate/`（parser と dispatch 前検査）・`facets/output-contracts/task-plan.md`・`tests/test_disjoint_dispatch.py`（新設） | `pytest tests/test_disjoint_dispatch.py -q` | — | 足 | **P1** |
-| T3 | recipe 26 枚の `acceptance:` 行を 34 基準に束ね、束ねられない行を `unobserved` と印す | `skills/engine/recipes/*.md`・`tests/test_recipe_acceptance_binding.py`（新設） | `pytest tests/test_recipe_acceptance_binding.py -q` | — | 足 | **P1** |
+| T1 | `compose()` に「中継した測定値」節を足し、3 値を必須にする（検証テストは新設） | `rig_workbench/workbench/task_package.py`・`tests/test_task_package_provenance.py` | `pytest tests/test_task_package_provenance.py -q` | — | 足 | **P1** |
+| T2 | 並列 dispatch 前に「触るファイル」列を parse して重なりを拒む（parser と dispatch 前検査を `orchestrate/` に置き、検証テストは新設） | `rig_workbench/orchestrate/`・`facets/output-contracts/task-plan.md`・`tests/test_disjoint_dispatch.py` | `pytest tests/test_disjoint_dispatch.py -q` | — | 足 | **P1** |
+| T3 | recipe 26 枚の `acceptance:` 行を 34 基準に束ね、束ねられない行を `unobserved` と印す（検証テストは新設） | `skills/engine/recipes/*.md`・`tests/test_recipe_acceptance_binding.py` | `pytest tests/test_recipe_acceptance_binding.py -q` | — | 足 | **P1** |
 | T4 | `rig-wb list` / `review` をディスパッチ表から落とす | `rig_workbench/cli.py`・`tests/test_capability_registry_vs_cli.py` | `pytest tests/test_capability_registry_vs_cli.py tests/test_cli_surface_contract.py -q` | T1–T3 | 削 | **P2** |
 | T5 | `agents/` 固有の 2 枚を `facets/personas/` へ移し、残り 10 枚を落とす | `agents/*.md`・`skills/engine/facets/personas/`・`facets/instructions/parallel-review.md` | `pytest tests/test_brick_resolution_declaration.py -q` ＋ 31＋2 枚の解決を確認 | T1–T3 | 削 | **P2** |
 | T6 | `max-bugfix` を `bugfix` ＋ `checks:` のフラグに畳む | `skills/engine/recipes/max-bugfix.md`・`skills/engine/recipes/bugfix.md` | `pytest -q -k recipe` ＋ `wb route --type bugfix --json` が同じ recipe を返す | T3 | 削 | **P2** |
@@ -612,8 +612,8 @@ max-parallel の既定 3 は `orchestrate/queueing.py:519`——`:696` ではな
 | T8 | 最後の行の `cd … && claude` と README §1 の約束を、どちらかに寄せる | `rig_workbench/workbench/lifecycle.py`・`README.md`・`README.ja.md` | `pytest tests/test_docs_registry.py tests/test_first_run_cost.py -q` | T7 | 削 | 単独 |
 | T9 | `commands/rig.md` を落とし、`SKILL.md` の description 行を直す | `commands/rig.md`・`skills/engine/SKILL.md` | `pytest tests/test_capability_registry_vs_surfaces.py -q`（30 枚の凍結を 29 に下げる） | T0 | 削 | 単独 |
 | T10 | ヘルプに出ない 15 動詞を 1 本ずつ監査する（`approve`/`next`/`check`/`verdict` は人のゲートに触るので最後） | `rig_workbench/cli.py`・`tests/test_capability_registry_vs_cli.py` | `pytest tests/test_capability_registry_vs_cli.py -q` | T4 | 削 | 単独 |
-| T11 | D の 16 ファイル 7,872 行を単独パッケージへ分ける | `rig_workbench/workbench/` → 新パッケージ・`pyproject.toml` の台帳 | `pytest tests/test_architecture_inventory.py tests/test_layering_contract.py -q` ＋ 140 本の `--help` 差分 0 | T1–T3, T4 | 決 | 単独 |
-| T12 | 合成クラスタを `orchestrate/composition.py` へ出し、`providers ↔ runstate` の循環を落とす | `rig_workbench/orchestrate/providers.py`・`runstate.py`・新 `composition.py` | `pytest tests/test_architecture_inventory.py -q` で循環 5→4 ＋ 全件緑 | T1–T3 | 決 | 単独 |
+| T11 | D の 16 ファイル 7,872 行を `rig_workbench/workbench/` から単独パッケージへ切り出し、`pyproject.toml` の台帳を直す（切り出し先のパッケージ名は本ブリーフでは決めていない） | `rig_workbench/workbench/`・`pyproject.toml` | `pytest tests/test_architecture_inventory.py tests/test_layering_contract.py -q` ＋ 140 本の `--help` 差分 0 | T1–T3, T4 | 決 | 単独 |
+| T12 | 合成クラスタを `orchestrate/composition.py`（新設）へ出し、`providers ↔ runstate` の循環を落とす | `rig_workbench/orchestrate/providers.py`・`runstate.py`・`rig_workbench/orchestrate/composition.py` | `pytest tests/test_architecture_inventory.py -q` で循環 5→4 ＋ 全件緑 | T1–T3 | 決 | 単独 |
 
 **並列に置けるのは P1 の 3 本（T1・T2・T3）と P2 の 3 本（T4・T5・T6）である。** P1 は
 `workbench/task_package.py` / `orchestrate/` / `recipes/*.md` で 1 ファイルも重ならない。P2 は
