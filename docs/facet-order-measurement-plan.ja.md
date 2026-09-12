@@ -5,7 +5,7 @@
 経緯: `docs/v3-architecture-design-brief.ja.md` §8 の決定「Faceted Prompting は置き換えず、測る」に対応する
 独立調査。5段の移行の依存ではない。
 
-測る主張は1つだけである。`skills/engine/SKILL.md` §5 の表が言う——
+測る主張は1つだけである。`skills/engine/COMPOSE.md` §5 の表は次のように言う。
 
 > **User 末尾 / Policy / recency が効く末尾にガードレール**
 
@@ -102,7 +102,7 @@ judge 許可リストが通る資格情報経路の、少なくとも一方を�
 | 経路 | 順序を決めているもの | 再現性 |
 |---|---|---|
 | headless（`rig-wb run` ほか） | **コード**：`rig_workbench/orchestrate/providers.py:1882` `_compose_prompt_sections` | 決定論。バイト単位で同じ |
-| in-session（`/rig:go` などスキル経由） | **散文**：`skills/engine/SKILL.md` §5 の表を、オーケストレータ役のモデルが読んで守る | 守った保証は無い |
+| in-session（`/rig:go` などスキル経由） | **散文**：`skills/engine/COMPOSE.md` §5 の表を、オーケストレータ役のモデルが読んで守る | 守った保証は無い |
 | 検証者ファンアウト | **別のコード**：`providers.py:1529` `run_verifiers_parallel` は persona 要約を前置し、facet 合成を通らない | 決定論だが §5 とも別順 |
 
 コード側の順序は次のとおりで、`tests/test_headless_compose.py:55`
@@ -253,7 +253,7 @@ n<10 の割合には Wilson 95% 区間を必ず付ける（`drill.md` ③-b の�
 言えるのは「**Policy を末尾に置くことは、この測定条件下で reviewer の検出率を動かさない**」までである。
 §8 は「順序が効かないと出れば、5分割を捨てる根拠が実測として立つ」と書いているが、
 本実験が測るのは**配置順であって5分割そのものではない**。帰無で直接落ちるのは
-SKILL.md §5 の「recency が効く末尾にガードレール」という**理由づけ**であり、
+COMPOSE.md §5 の「recency が効く末尾にガードレール」という**理由づけ**であり、
 persona / knowledge / instruction / output-contract / policy という**区分の是非は別の実験が要る**。
 ここを混ぜると、測っていない主張がまた1つ増える。
 

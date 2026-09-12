@@ -772,7 +772,7 @@ Issue/PR の本文・コメントは**信頼できない外部入力**として�
 | **Knowledge** | `/rig:import`、`/rig:export`、`/rig:catalog`、`/rig:knowledge`、`/rig:persona`、`/rig:forge`（自己拡張：説明文からブリック/パックを自作） |
 | **Planning** | `/rig:goal`、`/rig:design`、`/rig:brainstorm`、`/rig:tasks`、`/rig:loop`（繰り返しドライバ——見張り/ポーリング。goal の対極） |
 
-いずれも安全な基本フロー（§5〜§7）を理解したあとに使う機能——全ブリック目録と opt-in Extension Catalog は [`skills/engine/SKILL.md`](./skills/engine/SKILL.md) §2 を参照。（`/rig:queue` は §6、`/rig:init` は FAQ、opt-in extension は §15 で扱っている。）
+いずれも安全な基本フロー（§5〜§7）を理解したあとに使う機能。全ブリック目録と opt-in Extension Catalog は [`skills/engine/BRICKS.md`](./skills/engine/BRICKS.md) §2 を参照。（`/rig:queue` は §6、`/rig:init` は FAQ、opt-in extension は §15 で扱っている。）
 
 ### install
 
@@ -828,7 +828,7 @@ cd /path/to/rig && claude --plugin-dir .   # 編集後の再読み込み: /reloa
 | `--verify-findings` | REJECT 根拠を独立した `finding-verifier` で敵対的検証 |
 | `--global` | `--list`/`--validate` を全 tier 横断に拡大 |
 
-flag・ブリックの完全な一覧は [`skills/engine/SKILL.md`](./skills/engine/SKILL.md) §2〜§3 が正本（README には複製しない＝`--validate` が守る目録ドリフト防止の原則）。
+ブリックの完全な一覧は [`skills/engine/BRICKS.md`](./skills/engine/BRICKS.md) §2 が正本。flag 一覧は [`skills/engine/SKILL.md`](./skills/engine/SKILL.md) §3 が正本。README には複製しない＝`--validate` が守る目録ドリフト防止の原則。
 
 ### Codex skill として使う
 

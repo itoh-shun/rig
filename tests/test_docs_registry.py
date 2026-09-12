@@ -12,8 +12,8 @@ This is the watcher for the two registries that check nobody kept:
 
 - **`docs/`** — a document that exists but is linked from neither README is a
   document only `ls` will find.
-- **`[project.scripts]`** — an installed command absent from SKILL.md §2 is a
-  command the engine's own inventory denies having.
+- **`[project.scripts]`** — an installed command absent from §2 (`BRICKS.md`) is
+  a command the engine's own inventory denies having.
 
 Both allow an explicit way out, and neither allows a silent one. `UNINDEXED_DOCS`
 names the files deliberately kept out of the README index together with where a
@@ -21,15 +21,24 @@ reader does reach them, and it is checked against the filesystem so it cannot de
 into cover for a file nobody meant to hide.
 """
 
+import fnmatch
 import pathlib
 import re
 
 import pytest
 
+from rig_workbench.validation import catalog
+
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 README_EN = REPO_ROOT / "README.md"
 README_JA = REPO_ROOT / "README.ja.md"
 SKILL_MD = REPO_ROOT / "skills" / "engine" / "SKILL.md"
+#: The engine's inventory, which is `SKILL.md` plus the reference files it defers its longer
+#: sections to: §2 — the inventory proper — moved to `BRICKS.md` when `SKILL.md` was cut down
+#: to what a first turn needs, so reading `SKILL.md` alone now asks the summary rather than
+#: the list. Borrowed from the check that draws the same line, so both move together.
+INVENTORY_MD = [REPO_ROOT / "skills" / "engine" / name
+                for name in catalog.INVENTORY_DOCUMENTS]
 PYPROJECT = REPO_ROOT / "pyproject.toml"
 
 # Documents that belong somewhere other than the README index, with the route a
@@ -87,7 +96,7 @@ def test_the_unindexed_list_names_only_documents_that_exist():
 
 #: Entry points the engine's §2 inventory still omits, recorded rather than asserted away.
 #: A ratchet, in the same shape as the prompt-coverage gate: existing debt is named and
-#: allowed, growth is not. Closing one means editing `skills/engine/SKILL.md`, which is a
+#: allowed, growth is not. Closing one means editing `skills/engine/BRICKS.md`, which is a
 #: covered prompt surface — the evaluation gate then wants freshly signed evidence, so it is
 #: a maintainer task with the attestation key rather than something this test can slip in.
 #: Naming them here is the difference between a debt somebody decided to carry and a gap
@@ -96,17 +105,17 @@ SKILL_INVENTORY_DEBT = {"rig-mcp", "rig-mission-control-live"}
 
 
 def _missing_from_inventory() -> set[str]:
-    inventory = SKILL_MD.read_text(encoding="utf-8")
+    inventory = "\n".join(path.read_text(encoding="utf-8") for path in INVENTORY_MD)
     return {name for name in entry_points() if name not in inventory}
 
 
 def test_the_engine_inventory_gap_does_not_grow():
-    """SKILL.md §2 calls itself the inventory and `--validate` checks it against the brick
+    """§2 calls itself the inventory and `--validate` checks it against the brick
     files. Entry points are not bricks, so nothing checked them at all — the hole #395 was
     filed in. This does not close the hole; it stops the next command falling into it."""
     new = sorted(_missing_from_inventory() - SKILL_INVENTORY_DEBT)
     assert not new, (
-        f"skills/engine/SKILL.md never names {new}, though pyproject installs them — the "
+        f"the engine's inventory never names {new}, though pyproject installs them — the "
         "inventory that calls itself canonical is denying a shipped command. Add the row, "
         "or add the name to SKILL_INVENTORY_DEBT and say why it has to wait."
     )
@@ -118,7 +127,7 @@ def test_the_recorded_inventory_debt_is_still_real():
     name, which is how a ratchet stops ratcheting."""
     settled = sorted(SKILL_INVENTORY_DEBT - _missing_from_inventory())
     assert not settled, (
-        f"SKILL_INVENTORY_DEBT still excuses {settled}, which SKILL.md now names — "
+        f"SKILL_INVENTORY_DEBT still excuses {settled}, which the inventory now names — "
         "remove them so the list keeps meaning what it says."
     )
 
@@ -128,7 +137,7 @@ def test_every_installed_command_is_reachable_from_something_a_reader_opens():
     absent from the inventory *and* from both READMEs exists only in `pyproject.toml`.
     `rig-mission-control-live` was exactly that until this was written."""
     reachable = "\n".join(path.read_text(encoding="utf-8")
-                          for path in (SKILL_MD, README_EN, README_JA))
+                          for path in [*INVENTORY_MD, README_EN, README_JA])
     invisible = [name for name in entry_points() if name not in reachable]
     assert not invisible, (
         f"{invisible} is installed by pyproject and named in no inventory and no README — "
@@ -232,3 +241,38 @@ def _own_subcommands() -> set[str]:
     """
     text = (REPO_ROOT / "rig_workbench" / "cli.py").read_text(encoding="utf-8")
     return set(re.findall(r'^\s*(?:elif|if)\s+sub\s*==\s*"([a-z][a-z0-9-]*)"', text, re.M))
+
+
+#: `[tool.setuptools.package-data]`'s entry for the engine's own directory. Read as globs,
+#: because that is what setuptools matches names against.
+def _engine_package_data() -> list[str]:
+    text = PYPROJECT.read_text(encoding="utf-8")
+    section = text.split('"skills.engine" = [', 1)[1].split("]", 1)[0]
+    return re.findall(r'"([^"]+)"', section)
+
+
+def test_the_wheel_ships_every_document_the_entry_document_defers_to():
+    """`SKILL.md` is read whole on every activation, so its longest sections live in sibling
+    files and it keeps a summary and a reference. Shipping the entry document without them
+    ships a document whose references resolve to nothing.
+
+    Measured before this existed: dropping `RESOLVE.md` from `package-data` passed all 81
+    packaging tests. The patterns are matched the way setuptools matches them, so the current
+    `*.md` glob and a future explicit list both satisfy this.
+    """
+    patterns = _engine_package_data()
+    unshipped = [name for name in catalog.INVENTORY_DOCUMENTS
+                 if not any(fnmatch.fnmatch(name, pattern) for pattern in patterns)]
+    assert not unshipped, (
+        f"pyproject's skills.engine package-data ({patterns}) does not ship {unshipped}, "
+        f"which SKILL.md defers its sections to — an installed rig would carry an entry "
+        f"document pointing at files that are not there")
+
+
+def test_the_wheel_ships_the_pack_detail_rows_the_catalogue_points_at():
+    """The same claim for `PACKS.md`, which §2 names as the source of truth for what each
+    pack does. It was absent from this list for as long as it has existed."""
+    patterns = _engine_package_data()
+    assert any(fnmatch.fnmatch("PACKS.md", pattern) for pattern in patterns), (
+        f"pyproject's skills.engine package-data ({patterns}) does not ship PACKS.md, which "
+        f"§2 calls the source of truth for the pack rows")

@@ -52,7 +52,8 @@ def test_sales_is_absent_from_core_and_pack_owns_both_workflows(monkeypatch, tmp
     assert "自動登録されるものではありません" in command
     assert "$rig --recipe deal-review" in command
     assert "RIG_ALLOW_PROJECT_PACKS=1" in command
-    for relative in ("skills/engine/SKILL.md", "skills/engine/PACKS.md", "README.md", "README.ja.md"):
+    # `BRICKS.md` holds §2's Extension Catalog since SKILL.md was cut to a first turn's worth.
+    for relative in ("skills/engine/BRICKS.md", "skills/engine/PACKS.md", "README.md", "README.ja.md"):
         guidance = (REPO_ROOT / relative).read_text(encoding="utf-8")
         assert "RIG_ALLOW_PROJECT_PACKS=1" in guidance
         assert "$rig --recipe <installed-name>" in guidance

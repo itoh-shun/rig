@@ -5,7 +5,7 @@ argument-hint: "[\"<what you want>\"] [--type recipe|persona|knowledge|pack] [--
 
 # rig/forge — writing skills 🧱✨
 
-**Start the `rig:engine` skill with the Skill tool first and follow its SKILL.md** (PARSE → RESOLVE → COMPOSE → RUN, the §2 brick inventory, the §3.5 recipe schema, §5 tier resolution, context-minimal). This command is only the entry point; the procedure lives in `facets/instructions/skill-author` and is not repeated here.
+**Start the `rig:engine` skill with the Skill tool first and follow its SKILL.md** (PARSE → RESOLVE → COMPOSE → RUN, the `BRICKS.md` §2 brick inventory, the `RECIPE-SCHEMA.md` §3.5 recipe schema, `COMPOSE.md` §5 tier resolution, context-minimal). This command is only the entry point; the procedure lives in `facets/instructions/skill-author` and is not repeated here.
 
 Then follow `facets/instructions/skill-author` to generate the brick or pack:
 
@@ -29,7 +29,7 @@ rig **extends itself**. It takes a description, works out which bricks are neede
 |---|---|
 | project (the default, per product) | `<repo>/.claude/rig/...` |
 | user (`--user`, global) | `~/.claude/rig/...` |
-| shipped (working on rig itself, `--shipped`) | `skills/engine/...` plus the SKILL.md §2 inventory |
+| shipped (working on rig itself, `--shipped`) | `skills/engine/...` plus the `skills/engine/BRICKS.md` §2 inventory |
 
 ## Examples
 

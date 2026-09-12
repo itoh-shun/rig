@@ -2,7 +2,7 @@
 
 `docs/v3-architecture-design-brief.ja.md` §7 puts this in the second stage, in as many
 words: 「ブリック解決の宣言も 1 箇所に集まるため、散文と実装のずれ…も同時に解消できる」.
-The divergence it means is real and measured — `skills/engine/SKILL.md` §4.2.1 and
+The divergence it means is real and measured — `skills/engine/RESOLVE.md` §4.2.1 and
 `skills/engine/facets/instructions/resolve.md` 2.1 promise a user tier at
 `~/.claude/rig/recipes` and `~/.claude/rig/personas` that no code reads, and both call the
 lowest tier `shipped` while `rig_workbench/packs/model.py` calls it `core`.

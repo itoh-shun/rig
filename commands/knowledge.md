@@ -5,7 +5,7 @@ argument-hint: "[--research \"<topic>\"] [--graph] [\"<description>\" | --auto] 
 
 # rig/knowledge — the domain-knowledge generator (wiki)
 
-**Start the `rig:engine` skill with the Skill tool first and follow its SKILL.md** (context-minimal, knowledge-layer injection in §5, `facets/knowledge/_wiki`). This command is only the entry point; the procedure lives in `facets/instructions/knowledge-gen` and is not repeated here.
+**Start the `rig:engine` skill with the Skill tool first and follow its SKILL.md** (context-minimal, knowledge-layer injection in `COMPOSE.md` §5, `facets/knowledge/_wiki`). This command is only the entry point; the procedure lives in `facets/instructions/knowledge-gen` and is not repeated here.
 
 Then follow `facets/instructions/knowledge-gen` to generate the wiki page:
 

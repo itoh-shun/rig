@@ -295,7 +295,7 @@ def load_steps(fm: dict) -> list[dict]:
 
 
 # ── RESOLVE reference implementation (extends merge; badge/steps field derivation) ──
-# Deterministic reference implementation of SKILL.md §4.2.2 (extends, one level at a time)
+# Deterministic reference implementation of RESOLVE.md §4.2.2 (extends, one level at a time)
 # and facets/instructions/list.md (fixed badge order, steps: field). Lets CI (selftest Q)
 # golden-verify the prose engine's display rules — phase 1 of codifying RESOLVE.
 
@@ -512,7 +512,7 @@ def derive_steps_field(steps: list[dict]) -> str:
 
 
 # ── RESOLVE reference implementation phase 2 (condition evaluation, size classing, slicing, flag precedence) ──
-# Deterministic reference implementation of SKILL.md §4.3 (flag override), §4.3.1
+# Deterministic reference implementation of RESOLVE.md §4.3 (flag override), §4.3.1
 # (--only/--from/--to/--skip), and §4.4 (size-aware). Golden-verified by selftest R.
 
 _SIZE_RANK = {"S": 0, "M": 1, "L": 2, "XL": 3}
@@ -997,7 +997,7 @@ def resolve_recipe(name: str, *, out: Presenter = CONSOLE,
 
 
 def auto_orchestrate(steps: list[dict], manifest_default: bool = False) -> tuple[bool, str]:
-    """Whether this recipe auto-enables --orchestrate (deterministic; same rules as SKILL §4.3)."""
+    """Whether this recipe auto-enables --orchestrate (deterministic; same rules as RESOLVE.md §4.3)."""
     has_checks = any(s["checks"] for s in steps)
     has_needs = any(s["needs"] for s in steps)
     if has_checks or has_needs:

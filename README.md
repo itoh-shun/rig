@@ -902,7 +902,7 @@ It never invents its own execution logic — `scripts/rig-action-entrypoint.sh` 
 | **Knowledge** | `/rig:import`, `/rig:export`, `/rig:catalog`, `/rig:knowledge`, `/rig:persona`, `/rig:forge` (self-extension: author new bricks/packs from a description) |
 | **Planning** | `/rig:goal`, `/rig:design`, `/rig:brainstorm`, `/rig:tasks`, `/rig:loop` (recurring driver — polling/watch, the opposite of goal) |
 
-These are useful after you understand the core safety flow (§5–§7) — see [`skills/engine/SKILL.md`](./skills/engine/SKILL.md) §2 for the full brick catalog and opt-in Extension Catalog. (`/rig:queue` is covered in §6, `/rig:init` in the FAQ, and opt-in extensions in §15.)
+These are useful after you understand the core safety flow (§5–§7) — see [`skills/engine/BRICKS.md`](./skills/engine/BRICKS.md) §2 for the full brick catalog and opt-in Extension Catalog. (`/rig:queue` is covered in §6, `/rig:init` in the FAQ, and opt-in extensions in §15.)
 
 ### Install
 
@@ -973,7 +973,7 @@ cd /path/to/rig && claude --plugin-dir .   # reload after edits: /reload-plugins
 | `--verify-findings` | adversarially verify REJECT rationale via an independent `finding-verifier` |
 | `--global` | widen `--list` / `--validate` across tiers (shipped + global + project) |
 
-Full flag/brick reference lives in [`skills/engine/SKILL.md`](./skills/engine/SKILL.md) §2–§3 (not duplicated here — that's the drift-prevention rule `--validate` enforces).
+Full brick reference lives in [`skills/engine/BRICKS.md`](./skills/engine/BRICKS.md) §2 and the flag list in [`skills/engine/SKILL.md`](./skills/engine/SKILL.md) §3 (not duplicated here — that's the drift-prevention rule `--validate` enforces).
 
 ### Codex skill install
 

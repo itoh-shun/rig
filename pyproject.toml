@@ -80,7 +80,10 @@ benchmarks = [
   "tasks/**/*.txt",
 ]
 "skills.engine" = [
-  "SKILL.md",
+  # SKILL.md plus the documents it points at: §2/§3.5/§4/§5 live in BRICKS.md,
+  # RECIPE-SCHEMA.md, RESOLVE.md and COMPOSE.md, and the pack detail rows in PACKS.md.
+  # A glob rather than a list, like `facets/**/*.md` below, so the next one ships too.
+  "*.md",
   "agents/*.yaml",
   # drill fixture corpus: the answer keys plus the base/head trees they score.
   # The extension list is the whole filter, so a case written in a language missing

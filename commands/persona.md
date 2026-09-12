@@ -5,7 +5,7 @@ argument-hint: "[\"<what kind of reviewer>\"] [--user] [--name <id>]"
 
 # rig/persona — the persona generator
 
-**Start the `rig:engine` skill with the Skill tool first and follow its SKILL.md** (context-minimal, facet ordering, persona tier resolution in §5). This command is only the entry point; the procedure itself lives in `facets/instructions/persona-gen` and is not repeated here.
+**Start the `rig:engine` skill with the Skill tool first and follow its SKILL.md** (context-minimal, facet ordering, persona tier resolution in `COMPOSE.md` §5). This command is only the entry point; the procedure itself lives in `facets/instructions/persona-gen` and is not repeated here.
 
 Then follow `facets/instructions/persona-gen` to generate the persona:
 

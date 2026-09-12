@@ -19,9 +19,11 @@ only with one it must accept.
 """
 
 import argparse
+import re
 
 import pytest
 
+from rig_workbench.validation import catalog
 from rig_workbench.validation.catalog import (
     CATALOG_SECTION,
     INTERNAL_ONLY,
@@ -222,7 +224,12 @@ def test_a_heading_that_is_not_a_line_of_its_own_is_not_the_section_bound():
 
 # ── the check is pointed at the files it claims to read ──────────────────────
 def _shipped():
-    return (ROOT / "skills" / "engine" / "SKILL.md").read_text(encoding="utf-8")
+    """`BRICKS.md` — the file §2 lives in since `SKILL.md` was cut to what a first turn needs.
+
+    Asked of the check itself rather than spelled out here, so pointing the check at a
+    different document moves this with it instead of leaving it reading the old one.
+    """
+    return (ROOT / "skills" / "engine" / catalog.CATALOG_FILE).read_text(encoding="utf-8")
 
 
 def test_it_reads_the_repository_it_ships_with():
@@ -232,7 +239,7 @@ def test_it_reads_the_repository_it_ships_with():
     assert blind == [], blind
     assert stale == [], f"PACK_ROW_ONLY names something that is not a subcommand: {stale}"
     assert uncatalogued == [], (
-        f"SKILL.md §2 names no `rig-wb wb <name>` for these subcommands, so a session reading "
+        f"§2 names no `rig-wb wb <name>` for these subcommands, so a session reading "
         f"the brick catalog cannot find out they exist: {uncatalogued}")
 
 
@@ -241,7 +248,8 @@ def test_the_landmarks_it_slices_on_are_in_the_shipped_file():
     blind check nobody notices is what #491 is about."""
     lines = _shipped().splitlines()
     for landmark in CATALOG_SECTION:
-        assert lines.count(landmark) == 1, f"{landmark!r} is not a unique line of SKILL.md"
+        assert lines.count(landmark) == 1, (
+            f"{landmark!r} is not a unique line of skills/engine/{catalog.CATALOG_FILE}")
 
 
 # ── the shipped document, measured one row at a time ─────────────────────────
@@ -258,7 +266,8 @@ def _catalog_rows(document):
     real — this file's per-row cases go quiet then, and that test is what catches it.
     """
     section = _section(document, CATALOG_SECTION)
-    assert section is not None, "§2 could not be located in the shipped SKILL.md"
+    assert section is not None, (
+        f"§2 could not be located in the shipped skills/engine/{catalog.CATALOG_FILE}")
     return [(line, catalogued_subcommands(line)) for line in section.splitlines()
             if catalogued_subcommands(line)]
 
@@ -353,3 +362,111 @@ def test_the_document_before_470_was_fixed_is_refused_rather_than_passed():
     uncatalogued, _, blind = workbench_catalog(build_parser(), without)
     assert any("no `rig-wb wb <name>` entries found in §2" in why for why in blind), blind
     assert uncatalogued == []
+
+
+# ── the stubs SKILL.md kept point at the files that hold the sections ────────
+#: Each section SKILL.md defers, as (its heading in SKILL.md, the file that holds it). SKILL.md
+#: is read whole on every activation, so §2, §3.5, §4 and §5 live in their own files and it
+#: keeps a heading, a one-line summary and the reference. §2's file is asked of `catalog.py`
+#: rather than written out, because that is the one this module's other tests already read.
+DEFERRED_SECTIONS = (
+    ("## 2. ブリック目録", catalog.CATALOG_FILE),
+    ("## 3.5. Recipe スキーマ（正規定義）", "RECIPE-SCHEMA.md"),
+    ("## 4. RESOLVE — 解決順（manifest＋recipe＋flag＋size-aware 既定）", "RESOLVE.md"),
+    ("## 5. COMPOSE — ハーネス合成", "COMPOSE.md"),
+)
+
+
+@pytest.mark.parametrize("heading,filename", DEFERRED_SECTIONS,
+                         ids=[f[1] for f in DEFERRED_SECTIONS])
+def test_each_stub_points_at_a_file_that_holds_the_section_it_claims(heading, filename):
+    """A stub naming a file that does not exist, or that does not open with the section it
+    promised, is worse than the long document it replaced: the reader is sent somewhere and
+    the engine loses the section entirely. Nothing else checks this — `--validate` reads §2
+    and the brick files, not the pointers SKILL.md keeps.
+    """
+    engine = ROOT / "skills" / "engine"
+    skill = (engine / "SKILL.md").read_text(encoding="utf-8")
+    lines = skill.splitlines()
+
+    assert lines.count(heading) == 1, f"SKILL.md does not hold exactly one {heading!r}"
+    stub = "\n".join(lines[lines.index(heading) + 1:lines.index(heading) + 8])
+    assert f"`{filename}`" in stub, (
+        f"SKILL.md's {heading!r} stub does not name `{filename}`, so a reader is told a "
+        f"section moved and not where to")
+
+    target = engine / filename
+    assert target.is_file(), f"SKILL.md's {heading!r} stub points at {filename}, which is not a file"
+    body = target.read_text(encoding="utf-8").splitlines()
+    assert heading in body, (
+        f"{filename} does not carry {heading!r}: the stub promises a section the file it "
+        f"names does not hold")
+
+
+#: A catalogue row, in either table shape §2 uses — `| **id** |` with or without the `>`.
+_PACK_ROW_START = re.compile(r"^>?\s*\|\s*\*\*")
+
+
+# ── every pointer the split left behind resolves to a file ──────────────────
+def _sibling_pointers():
+    """Every `X.md` SKILL.md offers as a place to go: the deferred-section stubs, and the
+    右列 of §10's reference table.
+
+    Read off those two structures rather than off the whole document, because SKILL.md also
+    mentions `CLAUDE.md` and names brick files like `loop-driver.md` in prose, and neither is
+    a sibling document the reader is being sent to.
+    """
+    lines = (ROOT / "skills" / "engine" / "SKILL.md").read_text(encoding="utf-8").splitlines()
+    out = set()
+    for heading, _ in DEFERRED_SECTIONS:
+        start = lines.index(heading)
+        stop = next(i for i, line in enumerate(lines) if i > start and line.startswith("## "))
+        out.update(re.findall(r"`([A-Za-z0-9_.-]+\.md)`", "\n".join(lines[start + 1:stop])))
+    for line in lines:
+        if line.startswith("| ") and line.rstrip().endswith("|"):
+            out.update(re.findall(r"`([A-Za-z0-9_.-]+\.md)`", line.rsplit("|", 2)[-2]))
+    return out
+
+
+def test_every_place_the_entry_document_sends_the_reader_exists():
+    """A stub or a §10 row naming a file that is not there sends the reader nowhere.
+
+    Measured before this existed: renaming `RESOLVE.md` away left `--validate` at
+    PASS 71 / WARN 15 / FAIL 0, because the inventory corpus skipped what it could not open.
+    That branch is loud now, and this is the other half — the pointers themselves, including
+    the §10 rows `--validate` never reads.
+    """
+    engine = ROOT / "skills" / "engine"
+    names = _sibling_pointers()
+    assert len(names) >= len(DEFERRED_SECTIONS), (
+        f"SKILL.md offers only {sorted(names)} as somewhere to go; every deferred section is "
+        f"supposed to name its file")
+
+    missing = sorted(name for name in names if not (engine / name).is_file())
+    assert not missing, (
+        f"SKILL.md points at {missing}, which {'is' if len(missing) == 1 else 'are'} not "
+        f"under skills/engine/ — a reader following the reference finds nothing")
+
+
+def test_the_section_2_stub_holds_a_summary_and_not_the_catalogue():
+    """The point of the split is that §2's rows are read when wanted, not on every activation.
+
+    Re-pasting the catalogue under the stub would restore the cost the split removed and
+    nothing would notice: `--validate` reads `BRICKS.md`, and a duplicated table there is
+    still a well-formed §2. So the stub is asserted to be a summary — no pack rows, and short.
+    """
+    skill = (ROOT / "skills" / "engine" / "SKILL.md").read_text(encoding="utf-8")
+    lines = skill.splitlines()
+    start = lines.index(CATALOG_SECTION[0])
+    stub = lines[start + 1:next(i for i, line in enumerate(lines)
+                                if i > start and line.startswith("## "))]
+
+    rows = [line for line in stub if _PACK_ROW_START.match(line)]
+    assert not rows, (
+        f"SKILL.md's §2 stub carries {len(rows)} catalogue row(s); §2's rows belong in "
+        f"{catalog.CATALOG_FILE}, and a copy here is loaded on every activation")
+    body = "\n".join(stub)
+    assert len(body) < 600, (
+        f"SKILL.md's §2 stub is {len(body)} characters; it is meant to be a one-line "
+        f"summary and a reference, not the section")
+

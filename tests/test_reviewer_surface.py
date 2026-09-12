@@ -12,9 +12,13 @@ frontmatter carries `name`/`description`/`inject:` and nothing that restricts a 
 
 That is the fact this module pins, because a plan to delete the ten reviewer agents as
 duplicates of their personas depends on it being false. The prose is parsed rather than
-restated: the promises come out of `SKILL.md` §2's agent and persona rows and out of the two
+restated: the promises come out of §2's agent and persona rows and out of the two
 instruction facets that actually dispatch a fan-out, so a lane added to a document with no
 brick behind it fails here rather than at dispatch time.
+
+§2 lives in `skills/engine/BRICKS.md`; `SKILL.md` loads whole on every activation and keeps a
+one-line summary pointing there. Which file that is comes from `catalog.py` rather than from a
+path written here, for the same reason `_expand_braces` does.
 """
 
 from __future__ import annotations
@@ -24,15 +28,20 @@ import re
 
 import pytest
 
-# The same brace expander `--validate`'s §2 drift check uses. Restating it here would let the
-# test and the check disagree about what `{a,b}-reviewer` names, which is the one thing they
-# must not do.
-from rig_workbench.validation.catalog import _expand_braces
+# The same brace expander `--validate`'s §2 drift check uses, and the same landmarks it finds
+# §2 by. Restating either here would let the test and the check disagree — about what
+# `{a,b}-reviewer` names, or about which document and which lines are the catalogue — which is
+# the one thing they must not do.
+from rig_workbench.validation.catalog import (
+    CATALOG_SECTION,
+    _expand_braces,
+    _section,
+    catalog_document,
+)
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 AGENTS = ROOT / "agents"
 PERSONAS = ROOT / "skills" / "engine" / "facets" / "personas"
-SKILL_MD = ROOT / "skills" / "engine" / "SKILL.md"
 PARALLEL_REVIEW = ROOT / "skills" / "engine" / "facets" / "instructions" / "parallel-review.md"
 ADVERSARIAL_REVIEW = ROOT / "skills" / "engine" / "facets" / "instructions" / "adversarial-review.md"
 
@@ -45,9 +54,17 @@ def _read(path: pathlib.Path) -> str:
 
 
 def _section_2() -> str:
-    """SKILL.md §2 — the brick catalogue, where the agent row and the persona row live."""
-    skill = _read(SKILL_MD)
-    return skill[skill.index("## 2."):skill.index("## 3.")]
+    """§2 — the brick catalogue, where the agent row and the persona row live.
+
+    Located the way `--validate` locates it: the document `catalog.py` names, sliced on the
+    two landmarks it slices on. A heading that moved makes this raise rather than hand back
+    a section that is not §2.
+    """
+    section = _section(catalog_document(), CATALOG_SECTION)
+    assert section is not None, (
+        f"§2 could not be located by {CATALOG_SECTION[0]!r}..{CATALOG_SECTION[1]!r}; the "
+        f"catalogue this module reads has moved")
+    return section
 
 
 def _catalogued(prefix: str) -> set[str]:
@@ -202,7 +219,8 @@ def test_parallel_review_dispatches_exactly_the_four_standard_lanes() -> None:
 
 @pytest.mark.parametrize("agent,persona", sorted(_fallback_map().items()))
 def test_every_agent_has_a_persona_fallback(agent: str, persona: str) -> None:
-    """SKILL.md §5: the persona facet is what a host without the plugin's agents falls back to.
+    """§5 (`COMPOSE.md`): the persona facet is what a host without the plugin's agents falls
+    back to.
 
     An agent with no fallback is a lane that silently disappears outside a Claude Code
     session — headless `orchestrate.py`, CI, MCP — with nothing to compose in its place.

@@ -82,7 +82,8 @@ tier, as strings against a named anchor; `tests/test_brick_resolution_declaratio
 the resolver *actually* walks at run time and compares. The observation corrected the standing
 account of the divergence between rig's prose and its code. A user tier does exist — it is
 `~/.rig/packs/<pack>/…`, not the `~/.claude/rig/recipes` and `~/.claude/rig/personas` that
-`skills/engine/SKILL.md` and `facets/instructions/resolve.md` promise, and no code reads those.
+`skills/engine/RESOLVE.md` §4.2.1, `skills/engine/COMPOSE.md` §5 and
+`facets/instructions/resolve.md` promise, and no code reads those.
 `official` is a fifth tier the code walks and no prose table mentions, so the vocabulary gap is
 wider than `shipped` versus `core`. Recipes are resolved by two walks, not one: when the pack walk
 comes back empty, `orchestrate.recipes.resolve_recipe` walks `.rig/recipes`, `<org>/recipes` and
@@ -298,12 +299,25 @@ and neither does `ports/__init__.py`, which is protocols only; both pass the che
 is their design claim rather than an exemption.
 
 **`tests/test_reviewer_surface.py` pins the reviewer surface to the directories behind it.** The
-agent and persona rows of `SKILL.md` §2, the dispatch lanes of `facets/instructions/parallel-review`
+agent and persona rows of `BRICKS.md` §2, the dispatch lanes of `facets/instructions/parallel-review`
 and `adversarial-review`, and each reviewer agent's read-only tool allowlist are parsed out of the
 shipped files and held against `agents/` and `facets/personas/`, so a lane a document names with no
 brick behind it fails here rather than at dispatch.
 
 ### Changed
+
+**`skills/engine/SKILL.md` keeps what a first turn needs; its four longest sections moved to files
+beside it.** The SessionStart hook has the entry read the whole document before the user has said
+anything, and it had reached 104,492 B / 742 lines. §2's brick catalogue, §3.5's recipe schema,
+§4 RESOLVE and §5 COMPOSE are read when a run reaches them, not when it starts, so each has its own
+file now — `BRICKS.md`, `RECIPE-SCHEMA.md`, `RESOLVE.md` and `COMPOSE.md` — on the pattern
+`PACKS.md` set. SKILL.md keeps each section's heading, a one-line summary and the reference, so the
+numbered outline still reads end to end and every `§4.2`-style cross-reference still lands where it
+says it does. 104,492 B / 742 lines → 53,194 B / 465 lines, and the Agent Skills warning that
+the body exceeded the spec's recommended 500 lines clears at 462. §2 is a parsed contract rather than
+prose, so `--validate`'s three catalogue checks read `BRICKS.md`, named once in
+`catalog.CATALOG_FILE`; a missing reference file is a FAIL rather than a quietly smaller corpus.
+PASS/WARN/FAIL is unchanged but for that cleared warning.
 
 **`rig-wb govern --help` reads differently on seven lines, and that is the only user-visible part of
 the port migration.** The ten verb summaries are byte-identical to the ones govern shipped; what moved

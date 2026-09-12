@@ -167,7 +167,8 @@ def test_adaptive_bugfix_recipe_has_bounded_executor_flow():
 
 def test_adaptive_bugfix_is_in_inventory_without_changing_list_default():
     skill_root = config.RECIPES.parent
-    skill = (skill_root / "SKILL.md").read_text(encoding="utf-8")
+    # The brick inventory is `BRICKS.md`; SKILL.md keeps a one-line summary pointing at it.
+    skill = (skill_root / "BRICKS.md").read_text(encoding="utf-8")
     list_spec = (skill_root / "facets/instructions/list.md").read_text(encoding="utf-8")
 
     assert "`recipes/adaptive-bugfix`" in skill

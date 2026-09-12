@@ -35,9 +35,11 @@ be reached.
 
 ## Task 16 — the prose as a projection
 
-`skills/engine/SKILL.md` and `skills/engine/facets/instructions/resolve.md` carry tier tables
-of their own. They are a projection of the same fact, so they are parsed out of the shipped
-markdown and compared to the declaration.
+`skills/engine/RESOLVE.md`, `skills/engine/COMPOSE.md` and
+`skills/engine/facets/instructions/resolve.md` carry tier tables of their own. (The first two
+are where `SKILL.md` §4 and §5 live since the entry document was cut down to what a first turn
+needs.) They are a projection of the same fact, so they are parsed out of the shipped markdown
+and compared to the declaration.
 
 They do not agree today, so a bare assertion would be red on arrival and would stay red. The
 divergences are listed instead, one entry each, in `KNOWN_PROSE_DRIFT`, and the computed
@@ -66,6 +68,14 @@ from test_eval_cases import valid_case
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 SKILL_MD = REPO_ROOT / "skills" / "engine" / "SKILL.md"
+#: §4 and §5 of the engine's prose, each in its own file: `SKILL.md` keeps a one-line summary
+#: and the reference, because the whole of it loads on every activation.
+ENGINE_RESOLVE_MD = REPO_ROOT / "skills" / "engine" / "RESOLVE.md"
+ENGINE_COMPOSE_MD = REPO_ROOT / "skills" / "engine" / "COMPOSE.md"
+ENGINE_RECIPE_SCHEMA_MD = REPO_ROOT / "skills" / "engine" / "RECIPE-SCHEMA.md"
+#: The engine's prose as one text, for the questions asked of the document rather than of one
+#: of its tables: which tier words it uses at all.
+ENGINE_PROSE = (SKILL_MD, ENGINE_RESOLVE_MD, ENGINE_COMPOSE_MD, ENGINE_RECIPE_SCHEMA_MD)
 RESOLVE_MD = REPO_ROOT / "skills" / "engine" / "facets" / "instructions" / "resolve.md"
 
 #: The one name planted in every directory. One name in every tier is what makes the walk
@@ -95,29 +105,30 @@ KNOWN_PROSE_DRIFT = {
     # that does exist is `~/.rig/packs/<pack>/…`, which neither document mentions.
     ("path-not-walked", "resolve.md", "recipe", "user", "user:.claude/rig/recipes"):
         "resolve.md 2.1 sends recipes to `~/.claude/rig/recipes`; no code reads it",
-    ("path-not-walked", "SKILL.md", "recipe", "user", "user:.claude/rig/recipes"):
-        "SKILL.md 4.2.1 repeats the same `~/.claude/rig/recipes` row",
-    ("path-not-walked", "SKILL.md", "persona", "user", "user:.claude/rig/personas"):
-        "SKILL.md §5 sends personas to `~/.claude/rig/personas`; no code reads it",
+    ("path-not-walked", "RESOLVE.md", "recipe", "user", "user:.claude/rig/recipes"):
+        "RESOLVE.md 4.2.1 repeats the same `~/.claude/rig/recipes` row",
+    ("path-not-walked", "COMPOSE.md", "persona", "user", "user:.claude/rig/personas"):
+        "COMPOSE.md §5 sends personas to `~/.claude/rig/personas`; no code reads it",
     # The org tier exists, but not as a directory of loose files: `pack_roots` looks under
     # `$RIG_ORG_HOME/packs/<pack>/facets/personas`. `<org_dir>/recipes` is real — the recipe
     # fallback walk reads it — which is why no recipe row appears here.
-    ("path-not-walked", "SKILL.md", "persona", "org", "org:personas"):
-        "SKILL.md §5 sends personas to `<org_dir>/personas`; the org tier is packs only",
+    ("path-not-walked", "COMPOSE.md", "persona", "org", "org:personas"):
+        "COMPOSE.md §5 sends personas to `<org_dir>/personas`; the org tier is packs only",
     # Tiers the code walks that the table does not list at all.
     ("tier-missing-from-table", "resolve.md", "recipe", "org"):
         "resolve.md 2.1 lists three tiers; the org tier is walked (packs, and `<org>/recipes`)",
     ("tier-missing-from-table", "resolve.md", "recipe", "official"):
         "resolve.md 2.1 never mentions the official tier (`$RIG_HOME/packs/official`)",
-    ("tier-missing-from-table", "SKILL.md", "recipe", "org"):
-        "SKILL.md 4.2.1 omits org from the recipe table, though §5 says recipes resolve through it",
-    ("tier-missing-from-table", "SKILL.md", "recipe", "official"):
-        "SKILL.md 4.2.1 never mentions the official tier",
-    ("tier-missing-from-table", "SKILL.md", "persona", "official"):
-        "SKILL.md §5 lists four tiers; the official tier is the fifth and is walked",
+    ("tier-missing-from-table", "RESOLVE.md", "recipe", "org"):
+        "RESOLVE.md 4.2.1 omits org from the recipe table, though §5 says recipes resolve "
+        "through it",
+    ("tier-missing-from-table", "RESOLVE.md", "recipe", "official"):
+        "RESOLVE.md 4.2.1 never mentions the official tier",
+    ("tier-missing-from-table", "COMPOSE.md", "persona", "official"):
+        "COMPOSE.md §5 lists four tiers; the official tier is the fifth and is walked",
     # Vocabulary.
     ("vocabulary-prose-only", "shipped"):
-        "both documents call the lowest tier `shipped`; the code calls it `core`",
+        "every tier table calls the lowest tier `shipped`; the code calls it `core`",
     ("vocabulary-code-only", "core"):
         "the other half of the same rename: `core` appears in no prose tier table",
     ("vocabulary-code-only", "official"):
@@ -461,8 +472,8 @@ def test_the_recipe_fallback_walk_is_the_one_the_resolver_prints(tmp_path, monke
 
 _TIER_TABLES = (
     ("resolve.md", "recipe", RESOLVE_MD, "### 2.1 recipe ファイル検索順"),
-    ("SKILL.md", "recipe", SKILL_MD, "#### 4.2.1 recipe ファイル検索順"),
-    ("SKILL.md", "persona", SKILL_MD, "### persona facet の tier 解決"),
+    ("RESOLVE.md", "recipe", ENGINE_RESOLVE_MD, "#### 4.2.1 recipe ファイル検索順"),
+    ("COMPOSE.md", "persona", ENGINE_COMPOSE_MD, "### persona facet の tier 解決"),
 )
 _TIER_WORD = "|".join(sorted(set(bricks.TIER_ORDER) | set(PROSE_TIER_NAMES)))
 _CHAIN = re.compile(rf"(?:{_TIER_WORD})(?:\s*→\s*(?:{_TIER_WORD}))+")
@@ -499,9 +510,11 @@ def _anchor_and_path(claimed: str) -> tuple[str, str]:
 
 
 def _prose_tier_words() -> set[str]:
-    """Every tier word `SKILL.md` uses: its tier tables, its `scope` values, its `a → b` orders."""
-    text = SKILL_MD.read_text(encoding="utf-8")
-    words = {label for source, _kind, path, heading in _TIER_TABLES if source == "SKILL.md"
+    """Every tier word the engine's prose uses: its tier tables, its `scope` values, its
+    `a → b` orders."""
+    text = "\n".join(path.read_text(encoding="utf-8") for path in ENGINE_PROSE)
+    words = {label for source, _kind, path, heading in _TIER_TABLES
+             if source in {"RESOLVE.md", "COMPOSE.md"}
              for label, _path in _rows(path, heading)}
     scope = next(line for line in text.splitlines() if line.startswith("| `scope`"))
     words.update(value for value in _BACKTICKED.findall(scope) if re.fullmatch(r"[a-z]+", value))
@@ -547,7 +560,7 @@ def test_the_prose_tables_parse_into_something():
     counts = {(source, kind): len(_rows(path, heading))
               for source, kind, path, heading in _TIER_TABLES}
     assert counts == {
-        ("resolve.md", "recipe"): 3, ("SKILL.md", "recipe"): 3, ("SKILL.md", "persona"): 4,
+        ("resolve.md", "recipe"): 3, ("RESOLVE.md", "recipe"): 3, ("COMPOSE.md", "persona"): 4,
     }
     assert _prose_tier_words() == {"project", "user", "org", "shipped"}
 
