@@ -56,6 +56,8 @@ import pathlib
 import re
 import sys
 
+from rig_workbench import gitroot
+
 from .state import die, effective_base, git, load_task, record_sensor_status, repo_root
 
 SENSOR_CRITERION = "no_secret_leak"
@@ -96,18 +98,19 @@ _IDENTIFIER_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 # Entropy-detector allowlist: lockfile hashes / vendored trees are high-entropy
 # by construction and never secrets. Named patterns are NOT silenced by these.
 #
-# `corpora` covers drill's planted-defect fixtures: a case that measures whether a
-# reviewer spots a leaked credential has to contain something that looks like one.
-# The value is fabricated and the tree is synthetic by construction. Only the
-# entropy heuristic is silenced — a real vendor-formatted key (sk-ant-…, AKIA…)
-# planted there is still reported, so this cannot hide an actual leak.
+# Matched at ANY DEPTH, which is a rule only two directory names earn. `node_modules`
+# and `.git` are reserved by the tools that create them: a directory of either name is
+# that tool's tree wherever it sits, and its contents are not the repository's prose.
+# A name a project might choose for itself does not belong here — see
+# ALLOW_PATH_PREFIXES.
 ALLOW_SUFFIXES = (".lock", ".sum")
 ALLOW_BASENAMES = ("package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml")
-ALLOW_DIR_PARTS = ("node_modules", ".git", "corpora")
+ALLOW_DIR_PARTS = ("node_modules", ".git")
 
 # Anchored at the repository root rather than matched at any depth, unlike
-# ALLOW_DIR_PARTS. `evidence` is too ordinary a directory name to silence wherever
-# it appears; this silences the one tree whose whole purpose is to hold hashes.
+# ALLOW_DIR_PARTS. `evidence` and `corpora` are too ordinary a directory name to
+# silence wherever they appear; these silence the exact trees whose whole purpose is
+# to hold hashes and fabricated credentials.
 #
 # A signed evaluation result is hashes almost end to end — one digest per prompt
 # surface (~200 of them), a sha256 for each captured stdout and stderr, the case
@@ -120,7 +123,57 @@ ALLOW_DIR_PARTS = ("node_modules", ".git", "corpora")
 #
 # Only the entropy heuristic is silenced here. A real vendor-formatted credential
 # (sk-ant-…, AKIA…, a PEM header) written into an evidence file is still reported.
-ALLOW_PATH_PREFIXES = (("evals", "evidence"),)
+#
+# `skills/engine/corpora` is drill's planted-defect fixtures: a case that measures
+# whether a reviewer spots a leaked credential has to contain something that looks like
+# one. The value is fabricated and the tree is synthetic by construction. This used to
+# be a bare `corpora` in ALLOW_DIR_PARTS, matched at any depth — so ANY directory
+# anyone named `corpora`, anywhere in any repository rig scans, stopped the entropy
+# heuristic reporting under it, and a real leak parked in `some/project/corpora/`
+# went unseen. The corpora rig ships are at one address (`corpus_root()` and
+# `validation/drill.py` both build `skills/engine/corpora/fixture`), so that is the
+# address the exemption is written at.
+#
+# Only the entropy heuristic is silenced under either prefix. A real vendor-formatted
+# credential (sk-ant-…, AKIA…, a PEM header) written into one is still reported.
+ALLOW_PATH_PREFIXES = (("evals", "evidence"), ("skills", "engine", "corpora"))
+
+#: Files that together say "this checkout is rig itself".
+#:
+#: A NAME IS NOT AN ADDRESS — the same critique this module makes of a bare `corpora`
+#: applies to `evals/evidence` and `skills/engine/corpora` the moment the scanner is
+#: pointed at somebody else's repository. Both entries above are facts about THIS
+#: repository's layout, and nothing stops another project from having a top-level
+#: `evals/evidence/` of its own; there, the entry is not a considered exemption, it is a
+#: coincidence of naming that silences the heuristic over a whole tree.
+#:
+#: So the prefixes apply only inside a rig checkout, identified by two files that have to
+#: be there together: the engine's brick inventory and this scanner's own source. One
+#: marker alone is a file a project could plausibly have; both, at both addresses, is rig.
+#: A nested foreign checkout inside rig (`some/project/` with its own `.git`) is answered
+#: by this too — `invocation_worktree` answers with the INNERMOST repository, so scanning
+#: it resolves the toplevel to `some/project`, and `some/project/evals/evidence/leak.txt`
+#: would arrive as `evals/evidence/leak.txt` and be silenced by a prefix that was never
+#: about that repository. It is not a rig checkout, so no prefix applies and the leak
+#: reports.
+#:
+#: Outside a rig checkout the answer is always "no exemption", never "some other
+#: exemption": over-reporting is the safe direction for a scanner whose findings block an
+#: accept. `node_modules` and `.git` are unaffected — those names are reserved by the
+#: tools that make them, in any repository.
+#:
+#: THE MARKER IS COST, NOT PROOF: two empty files with these names make
+#: `is_rig_checkout` true, and anyone who can create them in a scanned tree already has
+#: the commit rights that buy the path shape anyway. It raises the price of the
+#: coincidence — a project does not grow `skills/engine/BRICKS.md` and
+#: `rig_workbench/workbench/secrets.py` by accident — and it is not an authenticity check.
+RIG_CHECKOUT_MARKERS = ("skills/engine/BRICKS.md", "rig_workbench/workbench/secrets.py")
+
+
+def is_rig_checkout(root: pathlib.Path) -> bool:
+    """True when `root` is a checkout of rig itself — see RIG_CHECKOUT_MARKERS."""
+    return all((root / marker).is_file() for marker in RIG_CHECKOUT_MARKERS)
+
 
 # The one entropy exemption that reads content rather than path: a content digest
 # written on a line that already names it as one. `"body_sha256": "<64 hex>"` is an
@@ -236,22 +289,40 @@ def mask(secret: str) -> str:
     return f"{secret[:4]}…{'*' * min(len(secret) - 6, 8)}…{secret[-2:]}"
 
 
-def entropy_allowlisted(rel: str) -> bool:
+def entropy_allowlisted(rel: str, *, rig_checkout: bool = False) -> bool:
     """True when `rel` is a known high-entropy-but-harmless location
-    (lockfiles / checksum files / vendored or VCS trees / signed eval evidence)."""
+    (lockfiles / checksum files / vendored or VCS trees / signed eval evidence).
+
+    `rig_checkout` says whether the repository `rel` is relative to is rig's own. When it
+    is false, ALLOW_PATH_PREFIXES does not apply at all — those two prefixes are facts
+    about this repository, not about repositories in general (RIG_CHECKOUT_MARKERS).
+
+    IT DEFAULTS TO FALSE, and the default is the whole safety property. Knowing which
+    repository a path belongs to takes a filesystem question, so a caller that holds only
+    a string cannot answer it — and the answer it gets by staying silent is the narrow
+    one: more findings, never fewer. A caller that means rig's prefixes has to say so.
+    `scan_paths` (through `scan_root`) and `scan_worktree_diff` are the two that measure
+    it, and they pass what they measured; nobody else can widen an exemption by omission.
+
+    A path that walks upward is refused BEFORE any rule is consulted, not after the last
+    one. Every caller hands in a repository-relative path (git on the diff side,
+    `scan_root` on the tree side) and none can produce a `..` today, but a rule whose
+    correctness depends on being asked in the right order is one edit away from being
+    wrong: `node_modules/../secrets.env` should not be exempt because its first component
+    is in ALLOW_DIR_PARTS. Leading `./` and Windows separators fall out for free.
+    """
     p = pathlib.PurePosixPath(rel.replace("\\", "/"))
-    if p.suffix in ALLOW_SUFFIXES or p.name in ALLOW_BASENAMES:
-        return True
-    if any(part in ALLOW_DIR_PARTS for part in p.parts):
-        return True
-    # Compared as path components, not as a string prefix. Every caller here hands in
-    # a repository-relative path produced by git, which never contains `..` — but a
-    # prefix test would also accept `evals/evidence/../elsewhere/x.json`, and proving
-    # that no caller can ever produce one is more expensive, and more fragile, than
-    # not depending on it. Leading `./` and `\` separators fall out for free.
     parts = tuple(part for part in p.parts if part != ".")
     if ".." in parts:
         return False
+    if p.suffix in ALLOW_SUFFIXES or p.name in ALLOW_BASENAMES:
+        return True
+    if any(part in ALLOW_DIR_PARTS for part in parts):
+        return True
+    if not rig_checkout:
+        return False
+    # Compared as path components, not as a string prefix, so that `evals/evidencex/`
+    # is not `evals/evidence`.
     return any(parts[:len(prefix)] == prefix for prefix in ALLOW_PATH_PREFIXES)
 
 
@@ -320,10 +391,11 @@ def _finding(rel: str, lineno: int, kind: str, secret: str) -> dict:
     return {"path": rel, "line": lineno, "kind": kind, "masked_excerpt": mask(secret)}
 
 
-def scan_line(line: str, rel: str, lineno: int, skip_entropy: bool | None = None) -> list[dict]:
+def scan_line(line: str, rel: str, lineno: int, skip_entropy: bool | None = None, *,
+              rig_checkout: bool = False) -> list[dict]:
     """Scan one line of text. Findings carry masked excerpts only."""
     if skip_entropy is None:
-        skip_entropy = entropy_allowlisted(rel)
+        skip_entropy = entropy_allowlisted(rel, rig_checkout=rig_checkout)
     findings: list[dict] = []
     spans: list[tuple[int, int]] = []
     for kind, rx in PATTERNS:
@@ -362,8 +434,13 @@ def scan_line(line: str, rel: str, lineno: int, skip_entropy: bool | None = None
     return findings
 
 
-def scan_file(path: pathlib.Path, rel: str | None = None) -> list[dict]:
-    """Scan a file. Binary (NUL in the first 8 KiB) and oversized files are skipped."""
+def scan_file(path: pathlib.Path, rel: str | None = None, *,
+              rig_checkout: bool = False) -> list[dict]:
+    """Scan a file. Binary (NUL in the first 8 KiB) and oversized files are skipped.
+
+    `rig_checkout` goes straight through to entropy_allowlisted, and false — the default
+    — means the path prefixes describe another repository's layout and none apply here.
+    """
     rel = rel if rel is not None else str(path)
     try:
         if path.stat().st_size > MAX_FILE_BYTES:
@@ -374,26 +451,113 @@ def scan_file(path: pathlib.Path, rel: str | None = None) -> list[dict]:
     if b"\0" in raw[:8192]:
         return []
     text = raw.decode("utf-8", errors="replace")
-    skip_entropy = entropy_allowlisted(rel)
+    skip_entropy = entropy_allowlisted(rel, rig_checkout=rig_checkout)
     findings: list[dict] = []
     for i, line in enumerate(text.splitlines(), start=1):
         findings.extend(scan_line(line, rel, i, skip_entropy=skip_entropy))
     return findings
 
 
+def scan_root(p: pathlib.Path) -> tuple[str | None, bool]:
+    """Where the scanned root `p` sits, and whether its repository is rig's own.
+
+    Returns `(prefix, rig_checkout)`. `prefix` is `p`'s location inside its repository as
+    a posix path (`""` or `"."` at the root), and **None when `p` is not inside a
+    repository at all** — then there is nothing to be relative to and names stay as the
+    caller addressed them.
+
+    THE ALLOWLIST READS A PATH, so the path it reads cannot depend on how the scan was
+    addressed. `rel` used to be `str(path)`, which is whatever the caller typed: the same
+    tree scanned as `.` produced `evals/evidence/run.json` and scanned as `/home/me/rig`
+    produced `/home/me/rig/evals/evidence/run.json`. Only the first has
+    `("evals", "evidence")` as its leading components — the second begins with `/` — so
+    `ALLOW_PATH_PREFIXES` silently stopped matching and the whole signed-evidence tree
+    reported: 264 findings became 501, the 237 extra all under `evals/evidence/`. An
+    allowlist that holds only when the operator types a relative path is not an allowlist.
+
+    So every scanned file is named repository-relative before any allowlist check, which
+    is also what the diff-scoped callers already hand in (git speaks repo-relative), and
+    the two scan entry points finally agree on one vocabulary.
+
+    The repository is asked of `rig_workbench.gitroot` — `invocation_worktree`, the
+    caller's own working tree, not `main_worktree`: a task worktree's `evals/evidence/` is
+    at *its* root, and naming it relative to the main checkout would put `../` in front of
+    everything. `invocation_worktree` answers with the INNERMOST repository, and that is
+    what makes the second half of this answer necessary: a nested checkout re-roots the
+    prefix, so the prefixes are spent only where they are true (RIG_CHECKOUT_MARKERS).
+
+    WITH NO REPOSITORY THE MARKERS STILL ANSWER. git says where the root is; it does
+    not say whose the tree is, and those are separate questions. A `git archive` extract
+    of this repository, a release tarball, a vendored copy — same bytes, same layout, no
+    `.git` — used to get a hardcoded `False` here and lose the exemption entirely:
+    scanning one produced 574 findings against a checkout's 264, the extra 237 under
+    `evals/evidence/` and 73 under `skills/engine/corpora/`. That is the false-positive
+    pile the prefixes exist to remove, arriving through a second door. So the no-repo
+    branches ask `is_rig_checkout` about the scanned root, which is the one thing still
+    answerable without git.
+
+    The root asked about is the SCANNED ROOT, not the nearest marker-bearing ancestor.
+    Outside a repository there is no toplevel to walk up to, and the alternative — an
+    unbounded climb toward `/` looking for markers — would let a rig checkout somewhere
+    above an unrelated tree lend it the exemption, which is the coincidence
+    RIG_CHECKOUT_MARKERS exists to price out. The cost is an asymmetry, recorded rather
+    than hidden: inside a repository, scanning `<root>/evals` still anchors at the
+    toplevel and is exempt; outside one it is not, because `evals` is then the root and
+    carries no markers. That direction over-reports, which is the direction this scanner
+    errs in.
+
+    Asked once per scanned root rather than once per file: a whole-tree scan walks
+    thousands of files and this is a subprocess.
+    """
+    base = p if p.is_dir() else p.parent
+    top = gitroot.invocation_worktree(base)
+    if top is None:
+        return None, is_rig_checkout(base)
+    top = top.resolve()
+    try:
+        prefix = base.resolve().relative_to(top).as_posix()
+    except ValueError:          # a toplevel the scanned root is somehow not under
+        return None, is_rig_checkout(base)
+    return prefix, is_rig_checkout(top)
+
+
+def _under(prefix: str | None, rel: str) -> str:
+    """`rel` re-rooted under `prefix`; `.`, `""` and None are all an empty prefix."""
+    return rel if prefix in (None, "", ".") else f"{prefix}/{rel}"
+
+
+def _as_addressed(p: pathlib.Path) -> str:
+    """A single file outside any repository, named as the caller named it.
+
+    Not its basename: `scan-secrets deep/nested/conf.json` reports the file the operator
+    asked about, and a finding that says `conf.json` has thrown away the half of the
+    path that says which one.
+    """
+    return p.as_posix().removeprefix("./")
+
+
 def scan_paths(paths: list[pathlib.Path]) -> list[dict]:
-    """Scan files and directory trees (vendored/VCS dirs skipped entirely)."""
+    """Scan files and directory trees (vendored/VCS dirs skipped entirely).
+
+    Findings name files repository-relative, so scanning a tree by its relative and by
+    its absolute path yields identical findings — see scan_root.
+    """
     findings: list[dict] = []
     for p in paths:
         if p.is_file():
-            findings.extend(scan_file(p))
+            prefix, rig = scan_root(p)
+            rel = _under(prefix, p.name) if prefix is not None else _as_addressed(p)
+            findings.extend(scan_file(p, rel, rig_checkout=rig))
         elif p.is_dir():
+            prefix, rig = scan_root(p)
             for f in sorted(p.rglob("*")):
                 if not f.is_file():
                     continue
-                if any(part in WALK_SKIP_DIRS for part in f.relative_to(p).parts):
+                rel = f.relative_to(p)
+                if any(part in WALK_SKIP_DIRS for part in rel.parts):
                     continue
-                findings.extend(scan_file(f))
+                findings.extend(scan_file(f, _under(prefix, rel.as_posix()),
+                                          rig_checkout=rig))
         else:
             die(f"path '{p}' does not exist")
     return findings
@@ -484,20 +648,26 @@ def untracked_files(wt: pathlib.Path) -> list[tuple[pathlib.Path, str]]:
     return out
 
 
-def scan_diff_text(diff_text: str) -> list[dict]:
+def scan_diff_text(diff_text: str, *, rig_checkout: bool = False) -> list[dict]:
     """Scan only the ADDED lines of a unified diff; line numbers refer to the new file."""
     findings: list[dict] = []
     for rel, lineno, text in iter_added_lines(diff_text):
-        findings.extend(scan_line(text, rel, lineno))
+        findings.extend(scan_line(text, rel, lineno, rig_checkout=rig_checkout))
     return findings
 
 
 def scan_worktree_diff(wt: pathlib.Path, base_commit: str) -> list[dict]:
     """Everything the task introduced on top of base: committed + uncommitted
-    changes (`git diff <base>`) plus untracked files (invisible to git diff)."""
-    findings = scan_diff_text(worktree_diff_text(wt, base_commit))
+    changes (`git diff <base>`) plus untracked files (invisible to git diff).
+
+    The worktree is the repository git names these paths relative to, so it is also what
+    decides whether ALLOW_PATH_PREFIXES applies: a task run against somebody else's
+    project gets `node_modules`/`.git` and the content rules, not rig's two prefixes.
+    """
+    rig = is_rig_checkout(wt)
+    findings = scan_diff_text(worktree_diff_text(wt, base_commit), rig_checkout=rig)
     for f, rel in untracked_files(wt):
-        findings.extend(scan_file(f, rel))
+        findings.extend(scan_file(f, rel, rig_checkout=rig))
     return findings
 
 

@@ -16,16 +16,23 @@ import pathlib
 import re
 import subprocess
 import sys
+import tempfile
 
 import pytest
 
-from rig_workbench.workbench.secrets import (BASE64_ENTROPY_THRESHOLD,
+from rig_workbench.workbench.detection_corpus import corpus_root
+from rig_workbench.workbench.secrets import (ALLOW_PATH_PREFIXES,
+                                             BASE64_ENTROPY_THRESHOLD,
+                                             RIG_CHECKOUT_MARKERS,
                                              apply_secret_sensor,
                                              digest_under_label,
                                              entropy_allowlisted,
-                                             git_id_under_label, mask,
+                                             git_id_under_label,
+                                             is_rig_checkout, mask,
                                              scan_diff_text,
+                                             scan_file,
                                              scan_line, scan_paths,
+                                             scan_root,
                                              scan_worktree_diff,
                                              shannon_entropy, split_key_value)
 
@@ -115,12 +122,14 @@ def test_named_patterns_still_fire_inside_lockfiles():
 def test_drill_corpus_fixtures_are_entropy_allowlisted_but_not_leak_proof():
     """A planted-credential case has to contain something that looks like a credential.
 
-    The entropy heuristic is silenced under `corpora/` so drill's fixtures do not
-    fail `no_secret_leak` by construction. Named patterns must still fire there —
-    otherwise the allowlist would be a place to hide a real leak.
+    The entropy heuristic is silenced under `skills/engine/corpora/` so drill's
+    fixtures do not fail `no_secret_leak` by construction. Named patterns must still
+    fire there — otherwise the allowlist would be a place to hide a real leak.
     """
+    # `rig_checkout=True` is not decoration: the prefixes only apply inside one, and the
+    # default is False so that a caller who never asked cannot silence anything.
     corpus_file = "skills/engine/corpora/fixture/cases/ts-mixed-violations/head/cache.ts"
-    assert entropy_allowlisted(corpus_file)
+    assert entropy_allowlisted(corpus_file, rig_checkout=True)
 
     # Scan the real fixture rather than a restated copy: the copy would drift, and
     # the literal would itself trip the scanner from this (non-allowlisted) file.
@@ -128,13 +137,56 @@ def test_drill_corpus_fixtures_are_entropy_allowlisted_but_not_leak_proof():
     assert any(len(re.findall(r"[a-f0-9]{32,}", ln)) for ln in planted), \
         "fixture no longer carries a high-entropy planted credential"
     for i, ln in enumerate(planted, 1):
-        assert scan_line(ln, corpus_file, i) == []
+        assert scan_line(ln, corpus_file, i, rig_checkout=True) == []
 
     # ...but a real vendor-formatted key planted in the same tree is still a leak.
     # Reuse SAMPLES rather than restating a token literal: a fresh one would show
     # up as an added line in every future diff scan of this file.
     kind, sample = SAMPLES[0]
-    findings = scan_line(f"const k = '{sample}'", corpus_file, 8)
+    findings = scan_line(f"const k = '{sample}'", corpus_file, 8, rig_checkout=True)
+    assert [f["kind"] for f in findings] == [kind]
+
+
+def test_only_rigs_own_corpora_are_allowlisted_not_any_folder_by_that_name(tmp_path,
+                                                                            monkeypatch):
+    """`corpora` used to be an ALLOW_DIR_PARTS entry, matched at any depth.
+
+    That made the name itself a silencer: any project that calls a directory `corpora`
+    — a linguistics dataset, a training set, anything — turned off the entropy
+    heuristic for everything beneath it, in any repository rig scans, and a real
+    credential parked there went unreported. `node_modules` and `.git` earn any-depth
+    matching because their creators reserve the name; `corpora` is a word.
+
+    rig's own fixture corpora have one address, so the exemption is written at it.
+    """
+    # Computed, never pasted, like every other fixture in this file.
+    leak = hashlib.sha256(b"rig secret-scan corpora depth fixture").hexdigest()
+    tree = make_rig_checkout(tmp_path / "proj")
+    planted = tree / "some" / "project" / "corpora"
+    planted.mkdir(parents=True)
+    (tree / "skills" / "engine" / "corpora" / "fixture").mkdir(parents=True)
+    (planted / "leak.txt").write_text(f"token={leak}\n", encoding="utf-8")
+    (tree / "skills" / "engine" / "corpora" / "fixture" / "seeded.ts").write_text(
+        f"const k = '{leak}'\n", encoding="utf-8")
+
+    monkeypatch.chdir(tree)
+    assert [(f["path"], f["kind"]) for f in scan_paths([pathlib.Path(".")])] == [
+        ("some/project/corpora/leak.txt", "high_entropy")]
+
+    assert not entropy_allowlisted("some/project/corpora/leak.txt")
+    assert not entropy_allowlisted("corpora/leak.txt")
+    # rig's real fixture corpus stays allowlisted — and at the address corpus_root()
+    # actually builds, read off that function rather than restated here, so moving the
+    # shipped corpus without moving the exemption fails this rather than going quiet.
+    shipped = corpus_root().parts[-4:-1]          # ("skills", "engine", "corpora")
+    assert shipped in ALLOW_PATH_PREFIXES
+    assert entropy_allowlisted("/".join(shipped) + "/fixture/cases/x.ts", rig_checkout=True)
+    # …and not when the caller cannot vouch for the checkout, which is the default.
+    assert not entropy_allowlisted("/".join(shipped) + "/fixture/cases/x.ts")
+    # …and only the entropy heuristic is silenced there, now as before.
+    kind, sample = SAMPLES[0]
+    findings = scan_line(f"const k = '{sample}'", "skills/engine/corpora/fixture/x.ts", 1,
+                         rig_checkout=True)
     assert [f["kind"] for f in findings] == [kind]
 
 
@@ -658,6 +710,30 @@ def test_scan_diff_text_reports_added_lines_with_new_file_lines():
     assert "AKIAIOSFODNN7EXAMPLE" not in findings[0]["masked_excerpt"]
 
 
+def plant_rig_markers(root: pathlib.Path) -> pathlib.Path:
+    """A scratch tree the scanner recognises as rig itself. No git — see make_rig_checkout.
+
+    ALLOW_PATH_PREFIXES only applies inside one (RIG_CHECKOUT_MARKERS), so a fixture that
+    wants to exercise those prefixes has to be one. Planting by the constant rather than
+    by two restated path literals is the point for these fixtures: change what identifies
+    a rig checkout and they follow. The one test that must NOT follow is the one pinning
+    what the constant means — it writes the names out, below.
+    """
+    root.mkdir(parents=True, exist_ok=True)
+    for marker in RIG_CHECKOUT_MARKERS:
+        f = root / marker
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text("# marker\n", encoding="utf-8")
+    return root
+
+
+def make_rig_checkout(root: pathlib.Path) -> pathlib.Path:
+    """plant_rig_markers + `git init`: a rig checkout in the ordinary sense."""
+    plant_rig_markers(root)
+    _git(root, "init", "-q")
+    return root
+
+
 def _git(repo, *args):
     subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.com", *args],
                    cwd=repo, check=True, capture_output=True, text=True)
@@ -673,6 +749,310 @@ def make_repo(tmp_path):
     sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, check=True,
                          capture_output=True, text=True).stdout.strip()
     return repo, sha
+
+
+def test_the_evidence_allowlist_holds_however_the_tree_is_addressed(tmp_path, monkeypatch):
+    """One tree, four ways of naming it, one set of findings.
+
+    `rel` used to be whatever the caller typed. Scanned as `.` a path arrived as
+    `evals/evidence/x.json`, whose leading components are the ALLOW_PATH_PREFIXES entry;
+    scanned as `/abs/tree` the same file arrived as `/abs/tree/evals/evidence/x.json`,
+    whose first component is `/`, so the prefix matched nothing and the whole
+    signed-evidence tree reported. Measured on this repository: 264 findings by relative
+    path, 501 by absolute, the 237 extra all `high_entropy` under `evals/evidence/`.
+
+    The tree is a repository of its own so the anchor is decided rather than inherited
+    from wherever pytest put tmp_path.
+    """
+    tree = make_rig_checkout(tmp_path / "proj")
+    (tree / "evals" / "evidence").mkdir(parents=True)
+    (tree / "src").mkdir()
+    # Computed, never pasted — a literal high-entropy value in this file would be an
+    # added line in this file's own diff scan. The same value sits in both places, so
+    # what separates them is the path rule and nothing else.
+    entropic = hashlib.sha256(b"rig secret-scan addressing fixture").hexdigest()
+    (tree / "evals" / "evidence" / "x.json").write_text(
+        json.dumps({"v": entropic}) + "\n", encoding="utf-8")
+    (tree / "src" / "app.py").write_text(f'KEY = "{entropic}"\n', encoding="utf-8")
+
+    monkeypatch.chdir(tree)
+    by_dot = scan_paths([pathlib.Path(".")])
+    by_absolute = scan_paths([tree])
+    monkeypatch.chdir(tmp_path)
+    by_relative_name = scan_paths([pathlib.Path("proj")])
+
+    assert by_dot == by_absolute == by_relative_name
+    # The evidence file is allowlisted every way; the identical value outside it is not,
+    # which is what proves the fixture really is high-entropy rather than merely quiet.
+    assert [(f["path"], f["kind"]) for f in by_dot] == [("src/app.py", "high_entropy")]
+
+    # And the anchor is the repository root, not the argument: naming the evidence
+    # subtree directly still produces the repo-relative path the allowlist reads.
+    assert scan_paths([tree / "evals"]) == []
+    assert entropy_allowlisted("evals/evidence/x.json", rig_checkout=True)
+
+
+def test_the_prefixes_are_rig_facts_and_a_nested_checkout_does_not_inherit_them(
+        tmp_path, monkeypatch):
+    """`invocation_worktree` answers with the INNERMOST repository.
+
+    So a checkout nested inside rig re-roots the prefix: scanning `some/project/`, which
+    has its own `.git`, resolves the toplevel to `some/project`, and a leak at
+    `some/project/evals/evidence/leak.txt` arrives as `evals/evidence/leak.txt` — the
+    exact shape ALLOW_PATH_PREFIXES silences, under a repository the prefix was never
+    about. Naming alone must not buy the exemption; being rig must.
+    """
+    outer = make_rig_checkout(tmp_path / "rig")
+    inner = outer / "some" / "project" / "evals" / "evidence"
+    inner.mkdir(parents=True)
+    _git(outer / "some" / "project", "init", "-q")
+    leak = hashlib.sha256(b"rig secret-scan nested checkout fixture").hexdigest()
+    (inner / "leak.txt").write_text(f"token={leak}\n", encoding="utf-8")
+
+    # Addressed at the nested repository, which is where the prefix used to re-root.
+    assert [(f["path"], f["kind"]) for f in scan_paths([outer / "some" / "project"])] == [
+        ("evals/evidence/leak.txt", "high_entropy")]
+    # …and from the outer rig checkout, where the path does not match the prefix anyway.
+    monkeypatch.chdir(outer)
+    assert ("some/project/evals/evidence/leak.txt", "high_entropy") in [
+        (f["path"], f["kind"]) for f in scan_paths([pathlib.Path(".")])]
+
+
+def test_a_foreign_repo_with_the_same_directory_names_gets_no_exemption(tmp_path):
+    """A name is not an address — the critique this module makes of a bare `corpora`.
+
+    Nothing stops another project from having a top-level `evals/evidence/` or
+    `skills/engine/corpora/`; there the entry is not a considered exemption but a
+    coincidence of naming that would silence the heuristic over a whole tree. Outside a
+    rig checkout the answer is "no exemption", never "some other exemption" — over-report
+    is the safe direction for a scanner whose findings block an accept.
+    """
+    foreign = tmp_path / "someone-elses-project"
+    (foreign / "evals" / "evidence").mkdir(parents=True)
+    (foreign / "skills" / "engine" / "corpora").mkdir(parents=True)
+    _git(foreign, "init", "-q")
+    assert not is_rig_checkout(foreign)
+    leak = hashlib.sha256(b"rig secret-scan foreign repo fixture").hexdigest()
+    (foreign / "evals" / "evidence" / "x.json").write_text(
+        json.dumps({"v": leak}) + "\n", encoding="utf-8")
+    (foreign / "skills" / "engine" / "corpora" / "y.json").write_text(
+        json.dumps({"v": leak}) + "\n", encoding="utf-8")
+
+    assert sorted((f["path"], f["kind"]) for f in scan_paths([foreign])) == [
+        ("evals/evidence/x.json", "high_entropy"),
+        ("skills/engine/corpora/y.json", "high_entropy")]
+    # The any-depth names are reserved by the tools that make them, so they still hold.
+    (foreign / "node_modules").mkdir()
+    (foreign / "node_modules" / "z.js").write_text(f'var k="{leak}"\n', encoding="utf-8")
+    assert len(scan_paths([foreign])) == 2
+
+
+def test_a_file_outside_any_repository_keeps_the_path_it_was_addressed_by(tmp_path,
+                                                                         monkeypatch):
+    """Naming files repository-relative must not shorten them to a basename.
+
+    Outside a repository there is no root to be relative to, so the answer is the path
+    the operator asked about. `conf.json` has thrown away the half that says which one.
+    """
+    deep = tmp_path / "deep" / "nested"
+    deep.mkdir(parents=True)
+    leak = hashlib.sha256(b"rig secret-scan outside-a-repo fixture").hexdigest()
+    (deep / "conf.json").write_text(json.dumps({"v": leak}) + "\n", encoding="utf-8")
+
+    monkeypatch.chdir(tmp_path)
+    assert [f["path"] for f in scan_paths([pathlib.Path("deep/nested/conf.json")])] == [
+        "deep/nested/conf.json"]
+    assert [f["path"] for f in scan_paths([pathlib.Path("./deep/nested/conf.json")])] == [
+        "deep/nested/conf.json"]
+    # A directory root outside a repository is likewise relative to what was scanned.
+    assert [f["path"] for f in scan_paths([pathlib.Path(".")])] == ["deep/nested/conf.json"]
+
+
+def test_a_path_that_walks_upward_is_refused_before_any_rule_is_consulted():
+    """Ordering the `..` guard after ALLOW_DIR_PARTS made the guard depend on position."""
+    assert not entropy_allowlisted("node_modules/../secrets.env")
+    assert not entropy_allowlisted(".git/../secrets.env")
+    assert not entropy_allowlisted("evals/evidence/../elsewhere/x.json")
+    assert not entropy_allowlisted("x/../y.lock")
+    # …while the same names without the escape are exempt exactly as before.
+    assert entropy_allowlisted("node_modules/pkg/dist/index.js")
+    assert entropy_allowlisted("y.lock")
+
+
+def test_a_rig_source_tree_that_is_not_a_git_working_tree_keeps_its_exemption(tmp_path,
+                                                                             monkeypatch):
+    """No `git init` here, on purpose — that is the whole fixture.
+
+    git says where a root is; it does not say whose tree it is. A `git archive` extract,
+    a release tarball, a vendored copy: same bytes, same layout, no `.git`. `scan_root`
+    used to answer a hardcoded False there and drop the exemption, so scanning the
+    extract of this repository produced 574 findings against a checkout's 264 — the
+    extra 237 under `evals/evidence/` and 73 under `skills/engine/corpora/`, which is
+    precisely the pile ALLOW_PATH_PREFIXES exists to remove, arriving through a second
+    door.
+    """
+    entropic = hashlib.sha256(b"rig secret-scan no-git-extract fixture").hexdigest()
+
+    def tree(root: pathlib.Path, *, markers: bool) -> pathlib.Path:
+        if markers:
+            plant_rig_markers(root)
+        (root / "evals" / "evidence").mkdir(parents=True)
+        (root / "src").mkdir(parents=True)
+        (root / "evals" / "evidence" / "x.json").write_text(
+            json.dumps({"v": entropic}) + "\n", encoding="utf-8")
+        (root / "src" / "app.py").write_text(f'KEY = "{entropic}"\n', encoding="utf-8")
+        assert not (root / ".git").exists(), "the fixture is only a fixture without git"
+        return root
+
+    extract = tree(tmp_path / "rig-extract", markers=True)
+    assert is_rig_checkout(extract)
+    assert scan_root(extract) == (None, True)
+    assert [(f["path"], f["kind"]) for f in scan_paths([extract])] == [
+        ("src/app.py", "high_entropy")]
+    # …and by the relative address too, which is what the operator actually types.
+    monkeypatch.chdir(extract)
+    assert scan_paths([pathlib.Path(".")]) == scan_paths([extract])
+
+    # An unmarked tree in the same no-repository situation gets no exemption.
+    foreign = tree(tmp_path / "someone-elses-extract", markers=False)
+    assert scan_root(foreign) == (None, False)
+    assert sorted((f["path"], f["kind"]) for f in scan_paths([foreign])) == [
+        ("evals/evidence/x.json", "high_entropy"), ("src/app.py", "high_entropy")]
+
+
+def test_both_markers_are_required_and_neither_alone_will_do():
+    """The names are written out here rather than read from the constant.
+
+    Every other fixture plants by RIG_CHECKOUT_MARKERS so it follows a redefinition;
+    this one is the definition, so it has to disagree with the constant when the constant
+    changes. Reducing the tuple to a single entry, or relaxing the `all()` to `any()`,
+    leaves the rest of this module green and fails here.
+    """
+    with tempfile.TemporaryDirectory() as td:
+        root = pathlib.Path(td)
+        assert not is_rig_checkout(root)
+
+        bricks = root / "skills" / "engine" / "BRICKS.md"
+        bricks.parent.mkdir(parents=True)
+        bricks.write_text("# inventory\n", encoding="utf-8")
+        assert is_rig_checkout(root) is False, "one marker is a file a project could have"
+
+        scanner = root / "rig_workbench" / "workbench" / "secrets.py"
+        scanner.parent.mkdir(parents=True)
+        scanner.write_text("# scanner\n", encoding="utf-8")
+        assert is_rig_checkout(root) is True
+
+        # …and neither one alone, taken from the other side.
+        bricks.unlink()
+        assert is_rig_checkout(root) is False
+        # A directory of the right name is not the file the marker names.
+        bricks.mkdir()
+        assert is_rig_checkout(root) is False
+
+
+def test_every_sink_asks_before_it_exempts(tmp_path):
+    """The default lives on entropy_allowlisted; each sink has to actually forward it.
+
+    Flipping any one of scan_line / scan_file / scan_diff_text back to `True` while
+    entropy_allowlisted stays `False` is invisible to a test that only ever calls
+    entropy_allowlisted — so each sink is asked here, with no keyword, about the one path
+    shape the prefixes would silence.
+    """
+    entropic = hashlib.sha256(b"rig secret-scan sink default fixture").hexdigest()
+    rel = "evals/evidence/x.json"
+    body = json.dumps({"v": entropic})
+
+    # scan_line
+    assert [f["kind"] for f in scan_line(body, rel, 1)] == ["high_entropy"]
+    assert scan_line(body, rel, 1, rig_checkout=True) == []
+
+    # scan_diff_text — the whole added-file diff, as the gate sees one
+    diff = ("diff --git a/evals/evidence/x.json b/evals/evidence/x.json\n"
+            "--- /dev/null\n"
+            f"+++ b/{rel}\n"
+            "@@ -0,0 +1,1 @@\n"
+            f"+{body}\n")
+    findings = scan_diff_text(diff)
+    assert [(f["path"], f["kind"]) for f in findings] == [(rel, "high_entropy")]
+    assert scan_diff_text(diff, rig_checkout=True) == []
+
+    # scan_file
+    f = tmp_path / "x.json"
+    f.write_text(body + "\n", encoding="utf-8")
+    assert [x["kind"] for x in scan_file(f, rel)] == ["high_entropy"]
+    assert scan_file(f, rel, rig_checkout=True) == []
+
+
+def test_a_linked_worktree_is_its_own_root_and_keeps_the_exemption(tmp_path):
+    """In a linked worktree `.git` is a FILE, and the toplevel is the worktree itself.
+
+    This is where rig actually runs — every task works in one — so the case that decides
+    whether `evals/evidence/` is exempt during a task deserves a fixture rather than an
+    argument. `invocation_worktree` asks git rather than looking for a `.git` directory,
+    which is why it holds; nothing here would notice if that changed.
+    """
+    main = make_rig_checkout(tmp_path / "main")
+    (main / "seed.txt").write_text("seed\n", encoding="utf-8")
+    _git(main, "add", "-A")
+    _git(main, "commit", "-q", "-m", "base")
+
+    linked = tmp_path / "linked"
+    _git(main, "worktree", "add", "-q", "-b", "task", str(linked))
+    assert (linked / ".git").is_file(), "a linked worktree keeps a .git file, not a dir"
+
+    assert scan_root(linked) == (".", True)
+    entropic = hashlib.sha256(b"rig secret-scan linked worktree fixture").hexdigest()
+    (linked / "evals" / "evidence").mkdir(parents=True)
+    (linked / "evals" / "evidence" / "r.json").write_text(
+        json.dumps({"v": entropic}) + "\n", encoding="utf-8")
+    (linked / "src").mkdir()
+    (linked / "src" / "app.py").write_text(f'KEY = "{entropic}"\n', encoding="utf-8")
+    assert [(f["path"], f["kind"]) for f in scan_paths([linked])] == [
+        ("src/app.py", "high_entropy")]
+
+
+def test_the_gate_and_the_streaming_preview_agree_on_whose_evidence_is_exempt(tmp_path):
+    """One sink, one answer, measured on both lanes of the same worktree.
+
+    `stream-checks` is advertised as a preview of the gate's verdict, and it had copied
+    `scan_worktree_diff`'s call sequence rather than calling it. The copy never measured
+    whether the worktree was a rig checkout, so the fail-open default handed rig's
+    ALLOW_PATH_PREFIXES to every repository rig is pointed at: on a foreign task the gate
+    failed `evals/evidence/r.json` while its own preview printed no hints. A preview that
+    contradicts the verdict is worse than no preview.
+    """
+    from rig_workbench.workbench import streaming
+
+    # Computed, never pasted, like every other fixture here.
+    leak = hashlib.sha256(b"rig secret-scan two-lane fixture").hexdigest()
+
+    def probe(root: pathlib.Path, *, rig: bool) -> tuple[list[dict], list[dict]]:
+        """(what the gate's sink says, what the streaming lane says) for one worktree."""
+        if rig:
+            make_rig_checkout(root)
+        else:
+            root.mkdir(parents=True)
+            _git(root, "init", "-q")
+        (root / "seed.txt").write_text("seed\n", encoding="utf-8")
+        _git(root, "add", "-A")
+        _git(root, "commit", "-q", "-m", "base")
+        base = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, check=True,
+                              capture_output=True, text=True).stdout.strip()
+        (root / "evals" / "evidence").mkdir(parents=True)
+        (root / "evals" / "evidence" / "r.json").write_text(
+            json.dumps({"v": leak}) + "\n", encoding="utf-8")
+        run_d = root.parent / f"{root.name}-run"   # no recorded reviews: the anchor lane
+        run_d.mkdir()                              # has nothing to say about this
+        return scan_worktree_diff(root, base), streaming._scan_once(root, base, run_d)["secrets"]
+
+    foreign_gate, foreign_stream = probe(tmp_path / "someone-elses-task", rig=False)
+    assert [(f["path"], f["kind"]) for f in foreign_gate] == [
+        ("evals/evidence/r.json", "high_entropy")]
+    assert foreign_stream == foreign_gate
+
+    rig_gate, rig_stream = probe(tmp_path / "rig-task", rig=True)
+    assert rig_gate == []
+    assert rig_stream == rig_gate
 
 
 def test_scan_worktree_diff_sees_uncommitted_and_untracked(tmp_path):
@@ -864,8 +1244,9 @@ def test_signed_eval_evidence_is_entropy_allowlisted_but_not_leak_proof():
     time is one nobody reads.
     """
     evidence = "evals/evidence/style-persona-qiita-tech-writer/current.json"
-    assert entropy_allowlisted(evidence)
-    assert scan_line(f'"result_sha256": "{RANDOM_B64_40}"', evidence, 1) == []
+    assert entropy_allowlisted(evidence, rig_checkout=True)
+    assert scan_line(f'"result_sha256": "{RANDOM_B64_40}"', evidence, 1,
+                     rig_checkout=True) == []
 
 
 def test_the_evidence_allowlist_is_anchored_and_still_reports_real_credentials():
@@ -876,18 +1257,26 @@ def test_the_evidence_allowlist_is_anchored_and_still_reports_real_credentials()
     `ALLOW_DIR_PARTS`. And only the entropy heuristic is silenced: a vendor-formatted
     credential written into an evidence file is still a leak and still reported.
     """
-    assert not entropy_allowlisted("src/evidence/collected.json")
-    assert not entropy_allowlisted("docs/evals/evidence/example.md")
+    assert not entropy_allowlisted("src/evidence/collected.json", rig_checkout=True)
+    assert not entropy_allowlisted("docs/evals/evidence/example.md", rig_checkout=True)
     # Compared as path components rather than as a string prefix, so a path that only
     # starts with the tree cannot borrow its silence. Raised by an adversarial review
     # of this change: git never hands these callers a `..`, but proving that no caller
     # ever will is more expensive, and more fragile, than not depending on it.
-    assert not entropy_allowlisted("evals/evidence/../elsewhere/current.json")
-    assert not entropy_allowlisted("evals/evidence-notes/current.json")
+    assert not entropy_allowlisted("evals/evidence/../elsewhere/current.json",
+                                   rig_checkout=True)
+    assert not entropy_allowlisted("evals/evidence-notes/current.json", rig_checkout=True)
     # The forms that are legitimately the same path still resolve to it.
-    assert entropy_allowlisted("./evals/evidence/case/current.json")
-    assert entropy_allowlisted("evals\\evidence\\case\\current.json")
+    assert entropy_allowlisted("./evals/evidence/case/current.json", rig_checkout=True)
+    assert entropy_allowlisted("evals\\evidence\\case\\current.json", rig_checkout=True)
+    # A third way it could become a hiding place, closed by the default: a caller that
+    # never established which repository this path belongs to gets no exemption at all.
+    assert not entropy_allowlisted("evals/evidence/case/current.json")
 
     evidence = "evals/evidence/some-case/current.json"
-    findings = scan_line('"note": "AKIAIOSFODNN7EXAMPLE"', evidence, 2)
+    # Through SAMPLES rather than the literal this line used to carry: adding
+    # `rig_checkout=True` makes this an ADDED line, and an added line holding a real
+    # token shape is a finding in this file's own diff scan — which is how the scanner
+    # caught it. The rule the rest of this module already follows now applies here too.
+    findings = scan_line(f'"note": "{SAMPLES[0][1]}"', evidence, 2, rig_checkout=True)
     assert [f["kind"] for f in findings] == ["aws_access_key"]

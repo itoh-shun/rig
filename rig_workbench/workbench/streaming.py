@@ -46,28 +46,40 @@ from .destructive import scan_task_diff as destructive_scan
 from .injection import format_findings as injection_format
 from .injection import scan_file as injection_scan_file
 from .injection import scan_line as injection_scan_line
-from .secrets import iter_added_lines, untracked_files, worktree_diff_text
-from .secrets import scan_file as secret_scan_file
-from .secrets import scan_line as secret_scan_line
+from .secrets import (iter_added_lines, scan_worktree_diff, shared_diff_cache,
+                      untracked_files, worktree_diff_text)
 from .state import die, effective_base, load_task, repo_root, resolve_task_id
 
 
 def _scan_once(wt: pathlib.Path, base: str, run_d: pathlib.Path) -> dict:
     """One pass of the fast sensors: the worktree diff, plus the reviewer bodies
-    recorded under `run_d`. Pure read."""
-    diff_text = worktree_diff_text(wt, base)
-    untracked = untracked_files(wt)
+    recorded under `run_d`. Pure read.
 
-    secrets: list[dict] = []
-    injections: list[dict] = []
-    for rel, lineno, text in iter_added_lines(diff_text):
-        secrets.extend(secret_scan_line(text, rel, lineno))
-        injections.extend(injection_scan_line(text, rel, lineno))
-    for f, rel in untracked:
-        secrets.extend(secret_scan_file(f, rel))
-        injections.extend(injection_scan_file(f, rel))
-    destructive, n_deleted = destructive_scan(wt, base)
-    anchors = scan_task_reviews(run_d, wt, base).findings
+    THE SECRET LANE CALLS THE GATE'S OWN ENTRANCE. It used to re-implement
+    `scan_worktree_diff`'s two loops inline, which is the same findings only for as long
+    as nobody changes that function — and somebody did: the copy never measured whether
+    the worktree was a rig checkout, so rig's `ALLOW_PATH_PREFIXES` silenced
+    `evals/evidence/` in *every* repository here while the gate, which does measure,
+    failed on it. A preview that disagrees with the verdict it previews is worse than no
+    preview, so there is one entrance and the difference is zero by construction rather
+    than by review.
+
+    The whole pass runs inside `shared_diff_cache()`, exactly as `cmd_gate` wraps its own
+    sensor batch: the secret, injection and destructive lanes all want the same
+    `git diff` and `git ls-files`, and one pass is one snapshot of the worktree.
+    """
+    with shared_diff_cache():
+        diff_text = worktree_diff_text(wt, base)
+        untracked = untracked_files(wt)
+        secrets = scan_worktree_diff(wt, base)
+
+        injections: list[dict] = []
+        for rel, lineno, text in iter_added_lines(diff_text):
+            injections.extend(injection_scan_line(text, rel, lineno))
+        for f, rel in untracked:
+            injections.extend(injection_scan_file(f, rel))
+        destructive, n_deleted = destructive_scan(wt, base)
+        anchors = scan_task_reviews(run_d, wt, base).findings
     # The bodies are read once more to fingerprint them rather than threaded out
     # of the scan: a handful of small markdown files, and keeping the digest
     # derivable from `run_d` alone is what lets a caller ask "did anything
