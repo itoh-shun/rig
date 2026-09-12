@@ -24,6 +24,11 @@ steps:
       - "no_unrelated_diff — 依頼と無関係な差分が含まれていない"
       - "fix_is_minimal — 修正が最小限である"
       - "no_unrelated_refactor — 依頼にない広範なリファクタが混ざっていない"
+    acceptance_binding:
+      - task_intent_satisfied
+      - no_unrelated_diff
+      - fix_is_minimal
+      - no_unrelated_refactor
   - id: acceptance
     instruction: acceptance-check
     executor: checks-only

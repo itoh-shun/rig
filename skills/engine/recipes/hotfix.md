@@ -18,6 +18,7 @@ steps:
     pattern: serial
     gate: acceptance-gate
     acceptance: ["build が成功", "lint 0 件"]
+    acceptance_binding: [unobserved, unobserved]
     max_retries: 1
     personas: [implementer]
     policies: [risk-based-testing, ci-cost]

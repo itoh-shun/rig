@@ -17,6 +17,13 @@ steps:
       - "axe 自動検出に手動観点（フォーカス順序・操作性・意味構造）を併せている"
       - "verdict に `制約 所見` があるなら、その `状態:` 行が checked / unchecked / not-configured のいずれか逐語であり、unchecked と not-configured を合格と書いていない（headless orchestrate では ⓪ が走らないため所見自体が無く、その場合は N/A）"
       - "総合 verdict（APPROVE/APPROVE_WITH_CONDITIONS/REJECT）が出ている"
+    acceptance_binding:
+      - unobserved
+      - unobserved
+      - findings_are_concrete
+      - unobserved
+      - unobserved
+      - unobserved
     personas: [design/ux-reviewer, design/a11y-reviewer]
     policies: [design-constraint-rules]
     output_contract: design-verdict

@@ -188,8 +188,12 @@ def test_check_recipe_fails_through_the_call_site_on_an_unusable_value(tmp_path)
         {"gate": "review-gate", "max_retries": 1},
         # `task_intent_satisfied`, not the old placeholder `x`: an id-form acceptance entry
         # must name a criterion a gate preset actually defines (#497 C3), and `x` does not.
+        # `acceptance_binding` for the same reason one step later: a line now also says which
+        # gate criterion observes it, and this fixture must stay a *valid* recipe or the
+        # "no line at all" pin below stops being about max_retries.
         {"gate": "acceptance-gate",
-         "acceptance": '["task_intent_satisfied — y"]', "max_retries": 1},
+         "acceptance": '["task_intent_satisfied — y"]',
+         "acceptance_binding": "[task_intent_satisfied]", "max_retries": 1},
         {"checks": '["pytest -q"]', "max_retries": 2},
     ],
     ids=["review-gate", "acceptance-gate", "gateless-with-checks"],

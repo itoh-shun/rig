@@ -19,6 +19,12 @@
 
 自 step の `acceptance[]`（`"<criterion-id> — <日本語説明>"` 形式の文字列リスト）は、そのうち**このフローが自分で証拠を作る分**の作業一覧として読む。各エントリの ` — ` より前が criterion id（`rig-wb wb gates` の正本と一致させること。一致しない id は `rig-wb validate` が FAIL にする）。`acceptance[]` に無い残りは、operator が手で答えるか `warning`（未確認）として記録する——**黙って飛ばさない。**
 
+報告時は `acceptance[]` の各行に、**同じ添字の `acceptance_binding[]` を併記**する（§3.5）。
+その値はその行を観測する criterion id か、`unobserved` のどちらかである。
+id なら、その criterion に対する①のゲート判定を隣に置く。
+散文で書かれた行が、判定されないまま基準の顔をして並ぶのを、ここで止めるための一手間である。
+`unobserved` の行は「誰も判定しない作業」であり、ゲートの合否には効かない。
+
 ### ② diff.md の作成（未作成なら先に書く）
 
 `.rig/runs/<task_id>/diff.md` が無ければ、`facets/instructions/workbench-ops`「`/rig diff`」のテンプレート（`## Summary` / `## Risk` / `## Tests` / `## Unrelated diff`）に従って作成する。`diff_summary_written`（および `accept` の `diff_summary_generated` 要件）はこのファイルの存在が根拠。

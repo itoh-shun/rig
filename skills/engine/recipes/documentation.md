@@ -35,6 +35,15 @@ steps:
       - "no_type_errors_or_explained — （該当なしなら skipped。コード例に型注釈があれば整合を確認）"
       - "no_secret_leak — secret の混入がない"
       - "no_destructive_operation — 破壊的操作を含まない"
+    acceptance_binding:
+      - task_intent_satisfied
+      - no_unrelated_diff
+      - diff_summary_written
+      - risk_summary_written
+      - tests_pass_or_explained
+      - no_type_errors_or_explained
+      - no_secret_leak
+      - no_destructive_operation
     personas: [implementer]
 ---
 

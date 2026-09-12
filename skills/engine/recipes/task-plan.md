@@ -13,6 +13,10 @@ steps:
       - "各タスクが細粒度（数分・少数ファイル）で独立に検証できる"
       - "各タスクに検証手順（コマンド/テスト/grep/観察）がある"
       - "未確定は捏造せず『未確定/要調査』に出ている"
+    acceptance_binding:
+      - unobserved
+      - unobserved
+      - unobserved
   - id: implement
     instruction: implement
     pattern: serial
@@ -23,6 +27,7 @@ steps:
     pattern: serial
     gate: acceptance-gate
     acceptance: ["build が成功", "lint 0 件", "関連テスト green", "計画の各タスクの検証が満たされている"]
+    acceptance_binding: [unobserved, unobserved, tests_pass_or_explained, unobserved]
     personas: [implementer]
     policies: [risk-based-testing, ci-cost]
   - id: review
@@ -30,6 +35,7 @@ steps:
     pattern: parallel-fanout
     gate: acceptance-gate
     acceptance: ["4-way review に REJECT が無い", "APPROVE_WITH_CONDITIONS のマージ前必須条件をすべて反映済み"]
+    acceptance_binding: [unobserved, unobserved]
     personas: [security-reviewer, design-reviewer, test-reviewer, behavioral-correctness-reviewer]
     policies: [pre-push-review]
     output_contract: review-verdict

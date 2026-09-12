@@ -17,6 +17,10 @@ steps:
       - "各 Confirmed 所見に 攻撃シナリオ(1行)・最小PoC・file:line・root cause・canonical な修正案 が揃っている"
       - "未確認は Suspected(情報不足) として分離され、低確信の Critical/High が無い"
       - "監査スコープ(自プロダクト/許可済み環境)が宣言され、外部への攻撃トラフィックを送っていない"
+    acceptance_binding:
+      - findings_are_concrete
+      - false_positive_risk_considered
+      - unobserved
 autonomy: interactive
 ---
 

@@ -190,15 +190,24 @@ def test_adaptive_bugfix_graph_references_are_resolved():
 
 
 def test_existing_bugfix_recipe_bytes_are_unchanged():
-    """`bugfix.md`'s hash was re-pinned once, deliberately, by #497: its body claimed the
-    acceptance step judged "13基準（standard 8 + bugfix 5）" while `build_acceptance` builds
-    fifteen, and that sentence was replaced with a statement of which of the two lists is the
-    requirement. Its `steps:` frontmatter is untouched — the point of this pin is that a
-    change aimed at another recipe does not quietly alter these two, and re-pinning it here
-    with a reason is how that stays true rather than becoming a habit."""
+    """Every re-pin below was deliberate, and each one's reason is written here.
+
+    #497 moved `bugfix.md`'s whole-file hash alone: its body claimed the acceptance step
+    judged "13基準（standard 8 + bugfix 5）" while `build_acceptance` builds fifteen, and that
+    sentence was replaced with a statement of which of the two lists is the requirement. The
+    frontmatter was untouched.
+
+    The `acceptance_binding:` change moved all four, frontmatter included, and could not
+    have done otherwise: it gives every `acceptance[]` line in all 26 acceptance-bearing
+    recipes the gate criterion that observes it (or `unobserved`), and these two are two of
+    the 26.
+
+    The point of this pin is that a change aimed at *another* recipe does not quietly alter
+    these; re-pinning with the reason stated is how that stays true instead of becoming a
+    habit."""
     expected = {
-        "bugfix.md": "1ca64e5d31ca051e453f9397c0c3f33357f17b59d7cc7ec718d4e7e4a460fe0b",
-        "fast-bugfix.md": "a922f07ff1e94805d43b8589f7cb08a3e3d51277fc50e739a576c7ba584b345d",
+        "bugfix.md": "3da57af13b878df7f04c9032b0c8dcba3317a860a57f2e76c43fae5fc992f63c",
+        "fast-bugfix.md": "b414cd685722070f78e6479874c3aaa94aa15de5528623f05072ce80ed49eeb9",
     }
     actual = {
         name: hashlib.sha256((config.RECIPES / name).read_bytes()).hexdigest() for name in expected
@@ -216,9 +225,11 @@ def test_existing_bugfix_recipe_bytes_are_unchanged():
         for name in expected
     }
     assert frontmatter == {
-        # Both unchanged from before #497 (verified against `git show HEAD:<file>`).
-        "bugfix.md": "aa354ed37966e42135295b629d0feb0ad5e20fa5494715eaad47f722009f6767",
-        "fast-bugfix.md": "96d40a5ddffeee1ac9f8d045316ca7cbe191572e890a592f922e3288d358bafb",
+        # Moved by the `acceptance_binding:` addition — the first change either file's
+        # frontmatter has taken (the pre-change values, verified against
+        # `git show HEAD:<file>`, were aa354ed3… and 96d40a5d…).
+        "bugfix.md": "c925b0b62e0ba9fb7ba357e2a442565092a35ccea232a126ca64075bab062b36",
+        "fast-bugfix.md": "5b35c25d62805d4f8fa9c1b2c92eaf117a10129cb0c93a389be88f2338d51fa2",
     }
 
 
