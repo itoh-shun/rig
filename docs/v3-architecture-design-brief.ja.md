@@ -127,7 +127,11 @@ SOLID との対応:
 - `attested` — モデルが判断し、生成者と別のプロバイダの検証者が確認する。誰が主張し誰が確認したかを記録する。
 - `unobserved` — 誰も決めていない。`passed` に畳まない。
 
-実測（`rig_workbench/workbench/config.py` の `GATE_PRESETS`、34 基準）:
+実測（`rig_workbench/workbench/config.py` の `GATE_PRESETS`、宣言は 35 エントリ・異なり名 34。
+差の 1 は `no_unrelated_refactor` で、`bugfix` と `refactor` の 2 プリセットに書かれている。
+以下の表は異なり名で数えた 34 である。なお 1 つの run が実際に向き合う数はどちらでもない——
+ゲートは task type が引くプリセットの和で組まれるので、`bugfix` の run は標準 10 ＋ bugfix 5 の
+15 基準を見る）:
 
 | 状態 | 件数 |
 |---|---|
@@ -193,7 +197,7 @@ talk は意図を作るだけで、判定はしない。
    `time.time_ns()` 2（どちらも下記のとおり恒久的に認めた例外）、`open(w,a)` 2、`write_text` 10、
    `subprocess` 4 である。最後の 3 種は govern・eval・`packs` が記録したのと同じ「数え方の床」と
    「ポートが持たない操作」である。`print` は 0 になった。
-4. **来歴型を入れ、34 基準を分類する。未着手。** センサーを作るか、`attested` に落とすか、`unobserved` と認めるかを 1 件ずつ決める。
+4. **来歴型を入れ、34 基準（宣言は 35 エントリ）を分類する。未着手。** センサーを作るか、`attested` に落とすか、`unobserved` と認めるかを 1 件ずつ決める。
 5. **旧経路を落とす。未着手。** 二重定義の期間を閉じる。
 
 2 と 3 の間で一度リリースを切れる。レジストリだけ入った状態は互換を壊さないため、V3 を一度に出さずに済む。**実際にそこで切った。rig は 3.0.0 である**（`pyproject.toml`・`rig_workbench.__version__`・`packs.model.ENGINE_VERSION`・`plugin.json` の 4 つが 3.0.0、`eval.cases.EXECUTOR_VERSION` だけは 2.13.0 に据え置き——あれは「この証拠を出した実行器は、いま判定している実行器か」を答える値で、リリース番号に縛ると無関係な版上げのたびに既存の計測が無効になる）。リリースの範囲は「利用者から見える話——`/rig:go` から始まる入口と §10——が完結した時点で出す」であり、第 3 段の残り（`workbench` と直下の袋）はラチェットの下で 3.x に持ち越す。柱の移行は凍結した契約を 1 つも壊していない。終了コードもスキーマ ID も同じである。
@@ -251,8 +255,8 @@ talk は意図を作るだけで、判定はしない。
 
 | 観測 | 値 |
 |---|---|
-| `README.md` | 1,270 行超 |
-| `skills/engine/SKILL.md` | 720 行 |
+| `README.md` | 1,385 行 |
+| `skills/engine/SKILL.md` | 741 行 / 103,869 バイト |
 | スラッシュコマンド | 30 |
 | サブコマンド | 120（`tests/test_cli_surface_contract.py` が凍結する集合。トップレベル 24 ＋ 6 グループ 96） |
 | 最初に案内される手順 | 2（`/rig:setup` で CLI 導入 → `/rig:init` で manifest 生成） |
@@ -386,6 +390,274 @@ lock は `pack lock drift: invalid metadata` で拒まれる。列を落とせ�
 退けた案: 署名を残したまま既定で任意にする案は、最初の 1 回に鍵の話が出てくる状態を残し、
 説明する語彙も残す。狙いに届かない。`verification_status` を lock ごと落とす案は、上記の
 とおり既存利用者の解決経路をすべて止める。
+
+### 11. 3.x — rig を rig のゲートに通し、その上で削り、足す
+
+3.0.0 を出したあとの向きをここに決める。読み取り専用の実測 5 本から出した。数値は本節を書いた
+時点で取り直してあり、取り直せなかったものは末尾「本節が確かめていないもの」に分けて置いた。
+
+#### 発端 — 3.0.0 は rig 自身のゲートを 1 度も通っていない
+
+台帳を読んだ。`.rig/runs.jsonl` は 3,571 件。backend は 1 件残らず `orchestrate`。recipe の上位は
+adaptive-bugfix 1,843 / writing 690 / japanese-writing 593（次いで dag 204・bugfix 112）。窓は
+`2026-09-09T15:52:13Z` から `2026-09-12T03:22:07Z` の 4 日。`invoker` は 3,450 件が `direct` で、
+`rig-wb/2.13.0` が 111、`rig-wb/3.0.0` が 10。pack を引いた記録は 0 件。**テスト用の走行が
+そのまま残った台帳であって、人が `/rig:go` を打った記録ではない。**
+
+V3 の作業そのものがどう回ったかは、この台帳の外にある。調整役は各レーンを生の Agent ツールで
+直接ばらまいた。`go` も worktree も受け入れゲートも、1 度も走っていない。**自分のゲートを
+通っていない製品が「ゲートで判定する」と言っている状態で 3.0.0 を出した。**
+
+**決定: 3.x の残りは全部 `/rig:go` とゲートを通す。**
+
+この決定は既に効き始めている。本節を書いている時点で `.rig/runs/` は存在し、中身は 1 件、
+`rig-20260912-052246-sessionstart-hook-hooks-inject-t` である。task.json の `recipe` は
+`refactor`、`recipe_reason` は "task type `refactor` maps to the trusted core `refactor` workflow"。
+下の決定 1（hook の訂正）が、いま隔離 worktree の中で走っている run である。
+「`.rig/runs/` が無い」は測った時点では正しく、いまは正しくない。**この 1 件が、rig が rig を
+通した最初の run である。**
+
+退けた案: 3.x のあいだは今までどおり直接ばらまき、5 段が終わってから自分に掛ける案。ゲートに
+歯が無いことが今回の調査で分かった以上（下記「足すもの」の 2）、通す run が無いままゲートを
+直しても、直ったかどうかを見る手段が無い。順序が逆である。
+
+#### 決めた 3 つ
+
+**1. SessionStart hook は残し、訂正する。**
+
+`hooks/inject-talk-mode.sh` は 32 行 1,913 バイトで、毎セッション stdout に 951 バイト
+（`additionalContext` に載る指示文そのものは 851 バイト）を注入する。その文が名指すのは
+`rig:rig` が 1 回、`rig:talk` が 2 回、そして `SKILL.md` を読めという指示が 1 回。**`/rig:go` は
+0 回である。** README が最初に覚えろと言う名前が、常時前段にいる入口の文に 1 度も出てこない。
+さらに `skills/engine/SKILL.md` は 741 行 103,869 バイトで、hook はそれを読み終えるまで
+読み手に何も言わせない。入口の名前が最初の 1 分で 4 つ（`rig:rig`・`rig:talk`・`/rig:go`・
+`SKILL.md`）現れる。
+
+訂正は 2 点。名指すのを `/rig:go` にすること、入口に要る分だけを先に読ませること。
+**talk 常時起動そのものは残す。** これは持ち主の実際の使い方であり、§6 のとおり talk は判定を
+持たないので determinism-by-gate とも衝突しない。直す対象は入口の名前と読ませる量である。
+
+**2. workbench の assurance 一族は、消さずに単独のパッケージへ分ける。**
+
+`rig_workbench/workbench/` は 58 ファイル 20,833 行、`print` 513 箇所（AST 走査、§7 の残り 2 柱の
+表と同じ数え方）。中身は 1 つの柱ではなく 5 本である。
+
+| 柱 | 中身 | ファイル | 行 | `print` |
+|---|---|---|---|---|
+| A | タスクのライフサイクル | 16 | 4,599 | 117 |
+| B | 決定的センサー | 9 | 2,856 | 44 |
+| C | 報告・テレメトリ表示 | 13 | 3,615 | **204** |
+| D | 外部オーケストレータ向け assurance | 16 | **7,872** | 128 |
+| E | drill 用コーパス | 2 | 1,304 | 20 |
+
+D は `wb` の 18 動詞（import・receipt・contract・intent・intent-derive・assurance-target・
+assurance-derive・knowledge-candidate・change-graph・anomaly-trigger・synthesise・dev-loop・
+route-team・budget-plan・provenance・expected-outcome・effectiveness・compose-options）で、
+A と状態を共有しない。**README が統合を約束しているので、消さずに分ける。** 分ければ A の
+ライフサイクルは 16 ファイルの柱になり、第 5 段の `workbench` 移行は 20,833 行ではなく
+12,961 行の仕事になる。
+
+ここで 1 つ訂正する。この決定の根拠として「D の 18 動詞は利用記録が 0」と言っていた。**それは
+台帳を取り違えている。** `.rig/runs.jsonl` は recipe の走行しか記録しないので、`wb` の動詞が
+0 件なのは当然である。`wb` の呼び出しを記録するのは `.rig/context.jsonl` のほうで、そちらは
+19,430 件あり、**うち 18,010 件（92.7%）が D の 18 動詞である**。上位は `wb anomaly-trigger`
+7,951、`wb change-graph` 4,159、`wb provenance` 1,264、`wb budget-plan` 1,066、`wb synthesise`
+976、`wb knowledge-candidate` 968、`wb route-team` 708。ただし窓も `invoker` の偏りも
+`runs.jsonl` と同じ（`direct` が 18,094）で、どちらも git の管理外（`.gitignore:26` の `.rig/`）
+である。**正しい言い方は「利用記録が 0」ではなく「この 2 つの台帳からは、人の利用と生成物を
+区別できない」である。** 分離の根拠は利用の多寡ではなく、A と状態を共有しないことと行数の
+ほうに置く。
+
+到達経路についても 1 つ直す。「`commands/go.md` の表の 1 行からしか届かない」と言っていたが、
+実際は 18 動詞それぞれに `commands/go.md` の表行が 1 本ずつ、計 18 行ある。共有された 1 行では
+ない。届きにくさの主張は弱まる。
+
+**3. rig は以後、自分を自分で回す。** 上記のとおり。
+
+#### 削るもの — 何が壊れるかを 1 件ずつ併記する
+
+| 削る対象 | 実測 | 壊れるもの |
+|---|---|---|
+| `rig-wb list` / `rig-wb review` | どちらも exit 1 を返し、オーケストレータの module docstring を印字してハンドラに届かない（再現済み） | 何も壊れない。レジストリ自身の `intent` が既にそう言っている |
+| `commands/rig.md` | 14 行。`go.md` を読んで同じに振る舞えと書いてあるだけの別名で、自分でそう名乗っている | `/rig:rig` と打つ人と、`SKILL.md` の description 1 行 |
+| `agents/*.md` | 12 ファイル 327 行。`instructions/parallel-review.md` は `agents/<name>` が無ければ `facets/personas/<name>` を合成する経路を既に持つ。同期テストは無い | 事前宣言された `tools:` フィールド（12 枚とも持つ）。**加えて下記のとおり 2 枚は複製ではない** |
+| `recipes/max-bugfix` | step の並びが `bugfix` と同一（inspect→reproduce→plan→implement→test→review-diff→acceptance）。違うのは 3 つの `checks:` ブロックだけ | フラグに畳めば何も壊れない |
+| 初回の摩擦 | 下記 | 下記 |
+| ヘルプに出ない 15 動詞 | §「第 2 段の実測」のとおり 39 中 15。`approve` / `next` / `check` / `verdict` は人のゲートに触る | 1 本ずつ監査して決める。まとめて消さない |
+
+**`agents/*.md` は「12 of 39 personas の複製」ではない。** 数え直すと出荷ペルソナは
+`skills/engine/facets/personas/` に 31 枚（木全体では packs 込みで 70 枚）で、39 ではない。
+そして 12 枚のうち **2 枚——`cognitive-economist-reviewer` と `lazy-senior-reviewer`——は
+`agents/` にしか存在しない。** 木を全部探して他に無い。まとめて消すとこの 2 枚が消える。
+順序が要る: 先にこの 2 枚を `facets/personas/` へ移し、それから残り 10 枚を落とす。
+
+**初回の摩擦は、素の git リポジトリで再現した。** 空のリポジトリを作り
+`python3 scripts/workbench.py new "fix the login bug" --type bugfix` を stdin を閉じて実行した。
+
+| 観測 | 実測 |
+|---|---|
+| 終了コード | 0。人に何も訊かない（§9 の測定どおり） |
+| `.gitignore` | **同意を求めずに追記される。** `lifecycle.py:188` の `ensure_rig_gitignored` が無条件で、`◇ Appended .rig/ to .gitignore` と印字する |
+| hostcheck | `commands/go.md:74` が明示している——「**every time, not once per session**」。「一度きり」と書くと実装の無い約束になるから毎回だ、と理由まで書いてある。その `state_ignored` の MISS は 2 回目から消える。rig が自分の見つけたものを黙って直したためである |
+| 最後に印字される行 | `cd <worktree> && claude`。README §1 の「a separate tool への context switch ではない」（README.md:26）と正面からぶつかる |
+| `new` のバナー | 「flow: 7 steps」、役名 7 種（orchestrator / debugger / implementer ＋ reviewer 4 種）、「最終ゲートは 15 基準」 |
+| README の最初の実行可能コマンド | 52 行目。そこまでの語数は **917**（942 ではない） |
+
+`tests/test_first_run_cost.py` が押さえているのは `new` が exit 0 で人に訊かないことだけ、では
+なかった。テスト関数は 4 本ある（bare repo・core tier への degrade・hostcheck の advisory
+degrade・未承認 manifest の 1 行警告）。ただし上表の `.gitignore` 無断追記も、hostcheck の毎回
+実行も、最後の `cd … && claude` も、README の 917 語も、**4 本のどれも見ていない。**
+
+**実測が否定したので、削らないもの。** 出荷ペルソナ 31 枚の総当たり difflib 比較で、最大の
+類似度は `japanese-lint-reviewer` と `layout-gate-reviewer` の 0.438 である。0.70 を超える対は
+1 組も無い。孤児の instruction・recipe・persona も無い（brace 展開が参照を全部解決する）。
+「重複しているから畳める」という筋は、この 2 つについては実測が立てさせない。
+
+#### 足すもの — どれも既にあるものの上にだけ建てる
+
+**1. 来歴を commit ではなく handoff に付ける。**
+
+直近 50 commit の数値トークンを数えた結果（255 個、うち測定コマンドが近くにあるもの 190、
+無いもの 65、人に帰属するもの 0）は本節では再現していない。だが再現するまでもなく、**この
+プロジェクトで実際に狂った数値は commit message ではなく handoff prompt の中にあった。**
+その handoff を組むのは `rig_workbench/workbench/task_package.py:20` の `compose()` で、材料は
+goal / constraints / acceptance criteria / 識別子 / 書き出し先だけである。**数値を運ぶ欄が無い。**
+
+三値の型付けは、木の中に既に 5 回、別々に実装されている。§4 が数えた 3 回にさらに 2 つある。
+
+| 既存 | 場所 | 語彙 |
+|---|---|---|
+| assurance | `workbench/assurance.py` の `unobserved()` / `observed()` | `observed` の真偽と理由 |
+| intent | `workbench/intent.py`（`UNVERIFIABLE = "unverifiable"` は `:63`、根拠は `:26` と `:58`） | `unverifiable` は `unsatisfied` の弱い版ではない |
+| assurance-target | `workbench/assurance_target.py:16-20` | `unobservable` はそれ自体が 1 つの結末 |
+| production-outcome | `workbench/production_outcome.py` | measured / reported / estimated / unmeasured / inconclusive、`declared_by`・`declared_at`・`PRECEDENCE` つき |
+| runstate | `orchestrate/runstate.py:751-753` | 判定者が自分なら `self-graded` |
+
+最小の版: `compose()` に「中継した測定値」の節を足し、1 つの数値につき
+`computed: <コマンド>` / `attested: <誰>` / `unobserved` のどれかを必ず書かせる。語彙は
+`production_outcome` のものを借りる（5 語も `declared_by` も既にある）。受け手は `unobserved` と
+書かれたものを自分で測り直してから使う。
+
+退けた案: commit message のゲートにする案。**このプロジェクトで起きた誤りを 1 件も捕まえない。**
+狂った数値は commit を経由せず、レーンからレーンへ prompt で渡っていた。
+
+**2. recipe の acceptance 行を判定にかける。**
+
+`lifecycle.py:456-463` は、recipe の `acceptance:` は「そのフローの作業リスト」であって受け入れ
+条件ではない、と印字する。受け入れ条件のほうは `GATE_PRESETS`（`workbench/config.py`）が持つ
+34 基準（宣言は 35 エントリ。§4 の訂正を参照）で、そのうちセンサーが判定するのは 6 つだけ——
+`secrets.py:52`・`hardening.py:40`・`injection.py:42`・`destructive.py:53`・`schema_diff.py:28`、
+呼ぶのは `lifecycle.py:398-432` である。残りは宣言だけで通る。`--set` が拒む基準はちょうど 1 つ
+（`lifecycle.py:392` の `prompt_regression_passed`）。
+
+そして `acceptance:` キーを持つ recipe は **26 枚**（出荷 32 枚中）。**26 枚が、何も評価しない
+散文の条件を宣言している。** 最小の版: 各行を 34 基準のどれか 1 つに束ねるか、束ねられなければ
+`unobserved` と印を付ける。束ねられない行が何枚に何本あるかが、そのまま第 4 段の棚卸しの
+入力になる。
+
+**3. 並列 dispatch の前に、触るファイルが重なっていないかを見る。**
+
+必要な部品は全部ある。レーンごとの worktree（`orchestrate/isolate.py:18-37`）、N 変種の並列実行
+（`orchestrate/commands.py:1220` の `_run_ab_variant` が ThreadPool で worktree ごとに回す。
+max-parallel の既定 3 は `orchestrate/queueing.py:519`——`:696` ではない）、merge-back
+（`workbench/accept.py:270-290`、squash merge と巻き戻しの前検査つき）。
+
+**talk 由来の fan-out はこの 3 つを全部迂回し、dispatch 前にファイルの重なりを見る箇所がどこにも
+無い。** 一方で `facets/output-contracts/task-plan.md:17` の表は「触るファイル」列を既に必須に
+している。**誰も読まない列を、誰も守らないまま持っている。** 本プロジェクトでは実際に、
+あるレーンの `git stash` / `reset` が別のレーンの編集を流した。
+
+最小の版: あの列を parse し、依存が `—` のタスク同士で積を取り、重なったら拒むか隔離を強制する。
+数十行で足りる。
+
+#### `providers.py` — 正直に測り直した
+
+| 測る対象 | 実測 |
+|---|---|
+| 行数 | **3,747**（`HEAD~30` では 3,645）。V3 のあいだに 102 行**増えて**いる。「触っていない」は誤り |
+| トップレベル関数 | 97（AST） |
+| クラス | 4 |
+| モジュール変数 | 41 |
+| `global` 文 | **0**。41 個は定数・正規表現・ロックであって、可変のグローバル状態ではない |
+| 公開名 | 29 |
+
+**凍結された `providers ↔ runstate` の循環を閉じている後ろ向きの辺は、ちょうど 1 本である。**
+`runstate.py:624` が関数の中で `from .providers import japanese_material_metadata` を遅延 import
+する、その 1 本だけ（`providers.py:1600` に定義、他に参照は無い）。この関数が属する合成の
+クラスタを `orchestrate/composition.py` へ出せば、循環は 5 件から 4 件に減って**消える**。
+
+分割の代償は monkeypatch の数で決まる。数え直すと `tests/**/*.py` で `providers` を差し替える
+`monkeypatch.setattr` は **153 箇所**（136 ではない）、うち `run_provider` が **62 箇所**
+（59 ではない）である。**`run_provider` を含む側を分けると 3 分の 1 以上のテストが黙って
+落ちる。** 決定は変わらない: 合成のクラスタを出し、レビュー JSON の正規化も任意で出し、
+`run_provider` を抱えるクラスタ群は分けない。**創立時の「12 責務」という苦情への答えは、
+責務は確かに 12 あるが、それは泥団子ではなく層である、になる。**
+
+#### 3.x のタスク表
+
+ゲートに歯を入れる 3 本（足すものの 1・2・3）を先に置く。以後のタスクは全部そのゲートを通る
+ので、歯が無いうちに通しても通ったことにならないためである。バケツは **決**（決めた 3 つ）/
+**削**（削るもの）/ **足**（足すもの）。
+
+| # | 目的（1 行） | 触るファイル | 検証 | 依存 | バケツ | 並列 |
+|---|---|---|---|---|---|---|
+| T0 | hook の指示文を `/rig:go` 名指しに直し、入口に要る分だけ先に読ませる | `hooks/inject-talk-mode.sh`・`skills/engine/SKILL.md` | `sh hooks/inject-talk-mode.sh` に `rig:rig` が出ず `/rig:go` が出る ＋ `pytest tests/test_first_run_cost.py -q` | — | 決 | 単独（実行中） |
+| T1 | `compose()` に「中継した測定値」節を足し、3 値を必須にする | `rig_workbench/workbench/task_package.py`・`tests/test_task_package_provenance.py`（新設） | `pytest tests/test_task_package_provenance.py -q` | — | 足 | **P1** |
+| T2 | 並列 dispatch 前に「触るファイル」列を parse して重なりを拒む | `rig_workbench/orchestrate/`（parser と dispatch 前検査）・`facets/output-contracts/task-plan.md`・`tests/test_disjoint_dispatch.py`（新設） | `pytest tests/test_disjoint_dispatch.py -q` | — | 足 | **P1** |
+| T3 | recipe 26 枚の `acceptance:` 行を 34 基準に束ね、束ねられない行を `unobserved` と印す | `skills/engine/recipes/*.md`・`tests/test_recipe_acceptance_binding.py`（新設） | `pytest tests/test_recipe_acceptance_binding.py -q` | — | 足 | **P1** |
+| T4 | `rig-wb list` / `review` をディスパッチ表から落とす | `rig_workbench/cli.py`・`tests/test_capability_registry_vs_cli.py` | `pytest tests/test_capability_registry_vs_cli.py tests/test_cli_surface_contract.py -q` | T1–T3 | 削 | **P2** |
+| T5 | `agents/` 固有の 2 枚を `facets/personas/` へ移し、残り 10 枚を落とす | `agents/*.md`・`skills/engine/facets/personas/`・`facets/instructions/parallel-review.md` | `pytest tests/test_brick_resolution_declaration.py -q` ＋ 31＋2 枚の解決を確認 | T1–T3 | 削 | **P2** |
+| T6 | `max-bugfix` を `bugfix` ＋ `checks:` のフラグに畳む | `skills/engine/recipes/max-bugfix.md`・`skills/engine/recipes/bugfix.md` | `pytest -q -k recipe` ＋ `wb route --type bugfix --json` が同じ recipe を返す | T3 | 削 | **P2** |
+| T7 | `.gitignore` の無断追記に同意を挟み、`hostcheck` の 2 回目以降の見え方を直す | `rig_workbench/workbench/lifecycle.py`・`tests/test_first_run_cost.py` | `pytest tests/test_first_run_cost.py -q`（新しい 2 本を足す） | T1–T3 | 削 | 単独 |
+| T8 | 最後の行の `cd … && claude` と README §1 の約束を、どちらかに寄せる | `rig_workbench/workbench/lifecycle.py`・`README.md`・`README.ja.md` | `pytest tests/test_docs_registry.py tests/test_first_run_cost.py -q` | T7 | 削 | 単独 |
+| T9 | `commands/rig.md` を落とし、`SKILL.md` の description 行を直す | `commands/rig.md`・`skills/engine/SKILL.md` | `pytest tests/test_capability_registry_vs_surfaces.py -q`（30 枚の凍結を 29 に下げる） | T0 | 削 | 単独 |
+| T10 | ヘルプに出ない 15 動詞を 1 本ずつ監査する（`approve`/`next`/`check`/`verdict` は人のゲートに触るので最後） | `rig_workbench/cli.py`・`tests/test_capability_registry_vs_cli.py` | `pytest tests/test_capability_registry_vs_cli.py -q` | T4 | 削 | 単独 |
+| T11 | D の 16 ファイル 7,872 行を単独パッケージへ分ける | `rig_workbench/workbench/` → 新パッケージ・`pyproject.toml` の台帳 | `pytest tests/test_architecture_inventory.py tests/test_layering_contract.py -q` ＋ 140 本の `--help` 差分 0 | T1–T3, T4 | 決 | 単独 |
+| T12 | 合成クラスタを `orchestrate/composition.py` へ出し、`providers ↔ runstate` の循環を落とす | `rig_workbench/orchestrate/providers.py`・`runstate.py`・新 `composition.py` | `pytest tests/test_architecture_inventory.py -q` で循環 5→4 ＋ 全件緑 | T1–T3 | 決 | 単独 |
+
+**並列に置けるのは P1 の 3 本（T1・T2・T3）と P2 の 3 本（T4・T5・T6）である。** P1 は
+`workbench/task_package.py` / `orchestrate/` / `recipes/*.md` で 1 ファイルも重ならない。P2 は
+`cli.py` / `agents/`＋`personas/` / `recipes/` で重ならない。それ以外は重なる——T7 と T8 と T11 は
+`lifecycle.py` を、T0 と T9 は `SKILL.md` を共有するので、直列に置く。**この表そのものが T2 の
+入力である。** 「触るファイル」列を書いておいて parse しないのでは、上で数えた `task-plan.md:17`
+と同じことを繰り返す。
+
+#### 本節で直した、本ブリーフ自身の数値
+
+追記ではなく訂正である。
+
+| 直したもの | 旧 | 新 |
+|---|---|---|
+| ゲート基準の数 | 34 | 宣言は 35 エントリ、異なり名は 34。差の 1 は `no_unrelated_refactor` が `bugfix` と `refactor` の両方に書かれているため。§4 の内訳の表（6 / 2 / 26）は異なり名で数えた 34 のままで正しい |
+| `README.md` | 1,270 行超 | 1,385 行 |
+| `skills/engine/SKILL.md` | 720 行 | 741 行 / 103,869 バイト |
+
+「`providers.py` は 3,645 行のまま触られていない」という記述は本ブリーフには無い。§3 と
+「前提・制約」の 3,644 行は着手時の値として正しく、今日の値 3,747 は上表に書いた。
+
+#### 本節が確かめていないもの
+
+§「測定の限界」と同じ規律で分けて置く。以下は中継された値をそのまま書いたか、本節では
+数え直していない。
+
+- `workbench` の 5 本の柱（A〜E）のファイル数・行数・`print` 数の内訳。総計の 58 ファイル
+  20,833 行と `print` 513 は数え直して一致した（`print` は AST 走査）。**どのファイルがどの柱かの
+  割り当ては判断であって測定ではなく、本節では再現していない。**
+- D の 18 動詞の「1 動詞あたり約 2 本のテスト」。名前が狭い 12 動詞は 1〜2 本で合う
+  （anomaly-trigger 1・change-graph 1・budget-plan 1・route-team 1・assurance-derive 1・
+  dev-loop 1・expected-outcome 1 など）が、`receipt`・`contract`・`import`・`intent` は
+  英語の普通名詞なので名前では数えられない。未測定として置く。
+- `providers.py` の AST 呼び出しグラフ（11 クラスタ・クラスタ間 54 辺・クラスタグラフが DAG・
+  入次数 0 は 1 頂点・A/C/E/J は葉）。行数・関数数・クラス数・モジュール変数・`global` 0 は
+  数え直した（上表）。**クラスタの切り方と辺の数は再現していない。**
+- 「公開 29 名のうち production から呼ばれるのは 13」。29 は数え直して合う。13 は未測定。
+- 分割時に落ちるテストの見積もり（2 / 136 と 112 / 136）。分母を数え直すと 136 ではなく 153、
+  `run_provider` は 59 ではなく 62 だった。**分子の 2 と 112 は数え直していない。**
+- 直近 50 commit の数値トークン 255 / 190 / 65 / 0。「数値トークン」と「近くに測定コマンドが
+  ある」の定義が再現できる形で残っていないので、未測定とする。足すもの 1 の根拠は
+  この数字ではなく、`compose()` が数値の欄を持たないという構造のほうに置いた。
+- `.rig/runs.jsonl` と `.rig/context.jsonl` はどちらも git の管理外で、この作業ツリーにしか
+  存在しない。**別のチェックアウトでは再現しない。**
 
 ## 第 2 段の実測 — 表にして分かったこと
 
@@ -913,7 +1185,7 @@ handler は捕まえられなくなる。`PolicyError` は捕まえる側にし�
 | ポートとアダプタ | 判定層を純粋化 | 移行が最大 | 採用 |
 | 縦割りのみ | ファサード経由で循環禁止 | 副作用は柱の中に残る | 部分採用（柱の切り方のみ） |
 | 依存の向きだけ修正 | 一方向化 | 実行時の循環が消えるだけ | 不採用 |
-| 三値の来歴型 | computed / attested / unobserved | 34 基準の棚卸し | 採用 |
+| 三値の来歴型 | computed / attested / unobserved | 34 基準（宣言 35 エントリ）の棚卸し | 採用 |
 | 二値（計算以外は warning） | 単純 | クロスプロバイダ検証の価値が消える | 不採用 |
 | 記録のみ（現状維持） | セット者を記録 | 26 件は自己申告のまま | 不採用 |
 | Faceted Prompting を新手法に差し替え | 5 分割と配置順を捨てる | 手法が未定のため、未計測を未計測に置き換えるだけ。PACKS の `ASSET_DIRS` 凍結と衝突 | 不採用 |
