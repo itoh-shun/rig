@@ -9,6 +9,8 @@ from rig_workbench.orchestrate.commands import cmd_run
 from rig_workbench.orchestrate.providers import run_loop, unknown_step_model_ids
 from rig_workbench.orchestrate.runstate import new_state
 
+from conftest import pin_runs_path
+
 
 def _steps(step_factory):
     plan = step_factory(id="plan")
@@ -18,9 +20,9 @@ def _steps(step_factory):
 
 @pytest.fixture
 def tmp_telemetry(tmp_path, monkeypatch):
-    monkeypatch.setattr(config, "RUNS_PATH", tmp_path / "runs.jsonl")
+    runs = pin_runs_path(monkeypatch, tmp_path / "runs.jsonl")
     monkeypatch.setattr(config, "GLOBAL_RUNS_PATH", tmp_path / "global-runs.jsonl")
-    return tmp_path / "runs.jsonl"
+    return runs
 
 
 def test_step_model_precedence(step_factory, tmp_telemetry):

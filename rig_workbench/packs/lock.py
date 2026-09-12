@@ -9,11 +9,13 @@ import re
 import tempfile
 from typing import Any
 
-from rig_workbench import __version__
+from rig_workbench.ports import Clock
+from rig_workbench.ports.local import SYSTEM_CLOCK
 
-from .manifest import PACK_ID, VERSION, canonical, digest
-from .model import PackError
-from .validation import validate_pack
+from .manifest import PACK_ID, VERSION, LineScanner, canonical, digest
+from .model import ENGINE_VERSION, PackError
+from .scanners import CREDENTIAL_LINE_SCANNER
+from .validation import CoreReferenceIds, validate_pack
 
 LOCK_NAME = "pack.lock.json"
 LOCK_SCHEMA_VERSION = 4
@@ -67,7 +69,8 @@ def write_lock(root: pathlib.Path, value: dict[str, Any]) -> None:
     write_lock_bytes(root, canonical(value).encode("utf-8"))
 
 
-def refuse_credentials(payload: bytes, *, where: str) -> None:
+def refuse_credentials(payload: bytes, *, where: str,
+                       scan_line: LineScanner = CREDENTIAL_LINE_SCANNER) -> None:
     """Refuse to persist anything credential-shaped.
 
     The rule that rig never stores a credential is enforced at the one place that writes,
@@ -76,15 +79,20 @@ def refuse_credentials(payload: bytes, *, where: str) -> None:
     thought about — and a rule that depends on nobody making that mistake is a wish. The
     sensor is the same one `rig-wb wb scan-secrets` runs, so what the gate refuses and what
     the scanner reports cannot drift apart.
-    """
-    from rig_workbench.workbench.secrets import scan_line
 
+    It is the same `LineScanner` `manifest.py` declares, and it used to arrive as an import
+    of `workbench.secrets` written inside this function — which the layering rule counts
+    exactly as it counts a module-level one, because deferring an import hides a dependency
+    rather than removing it. `packs/scanners.py` binds `skip_entropy=True` behind it: that
+    setting has always been this call's, and a lock file of machine-written hex digests is
+    the one input where entropy scoring produces findings rather than catches them.
+    """
     try:
         text = payload.decode("utf-8")
     except UnicodeError:
         return
     for number, line in enumerate(text.splitlines(), 1):
-        findings = scan_line(line, where, number, skip_entropy=True)
+        findings = scan_line(line, where, number)
         if findings:
             kinds = sorted({str(item.get("kind")) for item in findings})
             # The finding itself is not echoed: reporting a secret to complain about it
@@ -167,25 +175,41 @@ def resolve_dependencies(manifest: dict, records: list[tuple[str, Any, dict]]) -
 def make_entry(
     pack: pathlib.Path, manifest: dict, *, scope: str, source: dict[str, Any],
     verification_status: str, dependency_resolution: list[dict] | None = None,
-    publisher_key_id: str | None, signed_digest: str | None,
-    installed_at: dt.datetime | None = None,
+    installed_at: dt.datetime | None = None, clock: Clock = SYSTEM_CLOCK,
 ) -> dict[str, Any]:
-    timestamp = (installed_at or dt.datetime.now(dt.timezone.utc)).isoformat(timespec="seconds")
+    """One lock entry for an installed pack.
+
+    `publisher_key_id` and `signed_digest` are written as `None` and are no longer
+    parameters: nothing signs a pack, so there is no value for a caller to supply. The two
+    keys stay in the entry because `validate_lock_root` compares the key set of every entry
+    exactly — a lock written without them is refused as `invalid entry`, which on the
+    resolve path takes persona, recipe and wiki resolution down with it. They are a disk
+    format obligation now, not a mechanism.
+    """
+    # UTC, like every timestamp `validate_lock_root` parses back out of a lock entry;
+    # `Clock.now()` reads the moment through the local offset and `astimezone` renders it,
+    # so a pack installed at 23:59 and the manifest `pack init` stamped are on one
+    # timeline. The conversion is applied to `installed_at` as well, because a caller that
+    # supplies a moment is supplying the same instant in a different offset and the entry
+    # has only ever held one spelling of it.
+    timestamp = (
+        installed_at or clock.now()
+    ).astimezone(dt.timezone.utc).isoformat(timespec="seconds")
     return {
         "id": manifest["id"], "version": manifest["version"], "kind": manifest["kind"],
         "scope": scope, "path": manifest["id"],
         "source": source,
         "manifest_sha256": digest(pack / "pack.yaml"),
         "asset_hashes": dict(sorted(manifest["hashes"].items())),
-        "engine_version": __version__, "installed_at": timestamp,
+        "engine_version": ENGINE_VERSION, "installed_at": timestamp,
         "dependencies": manifest["dependencies"],
         "dependency_resolution": dependency_resolution or [],
         "eval_case_hashes": {
             item: manifest["hashes"][item] for item in manifest["assets"]["eval-case"]
         },
         "verification_status": verification_status,
-        "publisher_key_id": publisher_key_id,
-        "signed_digest": signed_digest,
+        "publisher_key_id": None,
+        "signed_digest": None,
     }
 
 
@@ -197,8 +221,22 @@ def replace_entry(lock: dict[str, Any], entry: dict[str, Any]) -> dict[str, Any]
 
 
 def validate_lock_root(
-    root: pathlib.Path, *, expected_scope: str | None = None,
+    root: pathlib.Path, *, core_ids: CoreReferenceIds, expected_scope: str | None = None,
 ) -> list[dict[str, Any]]:
+    """Validate one pack root against its lock, and return the entries.
+
+    Every check here is structural: the entry's shape, the pack's identity, its manifest
+    digest and its declared asset hashes. There is no cryptographic re-check any more, and
+    no argument for one — nothing signs a pack, so a `verified-publisher` entry left on an
+    older disk is a label with nothing behind it. It is still accepted and still reported,
+    and the publisher columns are still shape-checked, so such a lock keeps reading clean;
+    what it no longer does is make a claim this code can confirm or deny.
+
+    `core_ids` is passed straight through to `validate_pack`
+    (`validation.CoreReferenceIds`), and is taken as an argument here for the same reason
+    `catalog` takes one: `resolver` imports this module, so calling
+    `resolver.core_reference_ids` from here would close that component again.
+    """
     if not lock_path(root).exists():
         return []
     lock = read_lock(root)
@@ -257,6 +295,11 @@ def validate_lock_root(
                        for mapping in (entry["asset_hashes"], entry["eval_case_hashes"])
                        for key, value in mapping.items())):
             raise PackError(f"pack lock drift: invalid metadata for {entry['id']}")
+        # Both columns, and all three `verification_status` values, are kept for the locks
+        # already on disk. `verified-publisher` is written by nothing and checked by
+        # nothing now; dropping the value refuses such a lock as `invalid metadata`, and
+        # dropping either column refuses every lock as `invalid entry` — and because the
+        # resolve path is fail-closed, that is every `rig` run and not merely `pack`.
         publisher_fields = (entry["publisher_key_id"], entry["signed_digest"])
         if entry["verification_status"] == "verified-publisher":
             if (not isinstance(publisher_fields[0], str) or not publisher_fields[0]
@@ -291,7 +334,7 @@ def validate_lock_root(
         pack = root / entry["path"]
         if not pack.is_dir():
             raise PackError(f"pack lock drift: missing pack {entry['id']}")
-        manifest = validate_pack(pack)
+        manifest = validate_pack(pack, core_ids=core_ids)
         if (manifest["id"] != entry["id"] or manifest["version"] != entry["version"]
                 or manifest["kind"] != entry["kind"]
                 or manifest["dependencies"] != entry["dependencies"]):
@@ -305,10 +348,4 @@ def validate_lock_root(
         }
         if expected_cases != entry["eval_case_hashes"]:
             raise PackError(f"pack lock drift: eval cases changed for {entry['id']}")
-        if entry["verification_status"] == "verified-publisher":
-            from .publisher import verify_publisher_signature
-            verified = verify_publisher_signature(pack, manifest)
-            if (verified is None or verified["key_id"] != entry["publisher_key_id"]
-                    or verified["signed_digest"] != entry["signed_digest"]):
-                raise PackError(f"pack lock drift: publisher signature changed for {entry['id']}")
     return lock["packs"]

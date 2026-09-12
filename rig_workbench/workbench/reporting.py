@@ -13,7 +13,8 @@ from .progress import from_state as progress_from_state
 from .progress import next_action
 from .config import (ACTIVE_STATUSES, CHECK_ICON, GATE_PRESETS, NEXT_ACTIONS,
                      STEP_ICON, TASK_TYPES)
-from .state import (_diff_lines, _load_audit, budget_status, build_acceptance,
+from .state import (_diff_lines, _load_audit, audit_event_weights, budget_status,
+                    build_acceptance,
                     die, drift_lines, effective_base, gate_status, load_json,
                     load_project_gates, load_task,
                     maybe_repo_root, repo_root, resolve_task_id, runs_dir)
@@ -35,7 +36,9 @@ def _print_checks(acc: dict) -> None:
     for c in acc["checks"]:
         origin = " [project]" if c.get("origin") == "project" else ""
         detail = f" — {c['detail']}" if c.get("detail") else ""
-        print(f"  {CHECK_ICON[c['status']]} {c['name']}{origin}{detail}")
+        note = (f"\n      note (operator): {c['note']}"
+                if c.get("note") and c["note"] != c.get("detail") else "")
+        print(f"  {CHECK_ICON[c['status']]} {c['name']}{origin}{detail}{note}")
         for line in c.get("api_diff") or []:
             print(f"      api: {line}")
         for line in c.get("secret_findings") or []:
@@ -86,7 +89,7 @@ def cmd_status(args: argparse.Namespace) -> None:
 def cmd_board(args: argparse.Namespace) -> None:
     """Single dashboard listing all tasks.
 
-    Tasks started directly via `/rig:rig` and tasks run in parallel via
+    Tasks started directly via `/rig:go` and tasks run in parallel via
     `/rig:queue go --provider rig` all land in the same `.rig/runs/`, so even
     with several tasks in flight you can **see the whole picture with one
     command instead of juggling terminals** — structurally solving
@@ -115,7 +118,7 @@ def cmd_board(args: argparse.Namespace) -> None:
             print("No readable active tasks." if not args.all else "No readable tasks.")
         else:
             print("No active tasks." if not args.all else "No tasks (.rig/runs/ is empty).")
-        print("\nTo start a new task: /rig:rig \"<task>\"")
+        print("\nTo start a new task: /rig:go \"<task>\"")
         return
 
     waiting_on_you: list[str] = []
@@ -158,8 +161,8 @@ def cmd_board(args: argparse.Namespace) -> None:
         print(f"\nあなた待ち {len(waiting_on_you)} / 他人待ち {len(waiting_on_others)} / "
               f"実行中 {len(tasks) - len(waiting_on_you) - len(waiting_on_others)}")
         if waiting_on_you:
-            print("Next actions: /rig:rig diff <task_id> · /rig:rig accept <task_id> "
-                  "· /rig:rig discard <task_id> --yes")
+            print("Next actions: /rig:go diff <task_id> · /rig:go accept <task_id> "
+                  "· /rig:go discard <task_id> --yes")
 
 
 def cmd_log(args: argparse.Namespace) -> None:
@@ -240,14 +243,47 @@ def cmd_gates(_args: argparse.Namespace) -> None:
                 print(f"  {target} + {c}" + (f" — {descs[c]}" if c in descs else ""))
 
 
+#: What one audit field may occupy in the listing, and what it may not contain.
+_AUDIT_CELL_MAX = 200
+_AUDIT_CONTROLS = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def _audit_cell(value) -> str:
+    """One field of an audit entry, rendered for a terminal.
+
+    `.rig/audit.jsonl` holds what a caller CLAIMED, which is the point of an audit trail:
+    `actor` comes from `RIG_USER` or `git config user.name`, and a refusal's `detail`
+    quotes git. Both reach this listing from someone the command refused. Printed raw,
+    `RIG_USER=$'\x1b[2K\rnothing to see'` rewrites the line above it, and a newline forges
+    a second entry in the output that is in no file.
+
+    So the sanitising is here, at the sink, and not at the write: the ledger keeps the
+    claim verbatim — a chained entry that was rewritten before signing would be evidence
+    of nothing — and every reader that renders it is responsible for its own terminal.
+    C0 controls (ESC among them) and DEL become spaces rather than disappearing, because
+    a name that was three control characters should read as something odd rather than as
+    an empty field, and the whole cell is capped.
+    """
+    text = "" if value is None else str(value)
+    text = _AUDIT_CONTROLS.sub(" ", text)
+    return text if len(text) <= _AUDIT_CELL_MAX else text[:_AUDIT_CELL_MAX - 1] + "…"
+
+
 def cmd_audit(args: argparse.Namespace) -> None:
-    """List force-bypass records from `.rig/audit.jsonl`.
+    """List force records from `.rig/audit.jsonl`: the forces that applied, and the ones
+    that did not.
 
     Separate from the "not overridable with --force" premise of
     accept_requirements, this audit log permanently records cases where an
     unmet gate was overridden with --force (evidence of the differentiator's
-    physical strength).
+    physical strength). `accept_force` is written once the squash has applied;
+    `accept_refused` is a force that did not apply, on any of the seven paths its `reason`
+    names (`branch_unresolvable`, `governance`, `worktree_missing`, `worktree_dirty`,
+    `branch_empty`, `main_tree_dirty`, `squash_failed`), so that reaching for the override
+    is visible whether or not it worked.
     """
+    from ..govern.ledger import collapsed_note
+
     root = repo_root()
     events = _load_audit(root)
     if args.action:
@@ -261,15 +297,28 @@ def cmd_audit(args: argparse.Namespace) -> None:
     shown = events[-limit:]
     print(f"## rig audit (latest {len(shown)} / {len(events)} total)\n")
     for e in shown:
-        ts = e.get("ts", "?")
-        action = e.get("action", "?")
-        tid = e.get("task_id", "?")
-        by = ", ".join(e.get("bypassed") or [])
-        gate = e.get("gate_status", "?")
-        print(f"  {ts}  {action:16s}  task={tid}")
-        print(f"    bypassed: {by}  gate: {gate}")
+        ts = _audit_cell(e.get("ts", "?"))
+        action = _audit_cell(e.get("action", "?"))
+        tid = _audit_cell(e.get("task_id", "?"))
+        # Two shapes share this file and this listing. A force that applied carries the
+        # requirements it bypassed and the gate it bypassed them past; a force that was
+        # refused carries why, and has no bypassed set because nothing was bypassed. The
+        # second line says whichever of the two the entry actually holds, rather than
+        # printing "bypassed:  gate: ?" over a refusal that has neither.
+        if e.get("reason"):
+            second = f"    refused: {_audit_cell(e['reason'])}" + (
+                f" — {_audit_cell(e['detail'])}" if e.get("detail") else "")
+            second += f"  by: {_audit_cell(e['actor'])}" if e.get("actor") else ""
+        else:
+            second = (f"    bypassed: {_audit_cell(', '.join(e.get('bypassed') or []))}  "
+                      f"gate: {_audit_cell(e.get('gate_status', '?'))}")
+        # Folded into the header line rather than printed on its own: the cap is a
+        # property of the entry, not an event of its own, and this listing's print count is
+        # held at a baseline (`tests/test_architecture_inventory.py`).
+        print(f"  {ts}  {action:16s}  task={tid}{collapsed_note(e)}")
+        print(second)
         if e.get("failed_checks"):
-            print(f"    failed: {', '.join(e['failed_checks'])}")
+            print(f"    failed: {_audit_cell(', '.join(e['failed_checks']))}")
 
 
 # ── stats helpers (shared with digest.py — issue #285: reuse, don't duplicate) ──
@@ -433,14 +482,49 @@ def rubber_stamp_warnings(verifier_stats: Counter, verifier_rejects: Counter) ->
             if runs >= 5 and verifier_rejects.get(persona, 0) == 0]
 
 
+def force_bypass_count(audit_events: list[dict], n_force: int) -> str:
+    """`n_force` written the way a reader may safely act on it.
+
+    The count is a floor wherever the cap has collapsed a line: 50 forced bypasses of one
+    shape leave four entries, and four is what `stats`, `digest` and `cockpit` print. The
+    docstrings said so; the printed number did not, and the number is the only part most
+    people read. So it carries a `+` exactly when some contributing entry was capped, and
+    reads as an ordinary total otherwise — which is every repository that has never hit the
+    cap.
+
+    The `+` is not the weighting, and the two answer different halves. `audit_event_weights`
+    matters when a window holds a capped line *without* the plain entries before it — a
+    `--last 7d` that starts after them — where the line is worth what it carries rather than
+    one. Over a whole file the four entries weigh one each and the weighting changes
+    nothing; the `+` is what says the four are not all of it. Neither of them recovers how
+    many there were.
+
+    A string rather than a second return value from `force_bypass_counter`, so the three
+    surfaces fold it into the line they already print and no ratchet moves.
+    """
+    capped = any(e.get("collapsed") for e in audit_events
+                 if e.get("action") == "accept_force")
+    return f"{n_force}+ (repeats capped)" if capped else str(n_force)
+
+
 def force_bypass_counter(audit_events: list[dict]) -> tuple[int, Counter]:
-    """(number of accept_force events, Counter of bypassed criteria)."""
-    force_events = [e for e in audit_events if e.get("action") == "accept_force"]
+    """(number of accept_force events, Counter of bypassed criteria).
+
+    A floor, and the cap is why. Repeats of one event are capped in the file
+    (`govern.ledger.REPEAT_CAP`), so fifty forced bypasses of one shape leave four lines and
+    this returns four; how many there were is not recorded anywhere. `audit_event_weights`
+    is what keeps it from being worse than that — where a window holds a capped line without
+    the lines before it, the line is worth what its `collapsed` carries rather than one. Over
+    a whole file every weight is 1 and the sum is the line count. `force_bypass_count`
+    renders the floor for a reader; this returns the number.
+    """
+    weights = [(e, w) for e, w in audit_event_weights(audit_events)
+               if e.get("action") == "accept_force"]
     by_bypass: Counter[str] = Counter()
-    for e in force_events:
+    for e, weight in weights:
         for name in e.get("bypassed", []):
-            by_bypass[name] += 1
-    return len(force_events), by_bypass
+            by_bypass[name] += weight
+    return sum(w for _, w in weights), by_bypass
 
 
 def cmd_stats(args: argparse.Namespace) -> None:
@@ -528,7 +612,7 @@ def cmd_stats(args: argparse.Namespace) -> None:
                         if e.get("ts") and datetime.datetime.fromisoformat(e["ts"]) >= cutoff]
     n_force, by_bypass = force_bypass_counter(audit_events)
     if n_force:
-        print(f"\nForce bypass ({n_force}): "
+        print(f"\nForce bypass ({force_bypass_count(audit_events, n_force)}): "
               "`accept --force` cannot bypass the hard preconditions of accept_requirements (structural strength); "
               "this records the cases where soft preconditions were overridden.")
         for name, n in by_bypass.most_common():

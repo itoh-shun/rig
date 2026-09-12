@@ -5,17 +5,58 @@ import os
 import re
 import hashlib
 import pathlib
-import subprocess
 import threading
 
-try:
-    import yaml
-except ImportError:
-    # Don't kill importers (pytest collection, library use) at import time —
-    # fail with the CLI hint on first actual use instead (parse_frontmatter).
-    yaml = None
+from typing import Any, Protocol
 
+from ..ports import Env, Presenter, ProcessRunner
+from ..ports.local import CONSOLE, OS_ENV, SUBPROCESS
 from . import config
+from .pack_surfaces import PACK_SURFACES
+from .yaml_adapter import PyYAMLMissing, require_yaml
+
+
+class PackAssets(Protocol):
+    """What this module needs of the pack machinery.
+
+    Three questions, and not one of them is a judgement this module makes. Which file a
+    recipe name resolves to across the core, org, project and pack tiers is the `packs`
+    resolver's rule; whether the file it landed on may be executed is the pack trust
+    store's record; and whether a consent flag was genuinely passed as an *option* of this
+    invocation — rather than merely appearing somewhere in argv, which used to be enough —
+    is `packs.trust.passed_as_option`, which exists precisely because this module got it
+    wrong once. Re-deriving any of them here would give the runner a private resolver that
+    drifts from the one `rig-wb pack` enforces.
+
+    Stated as a protocol rather than imported, because the import is what
+    `tests/test_layering_contract.py` forbids: a judgement module may reach the standard
+    library, its own pillar and the six ports, and `packs.resolver` and `packs.trust` are
+    neither. They were reached from inside five function bodies here, which hid the edges
+    rather than removing them. `pack_surfaces.PACK_SURFACES` satisfies this shape and is
+    what every shipped caller passes.
+
+    A resolved asset crosses as an opaque value: it is obtained here and handed straight
+    back, never unpacked, so naming its type would be borrowing another pillar's vocabulary
+    for nothing — the half of the rule `conformance.RunRecords` makes explicit.
+    """
+
+    def resolve(self, kind: str, name: str, *, project: Any = ...,
+                shared: Any = ...) -> Any:
+        """The asset this name resolves to, or None."""
+        ...
+
+    def resolve_bound(self, kind: str, name: str, source: Any, *, project: Any = ...,
+                      shared: Any = ...) -> Any:
+        """The asset this name resolves to for a recipe that declares its owner, or None."""
+        ...
+
+    def trusted_path(self, asset: Any) -> pathlib.Path:
+        """The asset's file, once the pack trust gate has passed it."""
+        ...
+
+    def consent_flag_passed(self, flag: str, argv: list[str]) -> bool:
+        """True only where `flag` was passed as an option, not merely present in argv."""
+        ...
 
 # ── Project-recipe trust gate ─────────────────────────────────────────────────
 # A repository can ship `.rig/recipes/*.md` that overlays a shipped recipe of
@@ -32,11 +73,22 @@ from . import config
 # Anything else refuses with instructions. Shipped (RIG_HOME) and org-tier
 # recipes are exempt: both locations are configured by the user, not by the
 # repository being worked on.
+#
+# "On the command line" means *as an option of this process*, which is narrower
+# than `flag in sys.argv`: argv also carries a task title, a `--goal` body, and
+# arguments forwarded past `--`, and any of those being the literal string used to
+# be consent. `rig_workbench.packs.trust.passed_as_option` holds the rule, and
+# spells out what it does and does not catch.
 
-def _trust_store_path() -> pathlib.Path:
-    env = os.environ.get("RIG_TRUST_STORE")
-    if env:
-        return pathlib.Path(env).expanduser()
+def _consent_flag_passed(flag: str, *, assets: PackAssets = PACK_SURFACES) -> bool:
+    """True only where `flag` was passed as an option, not merely present in argv."""
+    return assets.consent_flag_passed(flag, sys.argv)
+
+
+def _trust_store_path(*, env: Env = OS_ENV) -> pathlib.Path:
+    configured = env.get("RIG_TRUST_STORE")
+    if configured:
+        return pathlib.Path(configured).expanduser()
     return pathlib.Path.home() / ".claude" / "rig" / "trusted-recipes.json"
 
 
@@ -88,7 +140,8 @@ def _is_project_recipe(path: pathlib.Path) -> bool:
         return False
 
 
-def ensure_recipe_trusted(path: pathlib.Path) -> pathlib.Path:
+def ensure_recipe_trusted(path: pathlib.Path, *, out: Presenter = CONSOLE,
+                          env: Env = OS_ENV) -> pathlib.Path:
     """Consent gate for project-local recipe overlays. Returns path if allowed, exits otherwise."""
     if not _is_project_recipe(path):
         return path
@@ -97,20 +150,20 @@ def ensure_recipe_trusted(path: pathlib.Path) -> pathlib.Path:
     digest = hashlib.sha256(resolved.read_bytes()).hexdigest()
     if _load_trust_store().get(str(resolved)) == digest:
         return path
-    allowed = ("--allow-project-recipes" in sys.argv
-               or os.environ.get("RIG_ALLOW_PROJECT_RECIPES") == "1")
+    allowed = (_consent_flag_passed("--allow-project-recipes")
+               or env.get("RIG_ALLOW_PROJECT_RECIPES") == "1")
     if allowed:
         _record_trust(resolved, digest)
-        print(f"[trust] project recipe allowed and recorded: {resolved}")
+        out.out(f"[trust] project recipe allowed and recorded: {resolved}")
         return path
-    print(f"[ERROR] untrusted project-local recipe: {resolved}\n"
-          f"  Recipes under <cwd>/.rig/recipes/ come from the repository you are working\n"
-          f"  on, and their `checks:` lines execute as shell commands. First use requires\n"
-          f"  explicit consent:\n"
-          f"    re-run with --allow-project-recipes   (records a content hash; silent next time)\n"
-          f"    or set RIG_ALLOW_PROJECT_RECIPES=1\n"
-          f"  Review the file first: {resolved}\n"
-          f"  Trust store: {_trust_store_path()}")
+    out.out(f"[ERROR] untrusted project-local recipe: {resolved}\n"
+            f"  Recipes under <cwd>/.rig/recipes/ come from the repository you are working\n"
+            f"  on, and their `checks:` lines execute as shell commands. First use requires\n"
+            f"  explicit consent:\n"
+            f"    re-run with --allow-project-recipes   (records a content hash; silent next time)\n"
+            f"    or set RIG_ALLOW_PROJECT_RECIPES=1\n"
+            f"  Review the file first: {resolved}\n"
+            f"  Trust store: {_trust_store_path()}")
     sys.exit(2)
 
 
@@ -126,7 +179,8 @@ def ensure_recipe_trusted(path: pathlib.Path) -> pathlib.Path:
 _warned_manifests: set[tuple[str, str]] = set()
 
 
-def ensure_manifest_trusted(path: pathlib.Path, require: bool = False) -> bool:
+def ensure_manifest_trusted(path: pathlib.Path, require: bool = False, *,
+                            out: Presenter = CONSOLE, env: Env = OS_ENV) -> bool:
     """Consent gate for the project manifest `.claude/rig.md`. True = usable.
 
     Mirrors ensure_recipe_trusted (same trust store, hash-recorded consent via
@@ -163,35 +217,38 @@ def ensure_manifest_trusted(path: pathlib.Path, require: bool = False) -> bool:
     digest = hashlib.sha256(resolved.read_bytes()).hexdigest()
     if _load_trust_store().get(str(resolved)) == digest:
         return True
-    allowed = ("--allow-project-manifest" in sys.argv
-               or os.environ.get("RIG_ALLOW_PROJECT_MANIFEST") == "1")
+    allowed = (_consent_flag_passed("--allow-project-manifest")
+               or env.get("RIG_ALLOW_PROJECT_MANIFEST") == "1")
     if allowed:
         _record_trust(resolved, digest)
-        print(f"[trust] project manifest allowed and recorded: {resolved}", file=sys.stderr)
+        out.err(f"[trust] project manifest allowed and recorded: {resolved}")
         return True
     if require:
-        print(f"[ERROR] untrusted project manifest: {resolved}\n"
-              f"  The manifest comes from the repository you are working on and drives\n"
-              f"  recipe search paths, default flags/personas, and the git hooks'\n"
-              f"  lint/build/test commands. First use requires explicit consent:\n"
-              f"    re-run with --allow-project-manifest   (records a content hash; silent next time)\n"
-              f"    or set RIG_ALLOW_PROJECT_MANIFEST=1\n"
-              f"  Review the file first: {resolved}\n"
-              f"  Trust store: {_trust_store_path()}", file=sys.stderr)
+        out.err(f"[ERROR] untrusted project manifest: {resolved}\n"
+                f"  The manifest comes from the repository you are working on and drives\n"
+                f"  recipe search paths, default flags/personas, and the git hooks'\n"
+                f"  lint/build/test commands. First use requires explicit consent:\n"
+                f"    re-run with --allow-project-manifest   (records a content hash; silent next time)\n"
+                f"    or set RIG_ALLOW_PROJECT_MANIFEST=1\n"
+                f"  Review the file first: {resolved}\n"
+                f"  Trust store: {_trust_store_path()}")
         sys.exit(2)
     key = (str(resolved), digest)
     if key not in _warned_manifests:
         _warned_manifests.add(key)
-        print(f"[WARN] untrusted project manifest ignored: {resolved} "
-              f"(consent: --allow-project-manifest or RIG_ALLOW_PROJECT_MANIFEST=1)",
-              file=sys.stderr)
+        out.err(f"[WARN] untrusted project manifest ignored: {resolved} "
+                f"(consent: --allow-project-manifest or RIG_ALLOW_PROJECT_MANIFEST=1)")
     return False
 
 
 # ── Recipe loading ────────────────────────────────────────────────────────────
-def parse_frontmatter(path: pathlib.Path) -> dict:
-    if yaml is None:
-        print("[ERROR] PyYAML not found. `pip install pyyaml`.")
+def parse_frontmatter(path: pathlib.Path, *, out: Presenter = CONSOLE) -> dict:
+    try:
+        yaml = require_yaml()
+    except PyYAMLMissing as missing:
+        # Same line, same stream, same status as the `yaml is None` branch this replaces;
+        # the difference is that the decision is now made somewhere a caller can see it.
+        out.out(f"[ERROR] {missing}")
         sys.exit(1)
     text = path.read_text(encoding="utf-8")
     if not text.startswith("---"):
@@ -238,7 +295,7 @@ def load_steps(fm: dict) -> list[dict]:
 
 
 # ── RESOLVE reference implementation (extends merge; badge/steps field derivation) ──
-# Deterministic reference implementation of SKILL.md §4.2.2 (extends, one level at a time)
+# Deterministic reference implementation of RESOLVE.md §4.2.2 (extends, one level at a time)
 # and facets/instructions/list.md (fixed badge order, steps: field). Lets CI (selftest Q)
 # golden-verify the prose engine's display rules — phase 1 of codifying RESOLVE.
 
@@ -246,7 +303,9 @@ EXTENDS_MAX_DEPTH = 5  # inheritance that is too deep collapses cognitive econom
 
 
 def _resolve_extends_chain(fm: dict, recipe_path: pathlib.Path,
-                            warnings: list[str]) -> list[tuple[str | None, dict]]:
+                            warnings: list[str], *,
+                            assets: PackAssets = PACK_SURFACES,
+                            ) -> list[tuple[str | None, dict]]:
     """Walk the extends chain leaf -> root and return [(name, fm), ...].
 
     Cycles (A->B->A etc.) and depth overruns (EXTENDS_MAX_DEPTH) emit a warning and cut off.
@@ -269,8 +328,7 @@ def _resolve_extends_chain(fm: dict, recipe_path: pathlib.Path,
             warnings.append(f"extends: inheritance depth limit {EXTENDS_MAX_DEPTH} exceeded "
                             f"(ignoring '{parent_name}' and beyond). Keep chains shallow for cognitive economy")
             return chain
-        from rig_workbench.packs.resolver import resolve_bound_asset
-        bound_parent = resolve_bound_asset(
+        bound_parent = assets.resolve_bound(
             "recipe", parent_name, current_path, project=config.INVOCATION_CWD,
             shared=config.STATE_ROOT,
         )
@@ -297,9 +355,9 @@ def _resolve_extends_chain(fm: dict, recipe_path: pathlib.Path,
                     parent_path = candidate
                     break
         if bound_parent is None and parent_path is None:
-            from rig_workbench.packs.resolver import resolve_asset
-            resolved = resolve_asset("recipe", parent_name, project=config.INVOCATION_CWD,
-                                     shared=config.STATE_ROOT)
+            resolved = assets.resolve("recipe", parent_name,
+                                      project=config.INVOCATION_CWD,
+                                      shared=config.STATE_ROOT)
             parent_path = resolved.path if resolved is not None else None
         if parent_path is None:
             warnings.append(f"extends: cannot resolve '{parent_name}' (reached via {' → '.join(trail)})")
@@ -307,15 +365,13 @@ def _resolve_extends_chain(fm: dict, recipe_path: pathlib.Path,
         # An installed pack recipe is governed by the pack-asset trust store,
         # including when an `extends` parent is found beside the child.  Do not
         # accidentally send it through the legacy project-recipe consent gate.
-        from rig_workbench.packs.resolver import resolve_asset
-        from rig_workbench.packs.trust import ensure_asset_trusted
-        resolved_parent = bound_parent or resolve_asset(
+        resolved_parent = bound_parent or assets.resolve(
             "recipe", parent_name, project=config.INVOCATION_CWD, shared=config.STATE_ROOT
         )
         if (resolved_parent is not None
                 and resolved_parent.path.resolve() == parent_path.resolve()
                 and resolved_parent.pack_id is not None):
-            ensure_asset_trusted(resolved_parent)
+            assets.trusted_path(resolved_parent)
         else:
             ensure_recipe_trusted(parent_path)
         parent_fm = parse_frontmatter(parent_path)
@@ -456,7 +512,7 @@ def derive_steps_field(steps: list[dict]) -> str:
 
 
 # ── RESOLVE reference implementation phase 2 (condition evaluation, size classing, slicing, flag precedence) ──
-# Deterministic reference implementation of SKILL.md §4.3 (flag override), §4.3.1
+# Deterministic reference implementation of RESOLVE.md §4.3 (flag override), §4.3.1
 # (--only/--from/--to/--skip), and §4.4 (size-aware). Golden-verified by selftest R.
 
 _SIZE_RANK = {"S": 0, "M": 1, "L": 2, "XL": 3}
@@ -470,11 +526,11 @@ _KEY_TO_FLAG = {
 }
 
 
-def git_diff_lines() -> int | None:
+def git_diff_lines(*, proc: ProcessRunner = SUBPROCESS) -> int | None:
     """Total added+removed lines from `git diff HEAD --numstat` (staged + unstaged; §4.4/#185). None if unavailable."""
     try:
-        r = subprocess.run(["git", "diff", "HEAD", "--numstat"],
-                           capture_output=True, text=True, timeout=10, cwd=config.INVOCATION_CWD)
+        r = proc.run(["git", "diff", "HEAD", "--numstat"],
+                     timeout=10, cwd=config.INVOCATION_CWD)
         if r.returncode != 0:
             return None
         total = 0
@@ -908,40 +964,40 @@ def suggest_recipe_names(name: str, bases: list[pathlib.Path]) -> list[tuple[str
     return [(stem, tier) for _kind, _rank, _index, stem, tier in scored[:_SUGGEST_LIMIT]]
 
 
-def resolve_recipe(name: str) -> pathlib.Path:
+def resolve_recipe(name: str, *, out: Presenter = CONSOLE,
+                   env: Env = OS_ENV,
+                   assets: PackAssets = PACK_SURFACES) -> pathlib.Path:
     """Resolve a recipe.
     Priority: existing absolute/relative path -> cwd/.rig/recipes/<name>.md (project overlay) -> RIG_HOME/skills/engine/recipes/<name>.md (built-in).
     An overlay with the same name as a built-in wins, so project-specific recipes can override."""
     p = pathlib.Path(name)
     if p.exists():
-        return ensure_recipe_trusted(p)
-    from rig_workbench.packs.resolver import resolve_asset
-    from rig_workbench.packs.trust import ensure_asset_trusted
-    resolved = resolve_asset("recipe", name.removesuffix(".md"),
-                             project=config.INVOCATION_CWD, shared=config.STATE_ROOT)
+        return ensure_recipe_trusted(p, out=out)
+    resolved = assets.resolve("recipe", name.removesuffix(".md"),
+                              project=config.INVOCATION_CWD, shared=config.STATE_ROOT)
     if resolved is not None:
-        return ensure_asset_trusted(resolved)
+        return assets.trusted_path(resolved)
     fname = name if name.endswith(".md") else f"{name}.md"
     bases = [config.PROJECT_RECIPES]
-    org = os.environ.get("RIG_ORG_HOME") or (load_manifest().get("org_dir") or "")
+    org = env.get("RIG_ORG_HOME") or (load_manifest().get("org_dir") or "")
     if org:
         bases.append(pathlib.Path(org).expanduser() / "recipes")  # org tier (team-shared; §5)
     bases.append(config.RECIPES)
     for base in bases:
         cand = base / fname
         if cand.exists():
-            return ensure_recipe_trusted(cand)
+            return ensure_recipe_trusted(cand, out=out)
     lines = [f"[ERROR] recipe not found: {name}"]
     suggestions = suggest_recipe_names(name.removesuffix(".md"), bases)
     if suggestions:
         lines.append("  もしかして: " + ", ".join(f"{stem} [{tier}]" for stem, tier in suggestions))
     lines.append("  searched: " + ", ".join(str(b / fname) for b in bases))
-    print("\n".join(lines))
+    out.out("\n".join(lines))
     sys.exit(1)
 
 
 def auto_orchestrate(steps: list[dict], manifest_default: bool = False) -> tuple[bool, str]:
-    """Whether this recipe auto-enables --orchestrate (deterministic; same rules as SKILL §4.3)."""
+    """Whether this recipe auto-enables --orchestrate (deterministic; same rules as RESOLVE.md §4.3)."""
     has_checks = any(s["checks"] for s in steps)
     has_needs = any(s["needs"] for s in steps)
     if has_checks or has_needs:

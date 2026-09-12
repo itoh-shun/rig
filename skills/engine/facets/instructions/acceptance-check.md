@@ -6,7 +6,7 @@
 
 これを取り違えると「recipe の一覧を全部埋めたのに accept できない」に必ず突き当たるので、先に書く。
 
-* **タスクのゲート＝要求の正本。** `build_acceptance()` が `TASK_TYPES[task_type]` → `GATE_PRESETS`（＋ `.rig/gates.json` の `extra_criteria`、＋ 組織ポリシー）から `acceptance.json` を組む。**recipe は一切参照しない。** この集合が完全かつ拘束的で、`rig-wb wb accept` は1件でも `pending`/`failed` があれば拒否する（記録された `--force` がある場合を除く。`warning`/`skipped` は通り、`passed_with_warnings` として残る）。recipe 側からこの集合に足すことも引くこともできない——`wb gate --set` はゲートに無い名前を受け付けない。
+* **タスクのゲート＝要求の正本。** `build_acceptance()` が `acceptance.json` を組む。素材は `TASK_TYPES[task_type]` → `GATE_PRESETS` で、`.rig/gates.json` の `extra_criteria` と組織ポリシーが加わる。**recipe は一切参照しない。** この集合が完全かつ拘束的で、`rig-wb wb accept` は1件でも `pending`/`failed` があれば拒否する（記録された `--force` がある場合を除く）。個々の criterion の `warning`/`skipped` は通り、`warning` が残れば `passed_with_warnings` になる。ただし**全件が `skipped`** の gate は何も判定していない。accept はこれも同じく拒否する。`gate` の終了コードは、決着した gate が 0、`failed` が 1、食い違う `--set` が 2 である。`pending` が残るうち、および全件 `skipped` のときは 3 になる。recipe 側からこの集合に足すことも引くこともできない——`wb gate --set` はゲートに無い名前を受け付けない。
 * **recipe の `acceptance[]`＝作業一覧。** そのフローの step が自分で証拠を作る基準だけを並べたもの（#486 の規則）。**accept の条件ではない。** 宣言どおりに埋めれば残りが `pending` で残るのが**期待される状態**で、`wb accept` はそのとき何が足りないかを名指しで断る。
 
 だから「recipe に15件並べる」は解決ではない。フローが証拠を作れない基準を宣言することになり、ゴム印か行き止まりを買う（#497 / #486）。
@@ -18,6 +18,12 @@
 `rig-wb wb gate <task_id>` を実行し、**そのタスクのゲートに並ぶ criterion 全件**を判定対象とする。ここが正本で、件数も名前もタスクごとに決まる。
 
 自 step の `acceptance[]`（`"<criterion-id> — <日本語説明>"` 形式の文字列リスト）は、そのうち**このフローが自分で証拠を作る分**の作業一覧として読む。各エントリの ` — ` より前が criterion id（`rig-wb wb gates` の正本と一致させること。一致しない id は `rig-wb validate` が FAIL にする）。`acceptance[]` に無い残りは、operator が手で答えるか `warning`（未確認）として記録する——**黙って飛ばさない。**
+
+報告時は `acceptance[]` の各行に、**同じ添字の `acceptance_binding[]` を併記**する（§3.5）。
+その値はその行を観測する criterion id か、`unobserved` のどちらかである。
+id なら、その criterion に対する①のゲート判定を隣に置く。
+散文で書かれた行が、判定されないまま基準の顔をして並ぶのを、ここで止めるための一手間である。
+`unobserved` の行は「誰も判定しない作業」であり、ゲートの合否には効かない。
 
 ### ② diff.md の作成（未作成なら先に書く）
 
@@ -56,10 +62,10 @@ criterion ごとに、これまでの step（inspect / implement / test / review
 - `tests_confirm_behavior_preserved`：`compare-behavior` step が挙動同一をテストで確認しているか。
 
 **センサーの出力で判定する。** センサーは「該当あり」を鳴らすだけで `passed` を書かない——**鳴らなかったことを `passed` として記録するのはこの step の仕事**で、放っておくとゲートは `pending` のまま残る。
-- `no_secret_leak`：`rig-wb wb scan-secrets <task_id>`。検出ゼロなら `passed`、検出ありで対応済みなら `passed`＋detail、未対応なら `failed`。
+- `no_secret_leak`：`rig-wb wb scan-secrets <task_id>`。検出ゼロなら `passed` を書ける。検出が残っているうちは `--set no_secret_leak=passed` が拒否される（exit 2）。diff から取り除いて評価し直せば測定と一致するので受け付けられる。センサーが自分で書くのは findings の有無までで、pass そのものは書かない。レビュー済みでなお進めるなら `accept --force` だけが道になる。
 - `no_destructive_operation`：`rig-wb wb scan-destructive <task_id>`。同上。
 - `no_injection_markers`：`rig-wb wb scan-injection <task_id>`。diff に混入したプロンプトインジェクション・マーカーを検出する。同上。
-- `ja_lint_clean`（diff が日本語の散文を足したときだけ現れる）：`rig-wb wb scan-ja-prose <task_id>`。センサーが `passed` / `warning` / `failed` を自分で書く。error は追加行の書き方の規約違反で、`rig-wb ja-lint --fix` で機械的に直せるものと、文を分ける・二重否定を言い換えるものがある。固有名詞なら `.claude/ja-textlint.json` の `allow` / `ignore` に宣言する。review 後の逃がし方は `--set ja_lint_clean=passed`（記録される）。
+- `ja_lint_clean`（diff が日本語の散文を足したときだけ現れる）：`rig-wb wb scan-ja-prose <task_id>`。センサーが `passed` / `warning` / `failed` を自分で書く。error は追加行の書き方の規約違反で、`rig-wb ja-lint --fix` で機械的に直せるものと、文を分ける・二重否定を言い換えるものがある。固有名詞なら `.claude/ja-textlint.json` の `allow` / `ignore` に宣言する。`--set ja_lint_clean=passed` はセンサーが次の評価で上書きするので、逃がし方にはならない。error を直すか、`accept --force`（監査に残る）で進めるかの二択になる。
 - `ja_prose_ai_smell_reviewed`（同上）：センサーは `ai-smell-reviewer` の verdict を写すだけで、無ければ `pending` のまま。review fan-out に `ai-smell-reviewer` を加え、`rig-wb wb review <task_id> --set ai-smell-reviewer=<verdict>` で記録する。REJECT は `failed`、APPROVE_WITH_CONDITIONS は `warning`。`scripts/prose_rhythm.py` の数値でこの criterion を埋めない。
 - `no_gate_tampering`：`rig-wb wb audit <task_id>`。ゲート定義・受け入れ記録そのものを緩める変更が diff に含まれていないか。含まれていれば `failed`（緩める理由が正当でも、この step が独断で `passed` にしてよい種類の判断ではない）。
 
@@ -102,4 +108,4 @@ SKILL.md §6「acceptance-gate criterion 単位の合否表示」と同じ体裁
    → 型エラーを修正して再試行
 ```
 
-`failed` が1件でもあれば `patterns/acceptance-gate` の収束ループ（`max_retries` まで再試行 → 未達なら user エスカレーション）に従う。`warning`/`skipped` のみ（`failed` 0件）は gate を通す（`workbench.py accept` も許可するが `passed_with_warnings` として記録に残る）。
+`failed` が1件でもあれば収束ループに従う。`patterns/acceptance-gate` の規定で、`max_retries` まで再試行し、未達なら user へエスカレーションする。`failed` が0件で `passed` が1件以上あり、残りが `warning`/`skipped` なら gate は通る。`workbench.py accept` も許可し、`warning` が残れば `passed_with_warnings` として記録に残る。**全件が `skipped`** はこれに含まれない。判定が1件も無いので `gate` は 3 を返す。`accept` も `--force` 無しでは拒否する。1件でも `skipped` が残る gate は `passed` にならず `passed_with_warnings` になる。accept はその名前を「N criteria nobody judged」の行で出し、provenance.json の `skipped_criteria` にも残す。判定しなかったことは記録の読み手に見える。

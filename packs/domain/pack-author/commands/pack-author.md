@@ -17,7 +17,7 @@ context-minimal の規律に従います。この command は入口だけを担�
 ## 導入と起動
 
 ```text
-rig-wb pack install domain:pack-author --scope project --allow-unverified
+rig-wb pack install domain:pack-author --scope project
 RIG_ALLOW_PROJECT_PACKS=1 RIG_PACK_DIR=.rig/packs-drafts/company-security \
   $rig --recipe pack-author \
   "docs/security/運用設計書.md docs/security/情報セキュリティ規程.md を knowledge pack に。id は company-security"

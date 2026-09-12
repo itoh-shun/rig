@@ -30,6 +30,13 @@ steps:
       - "no_secret_leak — secret の混入がない"
       - "fix_is_minimal — 修正が最小限である"
       - "existing_behavior_preserved — 既存の正常系挙動を壊していない"
+    acceptance_binding:
+      - task_intent_satisfied
+      - no_unrelated_diff
+      - tests_pass_or_explained
+      - no_secret_leak
+      - fix_is_minimal
+      - existing_behavior_preserved
     personas: [implementer]
 ---
 

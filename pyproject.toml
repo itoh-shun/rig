@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rig-workbench"
-version = "2.13.0"
+version = "3.0.0"
 description = "rig — an AI Quality Operating System that runs anywhere. Install as a pip package; drop into Claude Code / Codex / Cursor as a skill; recipe-driven workflow with force-proof accept, cross-LLM verifier, and isolated worktrees — now with an org layer: a common policy that only tightens downstream, role-based permissions, approvals with separation of duties, expiring waivers, and a tamper-evident audit ledger."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -33,7 +33,6 @@ classifiers = [
   "Topic :: Software Development :: Quality Assurance",
 ]
 dependencies = [
-  "cryptography>=41",                  # Ed25519 publisher pack signatures
   "pyyaml>=6.0",                        # recipe frontmatter parsing (orchestrate.py, validate.py)
   "pytest>=7",                          # packaged Python benchmark task execution
 ]
@@ -73,7 +72,7 @@ include = ["rig_workbench*", "benchmarks*", "skills*", "packs*"]
 exclude = ["tests*", "docs*", "video*", "web*"]
 
 [tool.setuptools.package-data]
-rig_workbench = ["py.typed", "packs/trust-roots.json"]
+rig_workbench = ["py.typed"]
 benchmarks = [
   "tasks/**/*.json",
   "tasks/**/*.py",
@@ -81,7 +80,10 @@ benchmarks = [
   "tasks/**/*.txt",
 ]
 "skills.engine" = [
-  "SKILL.md",
+  # SKILL.md plus the documents it points at: §2/§3.5/§4/§5 live in BRICKS.md,
+  # RECIPE-SCHEMA.md, RESOLVE.md and COMPOSE.md, and the pack detail rows in PACKS.md.
+  # A glob rather than a list, like `facets/**/*.md` below, so the next one ships too.
+  "*.md",
   "agents/*.yaml",
   # drill fixture corpus: the answer keys plus the base/head trees they score.
   # The extension list is the whole filter, so a case written in a language missing
@@ -106,6 +108,218 @@ packs = ["domain/**/*", "official/**/*"]
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+
+# ── Stage 3 の片割れ: 呼び出し地点で名指しする lint ───────────────────────
+# docs/v3-architecture-design-brief.ja.md §3 は 6 本のポートを立て、規律を 1 つに
+# 絞った ——「判定層にこの 6 本以外を持ち込ませない」。tests/test_architecture_inventory.py
+# はその散らばりを package ごとの上限として凍結する（数は下がる一方）。ここはもう半分で、
+# 数ではなく **呼び出しているその行** に、置き換わるポートの名前を出す。
+# 到着時点では net-zero: 木全体で有効にし、未移行の経路は下の per-file-ignores で覆う。
+# 柱が移ると、その ignore 行が消える。
+[tool.ruff.lint]
+extend-select = [
+  "T20",     # flake8-print — print() / pprint(): Presenter ポート
+  "TID251",  # flake8-tidy-imports banned-api — 下の表: Env / ProcessRunner / Clock ポート
+]
+
+# banned-api のメッセージは「`X` is banned: 」に続けて表示される。読む人が次に何をすれば
+# よいか分かる必要があるので、代わりに使うポートの名前をそれぞれに書く。
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"os.environ".msg = "read the environment through the Env port -- rig_workbench.ports.Env.get / .snapshot, adapter rig_workbench.ports.local.OS_ENV. The port has no setter on purpose."
+"os.getenv".msg = "read the environment through the Env port -- rig_workbench.ports.Env.get, adapter rig_workbench.ports.local.OS_ENV."
+"subprocess.run".msg = "run it through the ProcessRunner port -- rig_workbench.ports.ProcessRunner.run, adapter rig_workbench.ports.local.SUBPROCESS. It always captures, and returns the same CompletedProcess: text by default (encoding=utf-8, and errors= if your site names a handler), bytes with text=False."
+"subprocess.call".msg = "run it through the ProcessRunner port -- rig_workbench.ports.ProcessRunner.run, then read .returncode; adapter rig_workbench.ports.local.SUBPROCESS."
+"subprocess.check_call".msg = "run it through the ProcessRunner port -- rig_workbench.ports.ProcessRunner.run, then read .returncode; the port never raises on a non-zero status."
+"subprocess.check_output".msg = "run it through the ProcessRunner port -- rig_workbench.ports.ProcessRunner.run, then read .stdout; the port always captures."
+"subprocess.getoutput".msg = "run it through the ProcessRunner port -- rig_workbench.ports.ProcessRunner.run; shell=True is deliberately absent from the port."
+"subprocess.getstatusoutput".msg = "run it through the ProcessRunner port -- rig_workbench.ports.ProcessRunner.run; shell=True is deliberately absent from the port."
+"subprocess.Popen".msg = "run it through the ProcessRunner port -- rig_workbench.ports.ProcessRunner.run, adapter rig_workbench.ports.local.SUBPROCESS; the port grows a streaming variant when a migrating caller brings one."
+"datetime.datetime.now".msg = "read the clock through the Clock port -- rig_workbench.ports.Clock.now / .today / .stamp, adapter rig_workbench.ports.local.SYSTEM_CLOCK. The offset and the format are one fact; do not split them."
+"datetime.datetime.utcnow".msg = "read the clock through the Clock port -- rig_workbench.ports.Clock.now, adapter rig_workbench.ports.local.SYSTEM_CLOCK. rig orders stored ISO text lexicographically, which needs the local offset, not UTC-naive."
+"time.time".msg = "read the clock through the Clock port -- rig_workbench.ports.Clock.now / .stamp, adapter rig_workbench.ports.local.SYSTEM_CLOCK; the port grows an epoch accessor when a migrating caller brings one. time.monotonic (a duration, not a clock read) is not banned."
+"datetime.datetime.today".msg = "read the clock through the Clock port -- rig_workbench.ports.Clock.now / .today / .stamp, adapter rig_workbench.ports.local.SYSTEM_CLOCK. .today() is naive here, which is exactly the shape that made stored ISO text sort wrongly; the port carries the offset."
+"datetime.date.today".msg = "read the clock through the Clock port -- rig_workbench.ports.Clock.now / .today / .stamp, adapter rig_workbench.ports.local.SYSTEM_CLOCK. Clock.today() is this call, reached through the same offset-carrying now() -- so the day a waiver expires and the day the ledger records can never disagree at 23:59."
+"time.time_ns".msg = "read the clock through the Clock port -- rig_workbench.ports.Clock.now / .today / .stamp, adapter rig_workbench.ports.local.SYSTEM_CLOCK. Same clock as time.time, finer units; the port grows an epoch accessor when a migrating caller brings one."
+"time.localtime".msg = "read the clock through the Clock port -- rig_workbench.ports.Clock.now / .today / .stamp, adapter rig_workbench.ports.local.SYSTEM_CLOCK. time.localtime() with no argument reads the clock. Given a timestamp it only converts -- ruff cannot tell the two apart, so it names both; tests/test_architecture_inventory.py counts only the reading form."
+"time.gmtime".msg = "read the clock through the Clock port -- rig_workbench.ports.Clock.now / .today / .stamp, adapter rig_workbench.ports.local.SYSTEM_CLOCK. time.gmtime() with no argument reads the clock, and reads it UTC-naive, which is the form rig cannot order stored text with."
+"time.ctime".msg = "read the clock through the Clock port -- rig_workbench.ports.Clock.now / .today / .stamp, adapter rig_workbench.ports.local.SYSTEM_CLOCK. time.ctime() with no argument reads the clock and formats it; Clock.stamp() is how rig writes a time down."
+"time.asctime".msg = "read the clock through the Clock port -- rig_workbench.ports.Clock.now / .today / .stamp, adapter rig_workbench.ports.local.SYSTEM_CLOCK. time.asctime() with no argument reads the clock through localtime(); Clock.stamp() is how rig writes a time down."
+"time.strftime".msg = "read the clock through the Clock port -- rig_workbench.ports.Clock.now / .today / .stamp, adapter rig_workbench.ports.local.SYSTEM_CLOCK. time.strftime(fmt) with no time tuple reads the clock through localtime(). datetime_object.strftime(fmt) is untouched -- this bans the module function only."
+"time.clock_gettime".msg = "read the clock through the Clock port -- rig_workbench.ports.Clock.now / .today / .stamp, adapter rig_workbench.ports.local.SYSTEM_CLOCK. CLOCK_REALTIME is the settable wall clock. If you meant CLOCK_MONOTONIC, use time.monotonic, which is not banned."
+"time.clock_gettime_ns".msg = "read the clock through the Clock port -- rig_workbench.ports.Clock.now / .today / .stamp, adapter rig_workbench.ports.local.SYSTEM_CLOCK. CLOCK_REALTIME is the settable wall clock. If you meant CLOCK_MONOTONIC, use time.monotonic_ns, which is not banned."
+
+# ── 何を壁時計の読みとし、何をそうしないか ───────────────────────────────
+# 上の表は tests/test_architecture_inventory.py の CLOCK_READS と同じ集合を指す
+# （test_the_ruff_ban_and_the_ast_walk_cover_the_same_clock_reads がそれを表明する）。
+# 入れていないものには理由がある:
+#   * datetime.*.fromtimestamp / utcfromtimestamp — 瞬間を **引数で受け取る**。時刻を
+#     答える呼び出しではなく、答えを渡された変換である。この木で引数を供給しているのは
+#     time.time()（既に禁止済み）か Path.stat().st_mtime（Clock が持つべきでない
+#     ファイルシステム読み）のどちらかで、移行しようのない地点を天井に積むだけになる。
+#   * time.monotonic / monotonic_ns / perf_counter / perf_counter_ns / process_time /
+#     thread_time — 任意の原点からの経過時間であり、システム時計を動かしても変わらない。
+#     記録にも書けず、保存済み ISO 文字列とも比べられない。この木の 42 件はすべて
+#     `deadline = ... + timeout` か `elapsed = ... - started` で、凍結する Clock を
+#     差し込めばタイムアウトが壊れる。Clock がこれを吸うべきではない。
+
+[tool.ruff.lint.per-file-ignores]
+# ── 恒久的に認めた場所。負債ではない ──────────────────────────────────
+# ここの 3 行は柱を待っていない。効果が **あるべき** 場所であり、消したら誤りになる。
+# 下の台帳とは意図が違うので、混ぜずに分けてある。
+#
+# ports/local.py はアダプタ層そのもの: ポート 1 本につき 1 クラス、置き換える対象の
+# 呼び出しをそのまま包む。rig_workbench/ の中で subprocess / os.environ / print /
+# datetime.now を持ってよい唯一のモジュール。protocol だけの ports/__init__.py と
+# registry/ は列に無く、検査を素通しで通る（それが両者の設計上の主張）。
+"rig_workbench/ports/local.py" = ["T201", "TID251"]  # 2 print, 4 banned — アダプタの本体
+#
+# tests/ は出荷される CLI を実プロセスとして起動し、実環境を読む。test_cli_smoke.py /
+# test_exit_code_surface.py / test_entrypoint_contract.py は「利用者のシェルに何が返るか」
+# を検査するためにあり、ポート経由に替えると製品ではなくポートを試すテストになる。
+# 期限つきの負債と称する筋合いがないので、恒久扱いにして台帳から外す。
+"tests/**" = ["T201", "TID251"]  # 2 print, 682 banned — CLI をプロセスとして駆動する側
+#
+# orchestrate/config.py は柱の **配線** である。import 時に RIG_HOME / os.getcwd() /
+# RIG_GLOBAL_RUNS_PATH / RIG_CONVERGENCE_K を読み、資産・実行ログ・state root が
+# どこかを答える。これを Env ポートへ移しても判定層から効果が出ていくわけではない
+# —— ここは何も判定していない —— が、**いつ解決するか** が import 時から初回呼び出し
+# 時へ変わる。13 モジュールがこれを import し、25 のテストファイルが 43 箇所でこの
+# 属性を monkeypatch して rig を一時プロジェクトへ向けているので、それは誰も頼んで
+# いない挙動変更である。だから移さないと決め、tests/test_layering_contract.py の
+# SHELL_MODULES にその理由を書き、ここは柱まるごとではなく **このファイル 1 本** の
+# 行にした。台帳が記録するのは例外であってディレクトリではない。
+"rig_workbench/orchestrate/config.py" = ["TID251"]  # 3 banned — 判定ではなく配線
+
+# ── 負債台帳 ──────────────────────────────────────────────────────────
+# 未移行の経路を 1 行ずつ、今日そこにある件数つきで並べる。柱がポートの背後に移れば、
+# その行が消える —— その削除が移行の完了そのものであり、横の数字がその代金である。
+# **追加してはならない。** ここに新しい経路が増えるということは、ポートの外に新しい効果
+# 地点を書いたということで、それは第 3 段が止めようとしているもの。
+# 並び順は移行順: 残りの柱を小さい順、最後に root 直下のモジュールと scripts/。
+# 先頭にあった `rig_workbench/govern/**`（68 print, 12 banned）、
+# `rig_workbench/eval/**`（16 print, 31 banned）、
+# `rig_workbench/packs/**`（51 print, 11 banned）、
+# `rig_workbench/validation/**`（13 print, 3 banned）、
+# `rig_workbench/orchestrate/**`（0 print, 5 banned）はもう無い。第 3 段で最初から
+# 5 番目までに移った柱であり、その行の削除がこの台帳の言うとおり移行の完了そのものである。
+# この 5 本はすべて tests/test_layering_contract.py の MIGRATED に入っており、台帳の
+# 行と層の規則が同じ柱を指している。残るのは workbench・assurance（§11 T11 で
+# workbench から分かれた）・registry の 3 本である。
+# どの柱も同じ順序（先に効果地点、後から層の規則）で通した。
+# eval の行を消した時点で ruff が eval/ を実際に検査するようになる。行があるうちは
+# `--select TID251` を付けても per-file-ignores は外れないので、あの緑は何も測って
+# いなかった —— 消す前に、禁止呼び出しを 1 つ戻して規則が鳴ることを確かめてある。
+# packs も同じで、行があるうちは `--select` を付けても検査されていなかった。移行前の
+# 木（0d8131e）でこの行だけを外して測ると 51 print / 11 banned で、行に書かれていた
+# 54 / 18 ではない —— `pack sign` / `pack keygen` と publisher 署名が消えた分、台帳の
+# 数字が古くなっていた。移行後は同じ測り方で 0 / 0。
+# 件数は d84a4c9 で ruff 0.15.8 が報告した実測値（推定ではない）。T201 は
+# `print(..., file=x)`（x が sys.stdout/sys.stderr でないもの）を数えないため、
+# tests/test_architecture_inventory.py が AST で凍結した数よりわずかに小さく出る。
+# 壁時計の禁止表を広げた際に **再計測** した 3 行（増えた分は新しい効果地点ではなく、
+# 前の表が見えていなかった既存の呼び出し）: orchestrate 45 -> 47（time.time_ns が 2)、
+# validation 2 -> 3（datetime.date.today が 1）、tests 674 -> 682。他は変わらない。
+# validation も同じで、行があるうちは `--select` を付けても検査されていなかった。移行前の
+# 木でこの行だけを外して測ると 13 print / 3 banned ちょうど —— packs と違い、行に書かれて
+# いた数字は古くなっていなかった。移行後は同じ測り方で 0 / 0。
+# orchestrate の print は 211 -> 20 -> 0。pass 1 で 7 ファイルの **コマンド関数** が
+# シェルの組み立てる Presenter を受け取り、pass 2 で残る 20 —— 判定層 —— が移った。
+# その 20 の内訳: commands.py の 13（`_print_auto_route_regret` の 9 は `out=` 追加で
+# 素通し、`_require_executable_recipe` / `_refuse_blocked_state` / secure ロック保護の
+# 4 は `Refusal` を投げ、`_reports_refusals` が同じ行・同じ stream・同じ終了コードに
+# 戻す —— validation の PyYAML ガードと同じ形）と、recipes.py の 7（trust ゲート 5 と
+# recipe not found 1 は `out=` 追加、PyYAML ガード 1 は orchestrate/yaml_adapter.py へ）。
+# T201 が 0 になったので、この行は TID251 だけに絞る。行そのものが消えるのは
+# banned も 0 になったとき。件数は ruff 0.15.8 の実測値。
+# banned は 47 -> 31 -> 27: os.environ 19 件のうち 16 件が Env ポートへ、壁時計 6 件の
+# うち 4 件が Clock ポートへ移った。残る env 3 件は orchestrate/config.py の import 時
+# 読み取りで、あれは判定ではなく配線である（移すと「いつ解決するか」が変わる）。残る
+# 壁時計 2 件はどちらも time.time_ns() で、理由は各地点にコメントで書いてある ——
+# 一方は一意性の源（凍結した Clock は衝突になる）、もう一方は誰も読み返さない
+# ベンチマーク台帳の整数フィールドで、そのために now_ns() を生やすのは呼び出し地点
+# ではなく名前から書いたポートになる。**Clock には何も足していない。**
+# banned は 27 -> 5: subprocess.run 22 件のうち 17 件が ProcessRunner へ移った。
+# 移らなかった 5 件は **恒久的に認めた例外** であり、負債ではない —— 各地点に
+# `noqa: TID251` と理由を 1 行ずつ書いてあるので、この数字には現れない（内訳:
+# shell=True + stdout=stderr=DEVNULL が 3、端末へ素通しさせる dashboard が 1、
+# 封をした fd を子へ渡す pass_fds が 1。ポートは shell= も pass_fds も持たず、
+# 常に capture するので、どれも「まだ移していない」ではなく「移さない」）。
+# したがって報告に残った 5 件は subprocess ではなく、上の 2 段落の残り —— すなわち
+# config.py の os.environ 3 と time.time_ns 2 —— がそのまま全部だった。
+# **その 5 件で柱の行は消えた。** time.time_ns の 2 件はどちらも恒久的に認めた例外
+# なので、subprocess の 5 件と同じ扱いに揃えて各地点へ `noqa: TID251` と理由を
+# 書いた —— 台帳の横の数字ではなく、コードのその行に理由がある方が正しい。残る
+# config.py の 3 件は上の「恒久的に認めた場所」へ、ファイル 1 本の行として移した。
+# よって `rig_workbench/orchestrate/**` の行は無い。ここまでが第 3 段で 5 番目に
+# 移った柱であり、この行の削除がこの台帳の言うとおり移行の完了そのものである。
+# workbench の assurance 一族（`wb` の 18 動詞）は §11 T11 で
+# `rig_workbench/assurance/` へ出た。台帳の行は 1 本から 2 本になり、**合計は動いて
+# いない**: 508 print / 31 banned が 348 + 160 / 24 + 7 に分かれただけである。柱が
+# 増えたのであって、効果地点が増えたのではない。513 が 508 になったのは §11 T7/T8 で、
+# この分割とは別の出来事である。落ちた 5 件のうち 1 件は `import_task` のもので、
+# 分割後は assurance の側で数える。件数は ruff 0.15.8 で、その行だけを
+# 外して測った実測値（tests/test_architecture_inventory.py の AST 走査と同じ分割になる）。
+# 旧パスに残した 19 本の re-export shim は `rig_workbench/workbench/**` の glob に
+# 当たるが、**どちらの無視も要らない** —— print も禁止 API も 0 で、実測でも
+# `ruff check <shim 19 本> --select T201,TID251` は緑である。ruff の
+# per-file-ignores は和集合なので glob から 1 本だけ外す書き方が無く、素通りしている
+# だけで、shim の分が上の数字に入っているわけではない。
+# assurance は tests/test_layering_contract.py の MIGRATED **に入っていない**。
+# 19 本のうち 10 本が `..workbench.state` を、import_task がさらに 6 本の A の
+# モジュール（config・capabilities・flow_view・lifecycle・progress・runtime）を import
+# しており、柱の外へ出ているのは名前だけで層はまだ越えていない。
+# 台帳の行と層の規則は、ここでも同じ柱を指している。
+"rig_workbench/assurance/**" = ["T201", "TID251"]    # 160 print, 7 banned
+"rig_workbench/workbench/**" = ["T201", "TID251"]    # 348 print, 24 banned
+# root 直下のモジュールは glob 1 行にまとめられない。ruff の per-file-ignores は
+# パターンを設定ファイルからの相対パスに突き合わせるが、その glob では `*` が `/` を
+# またぐ（実測: `rig_workbench/*.py` は govern/cli.py にも当たり、上の柱の行を全部
+# 死文にする。`[!/]*` や `?*` でも同じ）。「rig_workbench の直下だけ」を書ける
+# パターンが無いので、27 本を 1 行ずつ挙げる。**この節を 1 行の glob に「整理」しない
+# こと** —— 柱の行が黙って効かなくなる。合計 195 print / 69 banned。
+"rig_workbench/ast_diff.py" = ["T201"]                      # 2 print
+"rig_workbench/asvs.py" = ["T201"]                          # 15 print
+"rig_workbench/baseline.py" = ["T201", "TID251"]            # 7 print, 1 banned
+"rig_workbench/bench.py" = ["T201", "TID251"]               # 3 print, 12 banned
+"rig_workbench/bench_invariance.py" = ["T201"]              # 3 print
+"rig_workbench/bench_providers.py" = ["TID251"]             # 5 banned
+"rig_workbench/bench_tasks.py" = ["TID251"]                 # 7 banned
+"rig_workbench/caller.py" = ["TID251"]                      # 3 banned
+"rig_workbench/cli.py" = ["T201", "TID251"]                 # 28 print, 2 banned
+"rig_workbench/context_meter.py" = ["TID251"]               # 4 banned
+"rig_workbench/coverage.py" = ["T201", "TID251"]            # 18 print, 1 banned
+"rig_workbench/design_constraints.py" = ["T201", "TID251"]  # 10 print, 1 banned
+"rig_workbench/evidence.py" = ["T201", "TID251"]            # 23 print, 2 banned
+"rig_workbench/exitcodes.py" = ["T201"]                     # 2 print
+"rig_workbench/gh_requirement.py" = ["T201", "TID251"]      # 6 print, 2 banned
+"rig_workbench/githooks.py" = ["T201", "TID251"]            # 14 print, 1 banned
+"rig_workbench/gitroot.py" = ["TID251"]                     # 2 banned
+"rig_workbench/hostcheck.py" = ["T201", "TID251"]           # 21 print, 3 banned
+"rig_workbench/ja_textlint.py" = ["T201", "TID251"]         # 13 print, 1 banned
+"rig_workbench/mission_control.py" = ["T201"]               # 3 print
+"rig_workbench/mission_jobs.py" = ["TID251"]                # 5 banned
+"rig_workbench/mission_server.py" = ["T201", "TID251"]      # 5 print, 2 banned
+"rig_workbench/mission_worker.py" = ["T201", "TID251"]      # 3 print, 3 banned
+"rig_workbench/mutation.py" = ["T201", "TID251"]            # 10 print, 2 banned
+"rig_workbench/remote_mcp.py" = ["TID251"]                  # 9 banned
+"rig_workbench/repo_paths.py" = ["TID251"]                  # 1 banned
+"rig_workbench/sensor_bench.py" = ["T201"]                  # 9 print
+# scripts/ に一括の ignore は置かない。本物の shim（ast_diff.py / orchestrate.py /
+# validate.py / workbench.py など、20 行前後で main() を呼ぶだけのもの）は既に 0 件で
+# 素通しに通っており、残る 8 本は 85〜566 行の独立したプログラムである。一括で覆うと
+# shim ではなくプログラムを覆うことになるので、ファイル単位で、必要なコードだけ挙げる。
+# 先頭の ./ は意図的。tests/test_packaging_layout.py は「引用符の直後に scripts と
+# 続く文字列」がこの pyproject に現れないことを表明し、パッケージの include list に
+# scripts/ が混ざるのを防いでいる。./ を付ければその表明に触れずに同じ 8 本を指せる
+# （ruff の glob は設定ファイルからの相対パスに突き合わせるので当たる。実測で確認済み）。
+"./scripts/sast_adapter.py" = ["T201", "TID251"]           # 11 print, 2 banned
+"./scripts/notify.py" = ["T201", "TID251"]                 # 5 print, 1 banned
+"./scripts/dashboard.py" = ["T201", "TID251"]              # 1 print, 1 banned
+"./scripts/prose_rhythm.py" = ["T201"]                     # 3 print
+"./scripts/build_judge_calibration.py" = ["T201"]          # 3 print
+"./scripts/host_adapters.py" = ["T201"]                    # 1 print
+"./scripts/mutation_adapter.py" = ["T201"]                 # 1 print
+"./scripts/mcp_server.py" = ["TID251"]                     # 1 banned
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

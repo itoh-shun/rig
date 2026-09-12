@@ -9,7 +9,7 @@ import json
 
 import pytest
 
-from rig_workbench.workbench.workflow_effectiveness import (
+from rig_workbench.assurance.workflow_effectiveness import (
     SCHEMA,
     cmd_workflow_effectiveness,
     analyse,
@@ -221,7 +221,7 @@ def test_runtime_is_measured_from_the_perf_block(tmp_path):
     a measured total in the same records this module reads, and a metric that keeps claiming it
     cannot be measured while the measurement sits in the file it is reading is worse than one
     that was never offered."""
-    from rig_workbench.workbench import workflow_effectiveness as we
+    from rig_workbench.assurance import workflow_effectiveness as we
 
     report = we._runtime(_with_perf({"total_ms": 100.0, "rig_overhead_ms": 40.0},
                                     {"total_ms": 200.0, "rig_overhead_ms": 60.0}))
@@ -232,7 +232,7 @@ def test_runtime_is_measured_from_the_perf_block(tmp_path):
 
 
 def test_a_run_without_a_perf_block_is_unmeasured_not_zero(tmp_path):
-    from rig_workbench.workbench import workflow_effectiveness as we
+    from rig_workbench.assurance import workflow_effectiveness as we
 
     report = we._runtime(_with_perf({"total_ms": 100.0, "rig_overhead_ms": 40.0}, None))
     assert report["measured_runs"] == 1 and report["unmeasured_runs"] == 1
@@ -243,7 +243,7 @@ def test_overhead_that_perf_withheld_is_not_counted_as_measured():
     """perf withholds `rig_overhead_ms` whenever a provider call went untimed, because overhead
     is a subtraction and one missed call would silently become rig's time. Reading the absence
     as zero here would reintroduce downstream exactly the fabrication perf refuses."""
-    from rig_workbench.workbench import workflow_effectiveness as we
+    from rig_workbench.assurance import workflow_effectiveness as we
 
     report = we._runtime(_with_perf(
         {"total_ms": 100.0, "rig_overhead_ms": 40.0},
@@ -257,7 +257,7 @@ def test_overhead_that_perf_withheld_is_not_counted_as_measured():
 def test_elapsed_known_but_no_split_says_so_rather_than_omitting_it():
     """A reader who saw only `total_ms` would reasonably assume the split was available and
     simply left out."""
-    from rig_workbench.workbench import workflow_effectiveness as we
+    from rig_workbench.assurance import workflow_effectiveness as we
 
     report = we._runtime(_with_perf({"total_ms": 100.0}))
     assert report["status"] == "observed"
@@ -267,7 +267,7 @@ def test_elapsed_known_but_no_split_says_so_rather_than_omitting_it():
 
 
 def test_no_perf_anywhere_is_unobservable_with_the_counts():
-    from rig_workbench.workbench import workflow_effectiveness as we
+    from rig_workbench.assurance import workflow_effectiveness as we
 
     report = we._runtime(_with_perf(None, None))
     assert report["status"] == "unobservable" and report["value"] is None
@@ -275,7 +275,7 @@ def test_no_perf_anywhere_is_unobservable_with_the_counts():
 
 
 def test_no_runs_at_all_says_that_instead():
-    from rig_workbench.workbench import workflow_effectiveness as we
+    from rig_workbench.assurance import workflow_effectiveness as we
 
     assert we._runtime([])["reason"] == "no orchestrate run records were found"
 
@@ -286,7 +286,7 @@ def test_no_runs_at_all_says_that_instead():
 def test_a_perf_block_with_an_unusable_total_is_not_read(bad):
     """A boolean is an int in Python, and `True` would otherwise contribute 1ms of pure
     fiction to the total."""
-    from rig_workbench.workbench import workflow_effectiveness as we
+    from rig_workbench.assurance import workflow_effectiveness as we
 
     assert we._runtime(_with_perf(bad))["measured_runs"] == 0
 
@@ -296,7 +296,7 @@ def test_the_metric_reaches_the_report_a_caller_actually_reads(tmp_path):
     above."""
     import json
 
-    from rig_workbench.workbench import workflow_effectiveness as we
+    from rig_workbench.assurance import workflow_effectiveness as we
 
     rig = tmp_path / ".rig"
     rig.mkdir()

@@ -22,7 +22,10 @@ Projects without a schema file are untouched (clean skip).
 import json
 import pathlib
 
-from .state import effective_base, git, load_project_gates
+from .state import effective_base, git, load_project_gates, record_sensor_status
+
+#: config.WRITER_OPERATOR's counterpart: this sensor as the writer of a status.
+WRITER = "schema-sensor"
 
 # Criteria this sensor backs (feature preset / refactor preset variants).
 SENSOR_CRITERIA = ("public_api_changes_documented", "public_api_changes_documented_if_any")
@@ -228,10 +231,15 @@ def apply_schema_sensor(root: pathlib.Path, run_d: pathlib.Path, task: dict, acc
         notes.append(f"(schema sensor) {len(summary)} API schema change(s) detected; "
                      "diff.md exists — confirm they are documented there:")
     else:
-        if check["status"] in ("pending", "passed"):
-            check["status"] = "warning"
-            if not check.get("detail"):
-                check["detail"] = "machine-detected API schema changes are not documented (diff.md missing/empty)"
+        # `warning` is in the set for the same reason the other warning-grade branches
+        # have it: an operator who already recorded `warning` agreed with this sensor, and
+        # the sensor taking the status it agrees with is what keeps their `note` — and the
+        # finding — attached to it. An explicit `failed` still outranks it.
+        if check["status"] in ("pending", "passed", "warning"):
+            record_sensor_status(
+                check, "warning",
+                "machine-detected API schema changes are not documented (diff.md missing/empty)",
+                WRITER)
         notes.append(f"(schema sensor) {len(summary)} API schema change(s) detected but diff.md "
                      f"is missing/empty → {check['name']} recorded as warning:")
     notes.extend(f"  {line}" for line in summary)

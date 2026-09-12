@@ -2,13 +2,40 @@
 
 import argparse
 import json
-import os
 import pathlib
 import re
 import sys
+from typing import Protocol, runtime_checkable
+
+from rig_workbench.ports import Clock, Env, ProcessRunner
+from rig_workbench.ports.local import OS_ENV, SUBPROCESS, SYSTEM_CLOCK
 
 from .config import AGENTS, FACETS, ROOT, SKILLS
+from .rig_surfaces import PARSER_SOURCE
 from .state import _emit, parse_frontmatter
+
+
+@runtime_checkable
+class ParserSource(Protocol):
+    """The built `workbench.py` parser — the list of subcommands rig really has.
+
+    Two checks below compare a shipped document against it: `commands/go.md`'s route table
+    and §2's brick catalogue (`BRICKS.md`). Both exist because a surface went missing from a
+    document three times (#395, #470, and the nine #470's fix found still unlisted) and a
+    person noticed rather than this repository. The whole value of either check is that the
+    left-hand side is the real argparse tree and not a list somebody maintains, so it is
+    borrowed, and borrowing it is the edge `tests/test_layering_contract.py` forbids.
+
+    Inverted: this says what it needs — something that hands back a built parser — and
+    `rig_surfaces.PARSER_SOURCE` satisfies it. That module keeps the `workbench.cli` import
+    inside `build()` for the reason this file used to keep it inside these two functions:
+    registering every workbench subcommand drags 101 rig_workbench modules
+    behind it, and twenty of the
+    twenty-two checks in a validate run never ask for the parser.
+    """
+
+    def build(self) -> argparse.ArgumentParser:
+        ...
 
 
 # ── §2 catalog drift (mechanical implementation of validate.md (4)) ──────────
@@ -23,12 +50,48 @@ def _expand_braces(token: str) -> list[str]:
     return out
 
 
+#: The engine's entry document, and the reference files it defers its longer sections to.
+#: `SKILL.md` loads whole on every activation, so §2 (the brick catalogue), §3.5, §4 and §5
+#: live in their own files and `SKILL.md` keeps a one-line summary and the reference. A
+#: brick is "listed" if any of these names it — the same text as before the split, in more
+#: than one file — so where a listing sits is not what this check is about.
+INVENTORY_DOCUMENTS = ("SKILL.md", "BRICKS.md", "RECIPE-SCHEMA.md", "RESOLVE.md", "COMPOSE.md")
+
+#: The file §2 itself lives in. The three checks that slice the brick catalogue read this,
+#: not `SKILL.md`.
+CATALOG_FILE = "BRICKS.md"
+
+
+def catalog_document() -> str:
+    """`BRICKS.md`, the file holding §2's brick catalogue."""
+    return (SKILLS / CATALOG_FILE).read_text(encoding="utf-8")
+
+
 def check_catalog_drift() -> None:
-    """Cross-check backticked brick references in SKILL.md §2 → real files
-    (ghost entries = FAIL), and real files → SKILL.md listings (missing
+    """Cross-check backticked brick references in §2 (`BRICKS.md`) → real files
+    (ghost entries = FAIL), and real files → the engine's listings (missing
     entries = WARN)."""
-    skill = (SKILLS / "SKILL.md").read_text(encoding="utf-8")
-    s2 = skill[skill.index("## 2."):skill.index("## 3.")]
+    # A missing inventory document is a FAIL, not a smaller corpus. Skipping the ones that
+    # are absent would make this check quietly weaker the moment a reference file is renamed
+    # or lost: every brick listed only there would start warning, or — worse, since the
+    # warnings are what a maintainer reads — the document SKILL.md points at could vanish
+    # with `--validate` still green.
+    absent = [name for name in INVENTORY_DOCUMENTS if not (SKILLS / name).is_file()]
+    if absent:
+        _emit("FAIL", f"§2 catalog — the engine's inventory is missing "
+                      f"{', '.join(absent)}: SKILL.md defers its longer sections to these "
+                      f"files, so this check cannot tell whether a brick is listed")
+        return
+    skill = "\n".join((SKILLS / name).read_text(encoding="utf-8")
+                      for name in INVENTORY_DOCUMENTS)
+    bricks_md = catalog_document()
+    section = _section(bricks_md, CATALOG_SECTION)
+    if section is None:
+        _emit("FAIL", f"§2 catalog — skills/engine/{CATALOG_FILE} does not hold exactly one "
+                      f"section bounded by {CATALOG_SECTION[0]!r} and {CATALOG_SECTION[1]!r} "
+                      f"in that order: this check cannot tell where the brick catalog is")
+        return
+    s2 = section
 
     base_map = {
         "facets/": SKILLS / "facets", "recipes/": SKILLS / "recipes",
@@ -72,14 +135,25 @@ def check_catalog_drift() -> None:
                 continue
             if f.stem not in skill and f.stem not in expanded_stems:
                 relative = f.relative_to(SKILLS)
-                _emit("WARN", f"§2 catalog — {relative} is not listed in SKILL.md (missed listing for a pack addition?)")
+                _emit("WARN", f"§2 catalog — {relative} is named in none of "
+                              f"{', '.join(INVENTORY_DOCUMENTS)}; it belongs in "
+                              f"{CATALOG_FILE} §2 (missed listing for a pack addition?)")
                 missing += 1
     _emit("PASS", f"§2 catalog drift: {len(tokens)} references ({ghosts} ghosts) / {missing} suspected missing listings")
 
 
 # ── shipped wiki hygiene check (including freshness) ─────────────────────────
-def check_wiki() -> None:
-    """Check frontmatter hygiene and freshness (reviewed_at; 180 days) of shipped wiki pages."""
+def check_wiki(*, clock: Clock = SYSTEM_CLOCK) -> None:
+    """Check frontmatter hygiene and freshness (reviewed_at; 180 days) of shipped wiki pages.
+
+    The freshness rule is the one check in this module whose verdict is a function of the
+    day it runs, which is exactly why the day arrives as a `Clock` instead of being read
+    where it is used: `tests/test_validation_catalog_ports.py` pins both sides of the
+    180-day boundary against a frozen date, which is not a thing a wall-clock read can be
+    asked. `Clock.today()` comes off the same offset-carrying `now()` the rest of rig
+    stamps records with, so this and a record written in the same second cannot disagree
+    about which day it is at 23:59.
+    """
     import datetime
     wiki_dir = FACETS / "knowledge" / "wiki"
     if not wiki_dir.is_dir():
@@ -103,7 +177,7 @@ def check_wiki() -> None:
         if ra is not None:
             try:
                 d = ra if isinstance(ra, datetime.date) else datetime.date.fromisoformat(str(ra))
-                if (datetime.date.today() - d).days > 180:
+                if (clock.today() - d).days > 180:
                     _emit("WARN", f"{ctx} — reviewed_at is over 180 days old ({d}): review and update the content or mark it deprecated (knowledge freshness)")
             except ValueError:
                 _emit("FAIL", f"{ctx} — reviewed_at '{ra}' is not in YYYY-MM-DD format")
@@ -115,23 +189,32 @@ def check_wiki() -> None:
 
 
 # ── brick graph consistency check (ontology constraints; #graph) ─────────────
-def check_graph() -> None:
+def check_graph(*, proc: ProcessRunner = SUBPROCESS, env: Env = OS_ENV) -> None:
     """Call orchestrate.py graph --json (the primary implementation of the typed graph) and check for unresolved edges.
 
     Instead of reimplementing the derivation logic, invoke the primary
-    implementation via subprocess (avoid duplicating prose and code). Relations
-    already covered by other checks (injects=check_personas / uses-*=check_recipe)
-    are skipped to avoid double reporting; this check only handles
+    implementation via the `ProcessRunner` port (avoid duplicating prose and code).
+    Relations already covered by other checks (injects=check_personas /
+    uses-*=check_recipe) are skipped to avoid double reporting; this check only handles
     **links-to (broken wiki cross-links) = FAIL / references & mirrors = WARN**.
+
+    **`env=` on the port replaces the environment, it does not add to it** — as
+    `subprocess.run` has it, and as `ports/__init__.py` says. The call therefore composes
+    `{**env.snapshot(), "RIG_HOME": ...}`, which is the same mapping the `os.environ`
+    spread built here before: the child needs the parent's `PATH` and `HOME` to run a
+    Python script at all. Handing it the one variable alone would be a different command.
+
+    The port always captures and decodes `encoding="utf-8", errors="replace"`, which is
+    the `capture_output=True, text=True` this call used to spell, minus the strict
+    decoding a bare `text=True` inherits from the locale.
     """
-    import subprocess
-    proc = subprocess.run(
+    completed = proc.run(
         [sys.executable, str(ROOT / "scripts" / "orchestrate.py"), "graph", "--json"],
-        capture_output=True, text=True, env={**os.environ, "RIG_HOME": str(ROOT)})
-    if proc.returncode != 0:
-        _emit("FAIL", f"graph — orchestrate.py graph --json failed: {proc.stderr[:200]}")
+        env={**env.snapshot(), "RIG_HOME": str(ROOT)})
+    if completed.returncode != 0:
+        _emit("FAIL", f"graph — orchestrate.py graph --json failed: {completed.stderr[:200]}")
         return
-    g = json.loads(proc.stdout)
+    g = json.loads(completed.stdout)
     covered = {"injects", "uses-persona", "uses-instruction", "uses-pattern",
                "gated-by", "applies-policy", "emits-contract", "extends"}
     bad = 0
@@ -340,12 +423,11 @@ def workbench_routing(parser, go_md: str, ops_md: str) -> tuple[list, list, list
     return unrouted, stale, blind
 
 
-def check_workbench_routing() -> None:
+def check_workbench_routing(*, parsers: ParserSource = PARSER_SOURCE) -> None:
     """`workbench.py`'s user-facing subcommands against `commands/go.md`'s route table."""
-    from rig_workbench.workbench.cli import build_parser
     go_md = (ROOT / "commands" / "go.md").read_text(encoding="utf-8")
     ops_md = (FACETS / "instructions" / "workbench-ops.md").read_text(encoding="utf-8")
-    parser = build_parser()
+    parser = parsers.build()
     unrouted, stale, blind = workbench_routing(parser, go_md, ops_md)
 
     for why in blind:
@@ -364,13 +446,16 @@ def check_workbench_routing() -> None:
                       f"/ {len(unrouted)} unrouted / {len(stale)} stale allowlist")
 
 
-# ── workbench subcommand ↔ SKILL.md §2 brick catalog (#491) ──────────────────
-#: The §2 section, by the two headings that bound it. `check_catalog_drift` slices the same
-#: section with `str.index("## 3.")`, which would also land on `## 3.5. Recipe スキーマ` if the
-#: two headings were ever reordered; this check locates both bounds as whole lines that occur
-#: exactly once, so a renamed or duplicated heading makes it go blind instead of reading a
-#: section that is not §2.
-CATALOG_SECTION = ("## 2. ブリック目録", "## 3. PARSE — 起動文字列の解釈")
+# ── workbench subcommand ↔ §2's brick catalog (#491) ─────────────────────────
+#: The §2 section, by the two headings that bound it, inside `BRICKS.md` — the file §2 moved
+#: to when `SKILL.md` was cut down to what a first turn needs. `SKILL.md` still carries a
+#: `## 2. ブリック目録` heading, now a one-line summary pointing here, so a check that looked
+#: for the heading in `SKILL.md` would find it and read a stub: the file is part of the
+#: landmark, which is why `CATALOG_FILE` sits beside these bounds.
+#:
+#: Both bounds are located as whole lines that occur exactly once, so a renamed or duplicated
+#: heading makes this go blind instead of reading a section that is not §2.
+CATALOG_SECTION = ("## 2. ブリック目録", "## 目録の外 — 次に読むもの")
 
 #: Subcommands §2 catalogues through the `/rig:go` workbench pack row rather than one by one.
 #: They are the operations on a run — show it, diff it, accept it, discard it, scan it, count
@@ -438,9 +523,9 @@ def workbench_catalog(parser, skill_md: str) -> tuple[list, list, list]:
         blind.append("the parser exposes no subcommands: the CLI wiring this check reads has "
                      "changed shape")
     if section is None:
-        blind.append(f"skills/engine/SKILL.md does not hold exactly one section bounded by "
-                     f"{CATALOG_SECTION[0]!r} and {CATALOG_SECTION[1]!r} in that order: this "
-                     f"check cannot tell where the brick catalog is")
+        blind.append(f"skills/engine/{CATALOG_FILE} does not hold exactly one section "
+                     f"bounded by {CATALOG_SECTION[0]!r} and {CATALOG_SECTION[1]!r} in that "
+                     f"order: this check cannot tell where the brick catalog is")
     elif not catalogued:
         blind.append("no `rig-wb wb <name>` entries found in §2: the notation this check "
                      "reads the catalog by has changed shape")
@@ -453,24 +538,23 @@ def workbench_catalog(parser, skill_md: str) -> tuple[list, list, list]:
     return uncatalogued, stale, blind
 
 
-def check_workbench_catalog() -> None:
-    """`workbench.py`'s user-facing subcommands against SKILL.md §2's brick catalog.
+def check_workbench_catalog(*, parsers: ParserSource = PARSER_SOURCE) -> None:
+    """`workbench.py`'s user-facing subcommands against §2's brick catalog (`BRICKS.md`).
 
     §2 is what a session reads to find out what rig has, and a surface missing from it does
     not exist from there. Three times a shipped surface went missing (#395, #470, and the nine
     subcommands #470's fix found still unlisted), each time noticed by a person rather than by
     this repository's own checks.
     """
-    from rig_workbench.workbench.cli import build_parser
-    skill_md = (SKILLS / "SKILL.md").read_text(encoding="utf-8")
-    parser = build_parser()
+    skill_md = catalog_document()
+    parser = parsers.build()
     uncatalogued, stale, blind = workbench_catalog(parser, skill_md)
 
     for why in blind:
         _emit("FAIL", f"workbench catalog — {why}")
     for name in uncatalogued:
         _emit("WARN", f"workbench catalog — `{name}` is a user-facing subcommand of "
-                      f"workbench.py and SKILL.md §2 names no `rig-wb wb {name}`, so a session "
+                      f"workbench.py and §2 names no `rig-wb wb {name}`, so a session "
                       f"reading the brick catalog cannot find out it exists (missed listing "
                       f"for a new surface?)")
     for name in stale:
@@ -491,7 +575,7 @@ def check_workbench_catalog() -> None:
                       f"in §2 / {len(uncatalogued)} uncatalogued")
 
 
-# ── SKILL.md §2 pack rows ↔ PACKS.md detail rows (#573) ──────────────────────
+# ── §2 pack rows ↔ PACKS.md detail rows (#573) ──────────────────────────────
 #: The header row of §2's "pack 追加分" table, as the whole line it is written on. §2 keeps
 #: its pack table inside a blockquote, so the line carries the `> ` prefix; a copy of the
 #: header outside the blockquote is a different table and must not be read as this one.
@@ -547,23 +631,23 @@ def packs_catalog_drift(skill_md: str, packs_md: str) -> tuple[list, list, list]
     while the rule stood (#573).
 
     Returns rather than emits so a test can hand it two documents it must object to. Takes
-    the whole of SKILL.md and locates §2 itself, so that where it reads is part of what a
+    the whole of `BRICKS.md` and locates §2 itself, so that where it reads is part of what a
     test can break; a pack table outside §2 is not the catalogue.
     """
     blind = []
     section = _section(skill_md, CATALOG_SECTION)
     if section is None:
-        blind.append(f"skills/engine/SKILL.md does not hold exactly one section bounded by "
-                     f"{CATALOG_SECTION[0]!r} and {CATALOG_SECTION[1]!r} in that order: this "
-                     f"check cannot tell where the brick catalog is")
+        blind.append(f"skills/engine/{CATALOG_FILE} does not hold exactly one section "
+                     f"bounded by {CATALOG_SECTION[0]!r} and {CATALOG_SECTION[1]!r} in that "
+                     f"order: this check cannot tell where the brick catalog is")
         skill_ids = None
     else:
         skill_ids = pack_table_ids(section, PACK_TABLE_HEADER)
         if skill_ids is None:
-            blind.append(f"SKILL.md §2 does not hold exactly one line {PACK_TABLE_HEADER!r}: "
+            blind.append(f"§2 does not hold exactly one line {PACK_TABLE_HEADER!r}: "
                          f"this check cannot tell where the pack table is")
         elif not skill_ids:
-            blind.append("SKILL.md §2's pack table has no `| **<id>** |` rows: the row shape "
+            blind.append("§2's pack table has no `| **<id>** |` rows: the row shape "
                          "this check reads pack ids by has changed")
     packs_ids = pack_table_ids(packs_md, PACKS_TABLE_HEADER)
     if packs_ids is None:
@@ -580,26 +664,26 @@ def packs_catalog_drift(skill_md: str, packs_md: str) -> tuple[list, list, list]
 
 
 def check_packs_catalog() -> None:
-    """SKILL.md §2's pack rows against PACKS.md's detail rows, in both directions.
+    """§2's pack rows against PACKS.md's detail rows, in both directions.
 
     A §2 row with no detail row is the addition the rule in §2 asks for and did not get; a
     detail row with no §2 row is a pack that left the catalogue and kept its long description.
     Both WARN, in the shape `check_catalog_drift` already uses for a suspected missed
     listing. Not finding either table is FAIL: a check that could not read is not a pass.
     """
-    skill_md = (SKILLS / "SKILL.md").read_text(encoding="utf-8")
+    skill_md = catalog_document()
     packs_md = (SKILLS / "PACKS.md").read_text(encoding="utf-8")
     missing, stale, blind = packs_catalog_drift(skill_md, packs_md)
 
     for why in blind:
         _emit("FAIL", f"packs catalog — {why}")
     for pack in missing:
-        _emit("WARN", f"packs catalog — SKILL.md §2 lists pack `{pack}` and PACKS.md has no "
+        _emit("WARN", f"packs catalog — §2 lists pack `{pack}` and PACKS.md has no "
                       f"detail row for it (§2 says every pack gets both; missed the PACKS.md "
                       f"half?)")
     for pack in stale:
-        _emit("WARN", f"packs catalog — PACKS.md has a detail row for `{pack}` and SKILL.md "
-                      f"§2's pack table does not list it (stale detail row for a pack that "
+        _emit("WARN", f"packs catalog — PACKS.md has a detail row for `{pack}` and §2's "
+                      f"pack table does not list it (stale detail row for a pack that "
                       f"left §2?)")
     if not blind:
         _emit("PASS", f"packs catalog: {len(missing)} §2 rows without a PACKS.md row / "

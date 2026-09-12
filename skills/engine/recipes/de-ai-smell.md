@@ -8,6 +8,7 @@ steps:
     pattern: serial
     gate: acceptance-gate
     acceptance: ["検出レポート(#27)が『検出なし（0 マーカー）』、または残るのは直すと原意が変わる説明可能な残置のみ", "表層(A〜I)・深層(J〜P,V)・言語(Q〜U＋禁止表現リスト)とも指摘が 0", "深層: 還元不可能な具体(N)が在る/無ければ実例を要求して停止・在る具体は捏造でない、人物/立場/意外性(P/E/V)が在る、形が不均一(J/M/O)、3テスト(削除/圧縮/1行)に耐える", "言語(日本語時): 音読＋禁止表現リスト(「重要なのは」「正面から」「多角的」「掘り下げる」「——」多用 等)を名指しで0に", "原意・事実・ニュアンスが保持されている", "新たな鋳型を作っていない(K/L・逆AI臭なし)", "日本語時: 書き直し後の全文を rig-wb ja-lint に通し、error が 0 である（走らなかった場合は未検証として報告）"]
+    acceptance_binding: [unobserved, unobserved, unobserved, unobserved, unobserved, unobserved, unobserved]
     personas: [ai-smell-reviewer]
     output_contract: review-verdict
 autonomy: interactive

@@ -316,3 +316,99 @@ def test_a_knowledge_warning_does_not_suppress_a_value_key_failure(tmp_path):
     check_manifest(manifest)
     assert validation_state._warn == 1
     assert validation_state._fail == 1
+
+
+# ── what a resolver failure means (#341) ────────────────────────────────
+# `_resolve` used to answer `True` — "resolves fine" — to every exception there
+# is. Measured, exactly one of them means that: a malformed *installed pack* is
+# a different check's problem, and reporting it here would point at the wrong
+# file. Everything else was a failure being reported as success, and the
+# reproduction is in `tests/test_validation_forwarded_ports.py`: with `OsEnv`
+# disarmed for a whole run, `packs`' own `Env` default raised, the catch-all
+# swallowed it, and two selftest scenarios went from FAIL to no-FAIL with the
+# trap never firing. So the narrow catch moved to `rig_surfaces._resolve_asset`,
+# which is the module allowed to name `PackError`, and everything else now
+# surfaces as the `check_manifest` FAIL `cli.py` wraps every check in.
+
+
+class _DisarmedPort(AssertionError):
+    """What a port that was not forwarded raises — the measured swallowed failure.
+
+    An `AssertionError` on purpose: `PortNotForwarded` is one too, and a catch-all
+    that answers `True` turns it into a wrong answer rather than a loud one.
+    """
+
+
+class _Recorder:
+    """A `Presenter` that keeps the report instead of printing it."""
+
+    def __init__(self) -> None:
+        self.lines: list[str] = []
+
+    def out(self, text: str = "") -> None:
+        self.lines.append(text)
+
+    def err(self, text: str = "") -> None:
+        self.lines.append(text)
+
+
+def test_a_malformed_installed_pack_still_resolves(tmp_path):
+    """The one exception still caught, pinned by the failure that raises it.
+
+    A broken pack collection is `check_packs_catalog`'s problem; a manifest typo
+    check that failed on it would name the wrong file. The catch is now at the
+    adapter, so this asserts the old answer through the real resolver rather than
+    through a stub that could not tell the two apart.
+    """
+    from rig_workbench.packs.model import PackError
+    from rig_workbench.packs.resolver import resolve_asset
+
+    pack = tmp_path / ".rig" / "packs" / "broken"
+    pack.mkdir(parents=True)
+    pack.joinpath("pack.yaml").write_text("id: broken\nname: [unterminated\n", encoding="utf-8")
+    pack.joinpath("compatibility.yaml").write_text("{}\n", encoding="utf-8")
+
+    # The precondition, stated rather than assumed: this is what makes the catch
+    # load-bearing at all.
+    with pytest.raises(PackError):
+        resolve_asset("recipe", "no-such-recipe", project=tmp_path)
+
+    manifest = _project_manifest(tmp_path, "default_recipe: no-such-recipe\n")
+    check_manifest(manifest)
+    assert validation_state._fail == 0
+    assert validation_state._pass == 1
+
+
+def test_a_non_pack_resolver_failure_is_not_reported_as_resolved(tmp_path):
+    """Anything that is not a broken pack now leaves `check_manifest`."""
+    def boom(kind, name, *, project):
+        raise _DisarmedPort("OsEnv.get('RIG_USER_HOME') reached a real adapter")
+
+    manifest = _project_manifest(tmp_path, "default_recipe: some-recipe\n")
+    with pytest.raises(_DisarmedPort):
+        check_manifest(manifest, resolver=boom)
+
+
+def test_a_resolver_failure_reaches_the_user_as_a_manifest_check_fail(tmp_path, monkeypatch):
+    """The other direction, through the shell: the words a user actually reads.
+
+    `cli.py` wraps every check in `try/except Exception: _emit("FAIL", …)`, so a
+    failure that is no longer swallowed is one FAIL line with its traceback, not a
+    lost run — and the run's exit status is 1 rather than 0.
+    """
+    from rig_workbench.packs import resolver as packs_resolver
+    from rig_workbench.validation import cli as validation_cli
+    from rig_workbench.validation import manifest as validation_manifest
+
+    def boom(kind, name, **kwargs):
+        raise RuntimeError("pack collection is unreadable")
+
+    monkeypatch.setattr(packs_resolver, "resolve_asset", boom)
+    monkeypatch.setattr(validation_manifest, "ROOT", tmp_path)
+    _project_manifest(tmp_path, "default_recipe: some-recipe\n")
+
+    out = _Recorder()
+    assert validation_cli.cmd_validate([], out=out) == 1
+    report = "\n".join(out.lines)
+    assert "manifest check — unexpected error" in report
+    assert "RuntimeError: pack collection is unreadable" in report

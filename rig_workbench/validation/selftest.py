@@ -4,6 +4,9 @@ import pathlib
 import sys
 import traceback
 
+from rig_workbench.ports import Presenter
+from rig_workbench.ports.local import ConsolePresenter
+
 from . import state
 from .drill import check_drill_coverage
 from .manifest import check_manifest
@@ -12,7 +15,7 @@ from .state import _emit
 
 
 # ── selftest (regression test of validate.py itself; #232) ───────────────────
-def run_selftest() -> None:
+def run_selftest(*, out: Presenter = ConsolePresenter()) -> None:
     """Detect implementation drift in the FAIL/WARN decision logic via synthetic fixtures.
 
     Same positioning as `orchestrate.py selftest` (the doctor's own doctor).
@@ -140,8 +143,8 @@ def run_selftest() -> None:
             got_fail = any(line.startswith("[FAIL]") for line in state.results[start:])
             passed = got_fail == expect_fail
             ok += passed
-            print(f"  [{'OK' if passed else 'NG'}] {stem}"
-                  f" (expected: {'FAIL' if expect_fail else 'no-FAIL'} / actual: {'FAIL' if got_fail else 'no-FAIL'})")
+            out.out(f"  [{'OK' if passed else 'NG'}] {stem}"
+                    f" (expected: {'FAIL' if expect_fail else 'no-FAIL'} / actual: {'FAIL' if got_fail else 'no-FAIL'})")
 
         catalog_path = tmp_path / "drill-catalog.md"
         catalog_path.write_text(drill_catalog, encoding="utf-8")
@@ -157,8 +160,8 @@ def run_selftest() -> None:
             got_fail = any(line.startswith("[FAIL]") for line in state.results[start:])
             passed = got_warn == expect_warn and not got_fail
             ok += passed
-            print(f"  [{'OK' if passed else 'NG'}] {stem}"
-                  f" (expected: {'WARN' if expect_warn else 'no-WARN'} / actual: {'WARN' if got_warn else 'no-WARN'})")
+            out.out(f"  [{'OK' if passed else 'NG'}] {stem}"
+                    f" (expected: {'WARN' if expect_warn else 'no-WARN'} / actual: {'WARN' if got_warn else 'no-WARN'})")
 
         for stem, expect_fail, content in manifest_scenarios:
             fixture = tmp_path / f"{stem}.md"
@@ -171,9 +174,9 @@ def run_selftest() -> None:
             got_fail = any(line.startswith("[FAIL]") for line in state.results[start:])
             passed = got_fail == expect_fail
             ok += passed
-            print(f"  [{'OK' if passed else 'NG'}] {stem}"
-                  f" (expected: {'FAIL' if expect_fail else 'no-FAIL'} / actual: {'FAIL' if got_fail else 'no-FAIL'})")
+            out.out(f"  [{'OK' if passed else 'NG'}] {stem}"
+                    f" (expected: {'FAIL' if expect_fail else 'no-FAIL'} / actual: {'FAIL' if got_fail else 'no-FAIL'})")
 
     total = len(scenarios) + len(drill_scenarios) + len(manifest_scenarios)
-    print(f"\nselftest: {ok}/{total} scenarios OK")
+    out.out(f"\nselftest: {ok}/{total} scenarios OK")
     sys.exit(0 if ok == total else 1)

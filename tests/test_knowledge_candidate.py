@@ -7,7 +7,7 @@ import sys
 
 import pytest
 
-from rig_workbench.workbench.knowledge_candidate import (
+from rig_workbench.assurance.knowledge_candidate import (
     CANDIDATE_SCHEMA,
     EVIDENCE_SCHEMA,
     assess,
@@ -181,7 +181,7 @@ def test_evidence_count_must_equal_distinct_resolved_citations(tmp_path):
 
 def test_a_derived_view_does_not_rejudge_the_result(tmp_path):
     report = _accepted(tmp_path)
-    from rig_workbench.workbench.knowledge_candidate import view
+    from rig_workbench.assurance.knowledge_candidate import view
 
     assert view(report) == {
         "status": "supported", "claimed_confidence": 0.7,

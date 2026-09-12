@@ -52,6 +52,7 @@ rig-wb govern can accept.force                    # check one permission (exit 3
 rig-wb govern approve status|grant|deny <task-id> # the approval flow (the author's own approval never counts)
 rig-wb govern waiver grant <id> --criterion <c> --reason "..." --expires YYYY-MM-DD
 rig-wb govern audit log|verify|export --format csv   # read the ledger / verify the chain / export for audit
+rig-wb govern audit --verify                      # the same chain check as `audit verify` (exit 3 = broken)
 rig-wb govern conformance [--json]                # one repository's conformance (exit 3 = something FAILed)
 rig-wb govern rollup --scan <dir> [--json]        # across teams: A, B, C against the common policy
 ```
@@ -98,7 +99,7 @@ rig-wb orchestrate approve architecture_review --deny --note "there is no ADR"
 
 ## How this relates to accept (no second chokepoint)
 
-Approval **adds to the acceptance gate; it does not replace it**. Where a policy exists, `accept` passes through the accept permission, the approval quorum (**separation of duties**: the author's approval does not count; **freshness**: it lapses when the branch moves), the `--force` permission, and the validity of any exception, before it reaches the squash merge. There is still exactly one chokepoint, accept — build a second and you have built a way around the first.
+Approval **adds to the acceptance gate; it does not replace it**. Where a policy exists, `accept` passes through the accept permission, the approval quorum (**separation of duties**: the author's approval does not count; **freshness**: it lapses when the branch moves; **attestation**: a decision that no `approval.grant` ledger entry attests for the same task, actor, decision and branch tip is not counted — `approvals.json` is an ordinary writable file and the chain is the half that cannot be edited unseen. It is enforced where the repository holds `.rig/provenance.key` or the policy sets `audit.chain_required`; a repository with neither has no chain to reconcile against and behaves as before, and without a key the reconciliation buys visibility rather than resistance), the `--force` permission, and the validity of any exception, before it reaches the squash merge. There is still exactly one chokepoint, accept — build a second and you have built a way around the first.
 
 ## Flags
 

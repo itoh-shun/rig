@@ -19,6 +19,13 @@ steps:
       - "全成果物が実在前提・誇張/捏造なし（不明は [要記入]）"
       - "verdict に `制約 所見` があるなら、その `状態:` 行が checked / unchecked / not-configured のいずれか逐語であり、unchecked と not-configured を合格と書いていない（headless orchestrate では ⓪ が走らないため所見自体が無く、その場合は N/A）"
       - "総合 verdict（APPROVE/APPROVE_WITH_CONDITIONS/REJECT）が出ている"
+    acceptance_binding:
+      - unobserved
+      - unobserved
+      - unobserved
+      - unobserved
+      - unobserved
+      - unobserved
     personas: [design/ux-reviewer, design/a11y-reviewer]
     policies: [design-constraint-rules]
     output_contract: design-verdict

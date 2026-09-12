@@ -13,11 +13,11 @@ import sys
 
 import pytest
 
-from rig_workbench.workbench import assurance_target, assurance_wiring
-from rig_workbench.workbench.assurance_wiring import (ABSENT, INVALID, UNREADABLE_FILE,
+from rig_workbench.assurance import assurance_target, assurance_wiring
+from rig_workbench.assurance.assurance_wiring import (ABSENT, INVALID, UNREADABLE_FILE,
                                                       floor_from, load_requires, projection,
                                                       unreachable)
-from rig_workbench.workbench.synthesis import OPERATOR_REQUESTED, POLICY_REQUIRED, Required
+from rig_workbench.assurance.synthesis import OPERATOR_REQUESTED, POLICY_REQUIRED, Required
 
 CATALOG = frozenset({"acceptance", "implement", "review-diff", "sign"})
 
@@ -199,7 +199,7 @@ def test_having_nothing_to_compare_says_which_kind_of_nothing(payload, state, sa
     """"Nobody asked" and "one is there and nothing can read it" are different situations with
     different next steps, and a reader that had to tell them apart by matching sentences would
     get it wrong the first time either sentence is edited."""
-    from rig_workbench.workbench.assurance import UNREADABLE
+    from rig_workbench.assurance.assurance import UNREADABLE
 
     result = projection(UNREADABLE if payload == "UNREADABLE" else payload, _receipt())
     assert result["observed"] is False
@@ -642,7 +642,7 @@ def test_a_receipt_without_the_block_says_so_rather_than_raising(tmp_path, monke
     """Every receipt this repository builds carries it; one that does not came from somewhere
     else. Printing nothing about the run's own target would read as the run having recorded
     none, and a `KeyError` reported as an execution error says less than the sentence."""
-    from rig_workbench.workbench import assurance_target as module
+    from rig_workbench.assurance import assurance_target as module
 
     root, task_id = _fixture_repo(tmp_path)
     subprocess.run(["git", "init", "-q"], cwd=root, check=True)
@@ -650,7 +650,7 @@ def test_a_receipt_without_the_block_says_so_rather_than_raising(tmp_path, monke
     target.write_text(json.dumps(_target(gate="passed")), encoding="utf-8")
 
     monkeypatch.setattr(module, "repo_root", lambda: root, raising=False)
-    monkeypatch.setattr("rig_workbench.workbench.assurance.build_receipt",
+    monkeypatch.setattr("rig_workbench.assurance.assurance.build_receipt",
                         lambda _root, _task: {"gates": {"observed": True, "status": "passed"}})
 
     class Args:

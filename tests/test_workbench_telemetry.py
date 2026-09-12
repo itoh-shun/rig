@@ -218,10 +218,17 @@ def accepting_repo(tmp_path):
     acc = json.loads((d / "acceptance.json").read_text(encoding="utf-8"))
     for c in acc["checks"]:
         c["status"] = "passed" if c["name"] == "no_unrelated_diff" else "skipped"
+    # The head the gate is claimed to have judged — `accept` refuses an acceptance.json
+    # that names none, and this fixture exists to reach the telemetry write past accept.
+    acc["evaluated_head"] = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=wt, check=True,
+        capture_output=True, text=True).stdout.strip()
     (d / "acceptance.json").write_text(json.dumps(acc), encoding="utf-8")
     (d / "diff.md").write_text("## Summary\nx\n", encoding="utf-8")
 
-    # `new` writes .gitignore; accept refuses to run on a dirty main tree.
+    # accept refuses to run on a dirty main tree, and `.rig/` has to be ignored for the
+    # tree to be clean — `new` only offers that now, it does not do it unasked.
+    (tmp_path / ".gitignore").write_text(".rig/\n", encoding="utf-8")
     subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
     subprocess.run(["git", "commit", "-q", "-m", "ignore"], cwd=tmp_path, check=True)
     return tmp_path, task_id

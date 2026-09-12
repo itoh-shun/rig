@@ -46,7 +46,7 @@
 ```
 [WARN] my-flow (extends: release-flow) — child step `implementt` は parent に存在しません。
         override のタイポの可能性があります。
-        新規 step として追加する意図なら無視してください（SKILL.md §4.2.2）。
+        新規 step として追加する意図なら無視してください（RESOLVE.md §4.2.2）。
 ```
 
 > **WARN とする理由（FAIL にしない）**：子に意図的な新規 step を追加するケースも §4.2.2 で正当（「子のみに存在する step は親の末尾に追加」）。FAIL にすると正当な extension も通らなくなる。WARN にすることで「気づかせる」だけにとどめ、ユーザーが判断する。`--validate --global` 時は全 tier の `extends` recipe を対象に同チェックを実施する。
@@ -58,7 +58,7 @@
 
 ```
 [WARN] my-flow (extends: custom-base) — custom-base も extends を持ちます（多段継承 = 孫継承）。
-        RUN 時に custom-base の extends が無視されます（SKILL.md §4.2.2）。
+        RUN 時に custom-base の extends が無視されます（RESOLVE.md §4.2.2）。
         1 段継承に整理するか、継承元の構成を確認してください。
 ```
 
@@ -192,7 +192,7 @@ manifest の参照キーは RESOLVE/COMPOSE 時に**黙って握りつぶされ�
 
   ```
   [FAIL] recipe my-flow: steps[] が空配列です — 少なくとも 1 step が必要です。
-         steps が空の recipe を実行すると、何もしない空ハーネスが生成されます（SKILL.md §3.5）。
+         steps が空の recipe を実行すると、何もしない空ハーネスが生成されます（RECIPE-SCHEMA.md §3.5）。
          steps に instruction facet を持つ step を 1 件以上追加してください。
   ```
 
@@ -241,7 +241,7 @@ manifest の参照キーは RESOLVE/COMPOSE 時に**黙って握りつぶされ�
 ```
 [WARN] recipe my-flow.md: scope: shipped と宣言されていますが、格納先は project tier です（<repo>/.claude/rig/recipes/my-flow.md）。
        --save-recipe は保存先 tier に合わせて scope を自動設定します。
-       手書き recipe の場合は scope を "project" に修正してください（SKILL.md §3.5）。
+       手書き recipe の場合は scope を "project" に修正してください（RECIPE-SCHEMA.md §3.5）。
 ```
 
 `--validate`（`--global` なし）は shipped＋project tier が対象。`--validate --global` は全 tier（shipped＋project＋user）が対象。
@@ -277,6 +277,8 @@ shipped の `facets/personas/**/*.md` を走査し、persona facet の frontmatt
 > **CI 用機械実装**：`scripts/validate.py` の `check_catalog_drift` が本節のサブセットを実装 — §2 のバッククォート・ブリック参照（brace 記法 `{a,b}-reviewer` 展開対応）→実ファイル（幽霊エントリ＝FAIL）、shipped の `recipes/`・`patterns/`・`facets/` 直下の全カテゴリの実ファイル→SKILL.md 記載（追記漏れ疑い＝WARN）。facet カテゴリはディレクトリ構成から導出するため、新カテゴリも自動的に対象となる。`facets/knowledge/wiki/` は本検査から除外し、独立した⑤ wiki 衛生検査のみが扱う。
 
 §2 ブリック目録（dev-core 行＋pack 追加分の表）と**実ファイル**を突き合わせる。
+**§2 の実体は `skills/engine/BRICKS.md`。** SKILL.md 本体は1行要旨と参照だけを持つ。
+上の「SKILL.md 記載」も、実体としてはこの目録ファイルの記載を指す。検査は `BRICKS.md` を読む。
 
 - 目録に載っているが**実ファイルが無い**もの（幽霊エントリ）→ error。
 - 実ファイルが在るが**目録に載っていない**もの → pack 追加分への追記漏れの可能性として warning（`_` 始まりと `facets/knowledge/wiki/` は除外）。
@@ -311,7 +313,7 @@ wiki ページ（`~/.claude/rig/knowledge/wiki/` ＋ `<repo>/.claude/rig/knowled
 
 ```
 [WARN] ai-quirks: jwt-hallucination-descriptive.md があるが jwt-hallucination-policy.md が見つかりません。
-        policy が注入されないため、AI 癖の抑制規範が RUN に渡りません（SKILL.md §5 / §7.2）。
+        policy が注入されないため、AI 癖の抑制規範が RUN に渡りません（COMPOSE.md §5 / §7.2）。
         `capture` でペアを再生成するか、手動で policy ファイルを作成してください。
 ```
 

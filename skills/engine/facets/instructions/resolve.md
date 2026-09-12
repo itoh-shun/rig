@@ -21,10 +21,10 @@
 | `skills` | instruction facet の委譲先候補 | セッション開始時に利用可能な skill を自動検出 |
 | `knowledge.*` | Knowledge facet の注入ソース | repo を検索して `CONTEXT.md` / `CLAUDE.md` / `docs/` を探す |
 | `default_recipe` | recipe 解決（下記 2.） | `interactive`（毎回ユーザーに選択させる） |
-| `default_personas` | review fan-out へ自動投入する persona 名リスト（SKILL.md §5） | `[]`（自動投入なし） |
+| `default_personas` | review fan-out へ自動投入する persona 名リスト（COMPOSE.md §5） | `[]`（自動投入なし） |
 | `default_backend` | 全 RUN の既定バックエンド（`manual`/`workflow`）。recipe `backend:` / `--workflow` で個別上書き（#52） | `manual` |
 | `default_max_retries` | `acceptance-gate` step の `max_retries` 省略時フォールバック。step ローカル `max_retries` で上書き（#100） | `2` |
-| `org_dir` | チーム共有ブリック層（org tier）のパス。env `RIG_ORG_HOME` でも指定可（SKILL.md §5 tier 解決） | 未設定＝org tier をスキップ |
+| `org_dir` | チーム共有ブリック層（org tier）のパス。env `RIG_ORG_HOME` でも指定可（COMPOSE.md §5 tier 解決） | 未設定＝org tier をスキップ |
 | `default_budget` | コスト予算の恒久設定（`low`/`mid`）。`--budget` が優先（§4.4） | 制限なし |
 | `default_orchestrate` | `true` で全 RUN を計算的オーケストレーションで回す（`--orchestrate` 等価）。recipe の `checks:`/`needs:` による自動有効化とは独立にプロジェクト全体へ適用 | `false` |
 | `worktree.*` | worktree 運用フラグ。`worktree.enabled` を実際に読んで分岐するのは `facets/personas/implementer`（#225） | `worktree.enabled: false` |
@@ -71,7 +71,7 @@ recipe の frontmatter に `extends: <parent-name>` が宣言されている場�
 
 1. **チェーンの解決**：leaf → parent → grandparent → …の順に `extends` を辿る。各段の `<parent-name>` を 2.1 の tier 検索順で探す（bare 名のみ。パス指定・URL 不可）。**深さ上限 5**（`EXTENDS_MAX_DEPTH` in `orchestrate.py`）を超えたら残りを無視し WARN。**循環継承**（A → B → A 等）は検知次第 `[WARN] extends: 循環継承を検知しました (X → Y → Z → X)` を出して途中打ち切り。これらは実行を止めないが `--validate` は WARN として集計する。**認知経済的に浅く保つ**（深い継承は追跡できない）。
 2. **step マージ**：root ancestor の `steps[]` をベースにし、leaf に向かって順に各段の `steps[]` を適用する。
-   - `remove: true` がある → 継承元から該当 `id` の step を**除外する**（SKILL.md §3.5 `remove` フィールド）
+   - `remove: true` がある → 継承元から該当 `id` の step を**除外する**（RECIPE-SCHEMA.md §3.5 `remove` フィールド）
    - `remove` が無い / `remove: false` → 同 `id` は上書き（`_origin=override`）、新 `id` は末尾追加（`_origin=added`）
 3. **トップレベルキーのマージ**：`name` / `description` / `scope` / `autonomy` などは root → parent → leaf の順に上書き（leaf の値が最終的に勝つ）。子に記載のないキーは祖先を引き継ぐ。`extends` は合成後の recipe には残さない（出力しない）。
 

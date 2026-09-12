@@ -39,12 +39,12 @@ rig のブリックは役割で分かれる。説明をこの型に割り当て�
 |---|---|
 | project（既定） | `<repo>/.claude/rig/{recipes,personas,instructions,output-contracts,knowledge}/<name>.md`・command は `<repo>/.claude/commands/`（または案内） |
 | user（`--user`） | `~/.claude/rig/...` |
-| shipped（`--shipped`・rig 本体作業時のみ） | `skills/engine/{recipes,facets/...}`・`commands/`・**SKILL.md §2 目録に1行追加** |
+| shipped（`--shipped`・rig 本体作業時のみ） | `skills/engine/{recipes,facets/...}`・`commands/`・**`skills/engine/BRICKS.md` の §2 目録に1行追加** |
 
 ## ④ 検証（自己拡張は検証込みで完結）
 
 - **参照解決を検証する**：rig 本体作業時は `python3 scripts/validate.py`、それ以外は rig の `--validate`（doctor）で、recipe→facet 参照切れ・frontmatter スキーマ逸脱が無いか確認。**FAIL があれば直してから完了**（壊れた brick を残さない）。
-- 生成物が呼べることを確認：`--list`／`/rig:catalog` に出る（project/user）か、SKILL §2 に載る（shipped）。
+- 生成物が呼べることを確認：`--list`／`/rig:catalog` に出る（project/user）か、`BRICKS.md` の §2 に載る（shipped）。
 
 ## ⑤ 報告
 

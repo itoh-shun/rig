@@ -4,6 +4,7 @@ import pathlib
 import shutil
 
 import pytest
+from rig_workbench.packs.resolver import core_reference_ids
 
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -28,7 +29,7 @@ def test_decision_humor_is_opt_in_and_manifest_is_exact(monkeypatch, tmp_path):
         assert not (REPO_ROOT / "commands" / f"{name}.md").exists()
         assert resolve_asset("recipe", name, project=tmp_path) is None
         assert resolve_asset("command", name, project=tmp_path) is None
-    manifest = validate_pack(PACK)
+    manifest = validate_pack(PACK, core_ids=core_reference_ids())
     assert manifest["dependencies"] == []
     assert {pathlib.PurePosixPath(item).stem for item in manifest["assets"]["recipe"]} == RECIPES
     assert len(manifest["assets"]["eval-case"]) == 10
@@ -51,10 +52,12 @@ def test_alias_install_resolves_every_owned_asset_records_trust_and_removes(
     trust = tmp_path / "pack-trust.json"
     monkeypatch.setenv("RIG_ALLOW_PROJECT_PACKS", "1")
     monkeypatch.setenv("RIG_PACK_TRUST_STORE", str(trust))
+    # Only `INVOCATION_CWD` is pinned: `PROJECT_RECIPES` is served lazily off it through the
+    # module's PEP 562 `__getattr__`, and `monkeypatch.setattr` on such a name saves the value
+    # it computes now and restores it as a *real* module attribute, freezing the overlay at
+    # this test's tmp_path for every later test in the worker. Patch the root, not the derived.
     monkeypatch.setattr(orchestrate_config, "INVOCATION_CWD", project)
-    monkeypatch.setattr(orchestrate_config, "PROJECT_RECIPES", project / ".rig/recipes")
-    result = install_pack("domain:decision-humor", scope="project", project=project,
-                          allow_unverified=True)
+    result = install_pack("domain:decision-humor", scope="project", project=project)
     assert result.manifest["id"] == "decision-humor"
     for kind, paths in result.manifest["assets"].items():
         if kind not in PROMPT_KINDS:
@@ -85,8 +88,7 @@ def test_all_three_domain_packs_coexist_and_same_tier_collision_fails(monkeypatc
     _isolated(monkeypatch, tmp_path)
     project = tmp_path / "project"
     for pack_id in ("sales", "video-storytelling", "decision-humor"):
-        install_pack(f"domain:{pack_id}", scope="project", project=project,
-                     allow_unverified=True)
+        install_pack(f"domain:{pack_id}", scope="project", project=project)
     for kind, name in (("recipe", "deal-review"), ("recipe", "movie"),
                        ("recipe", "magi")):
         assert resolve_asset(kind, name, project=project) is not None
@@ -105,7 +107,7 @@ def test_all_three_domain_packs_coexist_and_same_tier_collision_fails(monkeypatc
         validate_tiered_collection([
             ("project", project / ".rig/packs/decision-humor"),
             ("project", duplicate),
-        ])
+        ], core_ids=core_reference_ids())
 
 
 def test_unknown_gate_and_no_orchestrate_fail_closed(monkeypatch, tmp_path, capsys):
@@ -146,7 +148,7 @@ def test_unknown_gate_and_no_orchestrate_fail_closed(monkeypatch, tmp_path, caps
     manifest["hashes"]["recipes/magi.md"] = digest(recipe)
     (copied / "pack.yaml").write_text(canonical(manifest), encoding="utf-8")
     with pytest.raises(PackError, match="unsupported executable gate"):
-        validate_pack(copied)
+        validate_pack(copied, core_ids=core_reference_ids())
 
 
 def test_ten_eval_cases_have_real_provenance_and_runnable_markdown_checks():

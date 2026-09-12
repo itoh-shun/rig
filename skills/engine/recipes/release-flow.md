@@ -23,6 +23,7 @@ steps:
     pattern: serial
     gate: acceptance-gate
     acceptance: ["build が成功", "lint 0 件", "関連テスト green"]
+    acceptance_binding: [unobserved, unobserved, tests_pass_or_explained]
     personas: [implementer]
     policies: [risk-based-testing, ci-cost]
   - id: review
@@ -30,6 +31,7 @@ steps:
     pattern: parallel-fanout
     gate: acceptance-gate
     acceptance: ["4-way review に REJECT が無い", "APPROVE_WITH_CONDITIONS のマージ前必須条件をすべて反映済み"]
+    acceptance_binding: [unobserved, unobserved]
     personas: [security-reviewer, design-reviewer, test-reviewer, behavioral-correctness-reviewer]
     policies: [pre-push-review]
     output_contract: review-verdict

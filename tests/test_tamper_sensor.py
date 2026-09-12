@@ -4,8 +4,10 @@ Covers: fail-grade detection of gate/CI-config edits in the task diff
 (.rig/gates.json / .rig/recipes/ / .github/workflows/), the CI/config
 task-type exemption, warning-grade test-weakening heuristics (existing test
 files modified/deleted on bugfix/feature, assert-removal counts, skip
-markers) with the `test` task-type exemption, clean-run no-op, the explicit
-`--set no_gate_tampering=passed` escape hatch (tamper_override, sticky), the
+markers) with the `test` task-type exemption, clean-run no-op, the sensor's
+verdict standing over a `passed` already on the check (a hand-written `--set`
+that contradicts it is refused by the gate — tests/test_gate_sensor_authority.py
+holds that rule, and this defect is what it was written for), the
 reset-to-pending path, preset wiring, and the fail-grade gate integration in
 a scratch repo through the CLI.
 """
@@ -241,20 +243,17 @@ def test_uncommitted_workflow_edit_and_untracked_workflow_are_seen(tmp_path):
     assert sorted(kinds) == ["ci_workflow_modified", "ci_workflow_modified"]
 
 
-# ── escape hatch / reset ──────────────────────────────────────────────────────
-def test_explicit_pass_is_recorded_and_sticks(tmp_path):
+# ── the sensor's own verdict / reset ─────────────────────────────────────────
+def test_sensor_writes_its_verdict_over_a_passed_check(tmp_path):
     repo, sha = make_repo(tmp_path)
     (repo / ".rig" / "gates.json").write_text("{}\n", encoding="utf-8")
     commit(repo)
     task, acc = make_state(repo, sha)
     acc["checks"][0]["status"] = "passed"
-    notes = apply_tamper_sensor(repo, tmp_path, task, acc, explicit_set={"no_gate_tampering"})
-    assert acc["checks"][0]["status"] == "passed"
-    assert acc["checks"][0]["tamper_override"] is True
-    assert any("manual override" in n for n in notes)
-    # ...and the override survives later evaluations without --set
-    apply_tamper_sensor(repo, tmp_path, task, acc)
-    assert acc["checks"][0]["status"] == "passed"
+    notes = apply_tamper_sensor(repo, tmp_path, task, acc)
+    assert acc["checks"][0]["status"] == "failed"
+    assert "tamper_override" not in acc["checks"][0]
+    assert any("no_gate_tampering failed" in n for n in notes)
 
 
 def test_sensor_resets_its_own_failure_when_tampering_reverted(tmp_path):
@@ -319,12 +318,14 @@ def test_gate_integration_gates_json_edit_fails_no_gate_tampering(tmp_path):
     assert r.returncode == 0, r.stderr
     assert "tamper: .rig/gates.json [gate_config_modified]" in r.stdout
 
-    # documented escape hatch: explicit --set no_gate_tampering=passed after review
+    # the sensor's verdict is not overridable by hand: the gate refuses the declaration
+    # and records its own measurement (this is the defect the first dogfood run walked into).
     r = cli(repo, wt_root, "gate", task_id, "--set", "no_gate_tampering=passed")
-    assert r.returncode == 0, r.stdout + r.stderr
+    assert r.returncode == 2, r.stdout + r.stderr   # a usage error, not a failed gate
+    assert "you set 'passed' — the sensor measured 'failed'" in r.stdout + r.stderr
     acc = json.loads((repo / ".rig" / "runs" / task_id / "acceptance.json").read_text(encoding="utf-8"))
     check = next(c for c in acc["checks"] if c["name"] == "no_gate_tampering")
-    assert check["status"] == "passed" and check.get("tamper_override") is True
+    assert check["status"] == "failed" and "tamper_override" not in check
 
 
 def test_gate_integration_test_deletion_on_bugfix_is_warning_not_failed(tmp_path):
@@ -341,7 +342,9 @@ def test_gate_integration_test_deletion_on_bugfix_is_warning_not_failed(tmp_path
     _git(wt, "commit", "-q", "-m", "delete the failing test")
 
     r = cli(repo, wt_root, "gate", task_id)
-    assert r.returncode == 0, r.stdout + r.stderr  # warning-grade never fails the gate on its own
+    # 3 (PENDING), not 1: a warning-grade finding never fails the gate on its own, and the
+    # unrecorded criteria are what leave this gate without a verdict.
+    assert r.returncode == 3, r.stdout + r.stderr
     assert "test_file_deleted" in r.stdout
     acc = json.loads((repo / ".rig" / "runs" / task_id / "acceptance.json").read_text(encoding="utf-8"))
     check = next(c for c in acc["checks"] if c["name"] == "no_gate_tampering")

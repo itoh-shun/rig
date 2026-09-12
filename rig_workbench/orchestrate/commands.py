@@ -11,8 +11,10 @@ import subprocess
 import concurrent.futures as futures
 from collections import Counter
 from functools import wraps
+from typing import Protocol
 
-from .. import repo_paths
+from ..ports import Clock, Env, Presenter, ProcessRunner
+from ..ports.local import CONSOLE, OS_ENV, SUBPROCESS, SYSTEM_CLOCK
 from . import config
 from . import otel
 from . import perf
@@ -22,10 +24,10 @@ from .recipes import (_record_trust, auto_orchestrate, git_diff_lines, load_mani
 from .runstate import compute_next, load_state, new_state, save_state, stage_gate_status
 from .providers import metering_note
 from .secure_runtime import JAPANESE_WRITING_RECIPES
-from .providers import (JAPANESE_MATERIAL_PROFILES, JAPANESE_WRITING_REVIEW_CATEGORIES,
-                        record_verdicts, resolve_japanese_material, parse_step_model_spec,
+from .composition import JAPANESE_MATERIAL_PROFILES, resolve_japanese_material
+from .providers import (JAPANESE_WRITING_REVIEW_CATEGORIES,
+                        record_verdicts, parse_step_model_spec,
                         read_result_artifact, run_loop, unknown_step_model_ids)
-from ..packs.model import PackError
 from .isolate import setup_isolation, teardown_isolation
 from .gates import validate_executable_recipe
 from .secure_runtime import (SecureRuntimeError, close_secure_launchers,
@@ -37,6 +39,114 @@ from .secure_fs import (
     prepare_output_target,
     release_output_lock,
 )
+from .batch_surface import KNOWN_PROJECTS
+from .govern_surfaces import GOVERN_SURFACES
+from .pack_surfaces import PackError
+from .package_surfaces import SCRIPT_LOCATOR
+
+
+class ScriptLocator(Protocol):
+    """What `runs --html` needs in order to find `scripts/dashboard.py`.
+
+    The package is installed without a `scripts/` sibling, so finding one means searching
+    for a checkout — `RIG_HOME`, then the install source, then the current directory and its
+    parents — rather than computing a path relative to this file, which lands inside
+    site-packages once installed and finds no `scripts/` at all. That search is
+    `rig_workbench.repo_paths`' rule, held in one place on purpose.
+
+    Stated as a protocol rather than imported, because the import is what
+    `tests/test_layering_contract.py` forbids: a judgement module may reach the standard
+    library, its own pillar and the six ports, and `rig_workbench.repo_paths` is none of the
+    three. `package_surfaces.SCRIPT_LOCATOR` satisfies this shape, and `mcp_scan.py` declares
+    the same two questions for the same reason — two callers, two narrow declarations, one
+    adapter, which is how `rig_surfaces` holds eight of them.
+    """
+
+    def find(self, name: str) -> pathlib.Path | None:
+        """The repository's `scripts/<name>`, or None when no checkout holds one."""
+        ...
+
+    def expected(self, name: str) -> pathlib.Path:
+        """Where `scripts/<name>` would be — the path an error message names."""
+        ...
+
+
+class StageGovernance(Protocol):
+    """What `approve` needs of the governance layer.
+
+    Casting a decision on a step asks governance six things: does the policy layer load,
+    does anything gate this step, who is casting, may they, what record does that make, and
+    where does it get mirrored. Not one of those is the orchestrator's arithmetic — quorum,
+    qualifying roles, separation of duties and freshness are `govern.approval`'s, the
+    org→team→project tightening is `govern.policy`'s, and the hash chain that makes the
+    audit trail tamper-evident is `govern.ledger`'s. This command decides only *where* the
+    decision is stored: in the run-state, beside that step's checks and verdicts.
+
+    Stated as a protocol rather than imported, because the import is what
+    `tests/test_layering_contract.py` forbids: a judgement module may reach the standard
+    library, its own pillar and the six ports, and six `govern` modules are none of those.
+    They were reached from inside this command's body, which hid the edges rather than
+    removing them. `govern_surfaces.GOVERN_SURFACES` satisfies this shape and is what every
+    shipped caller passes.
+
+    **The policy crosses as a token.** `policy()` hands back a value this module holds and
+    hands straight back; every question about it is a method here. So no signature in this
+    file is written in another pillar's vocabulary, and `PolicyError` — which used to stand
+    in an `except` clause, where a class is an edge exactly as much as a function in a call
+    — stops at the adapter, arriving instead as the refusal message this command was going
+    to print anyway.
+    """
+
+    def policy(self, root: pathlib.Path) -> tuple[object, str | None]:
+        """The effective policy at `root`, or `(None, why it does not load)`."""
+        ...
+
+    def has_stage_rule(self, policy: object, step: dict) -> bool:
+        """Whether any approval rule governs this step."""
+        ...
+
+    def current_actor(self, root: pathlib.Path) -> str:
+        """The identity performing this action."""
+        ...
+
+    def refusal(self, policy: object, actor: str, permission: str) -> str | None:
+        """Why `actor` may not exercise `permission`, or None when they may."""
+        ...
+
+    def decision(self, policy: object, *, actor: str, decision: str, head: str | None,
+                 note: str) -> dict:
+        """One decision record, carrying the roles this actor holds."""
+        ...
+
+    def upsert(self, decisions: list[dict], entry: dict) -> list[dict]:
+        """`entry` added, replacing any earlier decision by the same actor."""
+        ...
+
+    def record(self, root: pathlib.Path, action: str, *, actor: str, subject: str,
+               data: dict) -> None:
+        """Mirror one governance event into the tamper-evident ledger."""
+        ...
+
+
+class ProjectIndex(Protocol):
+    """What `fleet --discovered` needs of the cross-project run log.
+
+    One question: which repositories has rig actually run in. The answer is a projection of
+    `~/.rig/runs.jsonl`, which is the workbench's file with the workbench's rules about
+    truncated lines and collapsed records — reading it here would be a second reader of one
+    log, and the second reader is the one that goes stale.
+
+    Stated as a protocol rather than imported, because the import is what
+    `tests/test_layering_contract.py` forbids: a judgement module may reach the standard
+    library, its own pillar and the six ports, and `workbench.run_index` is none of those.
+    It was reached from inside this command's body, which hid the edge rather than removing
+    it. `batch_surface.KNOWN_PROJECTS` satisfies this shape and is what every shipped caller
+    passes.
+    """
+
+    def __call__(self) -> list[str]:
+        """Every repository that has recorded a run, newest first."""
+        ...
 
 
 _SECURE_PIN_FLAGS = {
@@ -113,18 +223,66 @@ def render_plan(recipe: str, steps: list[dict], execution: dict | None = None) -
     return "\n".join(lines)
 
 
+class Refusal(Exception):
+    """A refusal decided here and reported by the command the caller invoked.
+
+    The `validation` pillar's shape, for the same reason it was adopted there. Three
+    judgement helpers below — `_require_executable_recipe`, `_refuse_blocked_state` and
+    the lock guard in `_locked_secure_state_mutation` — used to `print` and then
+    `raise SystemExit`, which is a decision about a user's stdout taken where no caller
+    can see it, let alone intercept it. They raise this instead; `_reports_refusals`
+    turns it back into the same lines on the same stream and the same exit status, at
+    the one place that holds the `Presenter` the shell built.
+
+    `lines` is a list rather than one string because `_require_executable_recipe` emits
+    a heading and then one line per structural error, and `Presenter.out` is a line at a
+    time. `code` travels with the refusal because the exit status is part of what is
+    being refused, not a property of whoever catches it.
+    """
+
+    def __init__(self, lines, code: int = 2) -> None:
+        self.lines = list(lines)
+        self.code = code
+        super().__init__(self.lines[0] if self.lines else "")
+
+
+def _reports_refusals(command):
+    """Report a `Refusal` through this command's `Presenter`, then exit as before.
+
+    Applied outside `_locked_secure_state_mutation` so that the lock guard's own refusal
+    is reported too, and so the lock is released on the way out — the guard's `finally`
+    runs while the exception is still travelling.
+
+    `kwargs.get("out", CONSOLE)` rather than a required parameter: `packs/cli.py` calls
+    `commands.cmd_run([...])` positionally and `selftest.py` calls `cmd_resume` /
+    `cmd_runs` the same way, and both must keep printing exactly what they printed.
+    """
+    @wraps(command)
+    def reporting(args, **kwargs):
+        try:
+            return command(args, **kwargs)
+        except Refusal as refusal:
+            reporter: Presenter = kwargs.get("out") or CONSOLE
+            for line in refusal.lines:
+                reporter.out(line)
+            raise SystemExit(refusal.code) from refusal
+
+    return reporting
+
+
 def _require_executable_recipe(fm: dict, label: str) -> dict:
     execution = validate_executable_recipe(fm)
     if execution["orchestratable"]:
         return execution
     prefix = "[ERROR]" if execution["errors"] else "[BLOCKED]"
-    print(f"{prefix} recipe {label} is computationally nonexecutable: {execution['reason']}")
-    for error in execution["errors"]:
-        print(f"[ERROR] {error}")
-    raise SystemExit(2)
+    raise Refusal(
+        [f"{prefix} recipe {label} is computationally nonexecutable: {execution['reason']}",
+         *(f"[ERROR] {error}" for error in execution["errors"])],
+        code=2,
+    )
 
 
-def cmd_plan(args):
+def cmd_plan(args, *, out: Presenter = CONSOLE):
     path = resolve_recipe(args[0])
     with_flags: list[str] | None = None
     diff_lines: int | None = None
@@ -149,43 +307,100 @@ def cmd_plan(args):
     else:
         plan = resolve_plan_json(path)
     if "--json" in args:
-        print(json.dumps(plan, ensure_ascii=False, indent=2))
+        out.out(json.dumps(plan, ensure_ascii=False, indent=2))
         if plan.get("errors"):
             sys.exit(1)  # same exit contract as the non-JSON path
         return
-    print(render_plan(plan["recipe"], plan["steps"], plan.get("execution")))
+    out.out(render_plan(plan["recipe"], plan["steps"], plan.get("execution")))
     for w in plan.get("warnings", []):
-        print(f"[WARN] {w}")
+        out.out(f"[WARN] {w}")
     for e in plan.get("errors", []):
-        print(f"[ERROR] {e}")
+        out.out(f"[ERROR] {e}")
     if plan.get("errors"):
         sys.exit(1)
 
 
 def _state_path(args, default="run-state.json") -> pathlib.Path:
-    return pathlib.Path(args[0]) if args else pathlib.Path(default)
+    """The run-state this invocation reads — refused here when it is not there.
+
+    Every command that reads a run-state resolves its path through this one function, so
+    the absence is answered once, in the place that already knows the default and the
+    path the caller typed. Before this, the absence reached `load_state`'s `os.open` and
+    surfaced as a `FileNotFoundError` traceback: eleven frames of rig's internals for a
+    condition rig can predict (`check`, `next`, `verdict`, `status`, `resume` and
+    `approve`, all of them one `init` away from being right).
+
+    The remedy names the verb and not the command line: this function is reached from
+    `rig-wb`, from `scripts/orchestrate.py`, and from an in-process caller, and printing
+    `rig-wb init` to somebody who reached it through the shim prescribes an entry point
+    they may not have installed.
+
+    A leading flag is not a path. `rig-wb --help` advertises
+    `verdict [<state.json>] --by N --pass|--fail`, brackets and all, and the bracketed
+    form was unreachable: `verdict --by alice --pass` took `--by` as the filename and
+    opened `./--by`. The default applies whenever the first token starts with `-`, which
+    is what the brackets in the help text have always claimed.
+
+    `Refusal` rather than a print: this is the judgement layer, and the line goes out
+    through the `Presenter` the shell built (see `_reports_refusals`). Code 2 because
+    the command could not produce an answer at all, which is what
+    `tests/test_exit_code_surface.py` pins 2 to mean — a 1 here would read as a verdict.
+    """
+    typed = args[0] if args and not args[0].startswith("-") else None
+    path = pathlib.Path(typed) if typed else pathlib.Path(default)
+    if not path.exists():
+        creates = ("init <recipe.md>" if path == pathlib.Path(default)
+                   else f"init <recipe.md> --out {path}")
+        raise Refusal([f"[ERROR] no run-state at {path}: `{creates}` creates one"], code=2)
+    return path
+
+
+def _read_state(path: pathlib.Path) -> dict:
+    """`load_state`, with the ways a file that *is* there can still be unusable refused.
+
+    The absence is `_state_path`'s; these are its neighbours, and they crashed the same
+    way after it was fixed: an empty or truncated file reached `json.loads` and printed a
+    `JSONDecodeError` traceback, a directory (or a symlink, or a file owned by somebody
+    else) reached `load_state`'s own guard and printed its `OSError` as one. Both exited
+    1 through `scripts/orchestrate.py`. They are the same kind of answer as the absence —
+    rig could not read the state, and says which of the three reasons it was — so they
+    take the same shape and the same code 2.
+
+    The messages stay one line and say what is wrong with the file rather than repeat the
+    exception: `load_state`'s own `OSError` text (the ownership and link-count rule, the
+    secure-state checks) is the sentence, prefixed, because it already reads as a
+    refusal.
+    """
+    try:
+        return load_state(path)
+    except json.JSONDecodeError as broken:
+        raise Refusal(
+            [f"[ERROR] run-state {path} is not JSON: {broken.msg} (line {broken.lineno})"],
+            code=2) from broken
+    except OSError as unreadable:
+        raise Refusal([f"[ERROR] run-state {path} cannot be read: {unreadable}"],
+                      code=2) from unreadable
 
 
 def _locked_secure_state_mutation(path_from_args):
     """Hold the secure run lock across a command's complete mutation window."""
     def decorate(command):
         @wraps(command)
-        def guarded(args):
+        def guarded(args, **kwargs):
             state_path = path_from_args(args)
             if state_path is None:
-                return command(args)
-            initial = load_state(state_path)
+                return command(args, **kwargs)
+            initial = _read_state(state_path)
             if not initial.get("secure_runtime"):
-                return command(args)
+                return command(args, **kwargs)
             try:
                 descriptor = acquire_output_lock(state_path)
             except OSError as error:
-                print(f"[BLOCKED] {error}")
-                raise SystemExit(2) from error
+                raise Refusal([f"[BLOCKED] {error}"], code=2) from error
             try:
                 # Reload after locking: another short mutation may have completed
                 # between the optimistic first read and our successful lock.
-                return command(args)
+                return command(args, **kwargs)
             finally:
                 release_output_lock(descriptor)
 
@@ -193,30 +408,36 @@ def _locked_secure_state_mutation(path_from_args):
     return decorate
 
 
-def cmd_init(args):
+@_reports_refusals
+def cmd_init(args, *, out: Presenter = CONSOLE):
+    if not args:
+        # The same predictable absence one argument earlier: `init` with nothing after it
+        # used to reach `args[0]` and die with an IndexError traceback.
+        raise Refusal(
+            ["[ERROR] usage: init <recipe.md> [--goal G] [--out <state.json>]"], code=2)
     path = resolve_recipe(args[0])
-    fm, _warns = resolve_extends(parse_frontmatter(path), path)
+    fm, _warns = resolve_extends(parse_frontmatter(path, out=out), path)
     execution = _require_executable_recipe(fm, fm.get("name", path.stem))
     steps = load_steps(fm)
     goal = None
-    out = pathlib.Path("run-state.json")
+    out_path = pathlib.Path("run-state.json")
     i = 1
     while i < len(args):
         if args[i] == "--goal" and i + 1 < len(args):
             goal = args[i + 1]
             i += 2
         elif args[i] == "--out" and i + 1 < len(args):
-            out = pathlib.Path(args[i + 1])
+            out_path = pathlib.Path(args[i + 1])
             i += 2
         else:
             i += 1
     state = new_state(fm.get("name", path.stem), steps, goal, execution=execution)
-    save_state(state, out)
-    print(render_plan(state["recipe"], steps, execution))
-    print(f"\nrun-state: {out}")
+    save_state(state, out_path)
+    out.out(render_plan(state["recipe"], steps, execution))
+    out.out(f"\nrun-state: {out_path}")
     action, msg = compute_next(state)
-    save_state(state, out)
-    print(f"\n▶ {action}: {msg}")
+    save_state(state, out_path)
+    out.out(f"\n▶ {action}: {msg}")
 
 
 def _current_running(state: dict):
@@ -232,8 +453,10 @@ def _current_running(state: dict):
 def _refuse_blocked_state(state: dict) -> None:
     stopped = state.get("stopped") or {}
     if stopped.get("kind") == "BLOCKED":
-        print(f"[BLOCKED] {stopped.get('reason', 'run-state is computationally nonexecutable')}")
-        raise SystemExit(2)
+        raise Refusal(
+            [f"[BLOCKED] {stopped.get('reason', 'run-state is computationally nonexecutable')}"],
+            code=2,
+        )
 
 
 def _run_checks(checks: list[str]) -> list[dict]:
@@ -245,32 +468,36 @@ def _run_checks(checks: list[str]) -> list[dict]:
     """
     results = []
     for cmd in checks:
-        r = subprocess.run(cmd, shell=True, cwd=str(config.INVOCATION_CWD),
+        # noqa below is permanent: `ProcessRunner` has no `shell=` and always captures.
+        # Piping a user-specified check instead of discarding it would make rig hold that
+        # command's unbounded output in memory for a return code it is the only thing read.
+        r = subprocess.run(cmd, shell=True, cwd=str(config.INVOCATION_CWD),  # noqa: TID251
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         results.append({"cmd": cmd, "ok": (r.returncode == 0), "rc": r.returncode})
     return results
 
 
+@_reports_refusals
 @_locked_secure_state_mutation(_state_path)
-def cmd_check(args):
+def cmd_check(args, *, out: Presenter = CONSOLE):
     sp = _state_path(args)
-    state = load_state(sp)
+    state = _read_state(sp)
     _refuse_blocked_state(state)
     step, st = _current_running(state)
     if not step:
-        print("[ERROR] no running step. START one with `next` first.")
+        out.out("[ERROR] no running step. START one with `next` first.")
         sys.exit(1)
     if not step["checks"]:
-        print(f"step `{step['id']}` declares no checks: (no machine verification). Use verdict instead.")
+        out.out(f"step `{step['id']}` declares no checks: (no machine verification). Use verdict instead.")
         return
-    print(f"## check: machine sensors for step `{step['id']}` ({len(step['checks'])} checks)")
+    out.out(f"## check: machine sensors for step `{step['id']}` ({len(step['checks'])} checks)")
     results = _run_checks(step["checks"])
     st["checks"] = [{"cmd": r["cmd"], "ok": r["ok"]} for r in results]
     all_ok = all(r["ok"] for r in results)
     for r in results:
-        print(f"  [{'OK ' if r['ok'] else 'NG '}] {r['cmd']}  (exit {r['rc']})")
+        out.out(f"  [{'OK ' if r['ok'] else 'NG '}] {r['cmd']}  (exit {r['rc']})")
     save_state(state, sp)
-    print(f"→ {'all OK' if all_ok else 'some NG'}. Compute the transition with `next`.")
+    out.out(f"→ {'all OK' if all_ok else 'some NG'}. Compute the transition with `next`.")
 
 
 def _fmt_duration(seconds: float) -> str:
@@ -286,8 +513,9 @@ def _fmt_duration(seconds: float) -> str:
     return f"{mins}m"
 
 
+@_reports_refusals
 @_locked_secure_state_mutation(_state_path)
-def cmd_resume(args):
+def cmd_resume(args, *, out: Presenter = CONSOLE, clock: Clock = SYSTEM_CLOCK):
     """Verify-first resume ritual (session-startup ritual for long-running agents).
 
     Re-verifies the world before continuing a persisted run: prints a compact digest,
@@ -297,43 +525,43 @@ def cmd_resume(args):
     `check` + `next` (state is written the same way); idempotent.
     """
     sp = _state_path(args)
-    state = load_state(sp)
+    state = _read_state(sp)
     _refuse_blocked_state(state)
     steps = state["steps"]
     total = len(steps)
     n_passed = sum(1 for st in state["step_state"].values() if st.get("status") == "passed")
 
     # ── Digest ───────────────────────────────────────────────────────────────
-    print(f"## resume: {state['recipe']}  cursor={state['cursor']}/{total}  "
-          f"done={n_passed}/{total}  stopped={bool(state['stopped'])}")
+    out.out(f"## resume: {state['recipe']}  cursor={state['cursor']}/{total}  "
+            f"done={n_passed}/{total}  stopped={bool(state['stopped'])}")
     for s in steps:
         st = state["step_state"][s["id"]]
         rejects = [v for v in st["verdicts"] if not v.get("ok")]
         tail = (f"  ⚠ {len(rejects)} REJECT (by {', '.join(str(v.get('by')) for v in rejects)})"
                 if rejects else "")
-        print(f"  {s['id']:<14} {st['status']:<18} "
-              f"checks={sum(1 for c in st['checks'] if c['ok'])}/{len(st['checks'])} "
-              f"verdicts={len(st['verdicts'])}{tail}")
+        out.out(f"  {s['id']:<14} {st['status']:<18} "
+                f"checks={sum(1 for c in st['checks'] if c['ok'])}/{len(st['checks'])} "
+                f"verdicts={len(st['verdicts'])}{tail}")
         if st["status"] == "awaiting_approval":
             for line in _stage_gate_lines(s, st):
-                print(f"      {line}")
+                out.out(f"      {line}")
     if state["stopped"]:
-        print(f"  ⚠ ESCALATED: {state['stopped']['reason']} (at {state['stopped'].get('at')})")
+        out.out(f"  ⚠ ESCALATED: {state['stopped']['reason']} (at {state['stopped'].get('at')})")
 
     # ── mtime gap (informational only) ───────────────────────────────────────
     try:
-        gap = time.time() - sp.stat().st_mtime
+        gap = clock.now().timestamp() - sp.stat().st_mtime
     except OSError:
         gap = 0.0
     if gap >= 3600:
-        print(f"↺ resumed after ~{_fmt_duration(gap)} (run-state may predate a context "
-              f"compaction; re-verifying before continuing)")
+        out.out(f"↺ resumed after ~{_fmt_duration(gap)} (run-state may predate a context "
+                f"compaction; re-verifying before continuing)")
 
     # ── Verify-first: re-run the current running step's machine checks ────────
     step, st = _current_running(state)
     if step and step["checks"]:
-        print(f"## re-verify: re-running {len(step['checks'])} machine check(s) for "
-              f"current step `{step['id']}`")
+        out.out(f"## re-verify: re-running {len(step['checks'])} machine check(s) for "
+                f"current step `{step['id']}`")
         prior = {c["cmd"]: c["ok"] for c in st["checks"]}
         results = _run_checks(step["checks"])
         drifted = []
@@ -342,21 +570,21 @@ def cmd_resume(args):
             if prior.get(r["cmd"]) is True and not r["ok"]:
                 note = "  ← DRIFT (was passing, now fails)"
                 drifted.append(r["cmd"])
-            print(f"  [{'OK ' if r['ok'] else 'NG '}] {r['cmd']}  (exit {r['rc']}){note}")
+            out.out(f"  [{'OK ' if r['ok'] else 'NG '}] {r['cmd']}  (exit {r['rc']}){note}")
         # Persist the fresh sensor readings (same side effect as `check`).
         st["checks"] = [{"cmd": r["cmd"], "ok": r["ok"]} for r in results]
         save_state(state, sp)
         if drifted:
-            print(f"✗ WORLD DRIFTED: {len(drifted)} previously-passing check(s) now fail. "
-                  f"The recorded state is stale — REFUSING to advance. Re-run step "
-                  f"`{step['id']}` before continuing.")
+            out.out(f"✗ WORLD DRIFTED: {len(drifted)} previously-passing check(s) now fail. "
+                    f"The recorded state is stale — REFUSING to advance. Re-run step "
+                    f"`{step['id']}` before continuing.")
             sys.exit(1)
-        print("✓ world still matches the recorded state.")
+        out.out("✓ world still matches the recorded state.")
 
     # ── Continue seamlessly (identical to `next`) ────────────────────────────
     action, msg = compute_next(state)
     save_state(state, sp)
-    print(f"▶ {action}: {msg}")
+    out.out(f"▶ {action}: {msg}")
     if action == "ESCALATE":
         sys.exit(1)
     if action == "BLOCKED":
@@ -365,24 +593,27 @@ def cmd_resume(args):
         sys.exit(3)
 
 
+@_reports_refusals
 @_locked_secure_state_mutation(_state_path)
-def cmd_verdict(args):
+def cmd_verdict(args, *, out: Presenter = CONSOLE):
     sp = _state_path(args)
-    state = load_state(sp)
+    state = _read_state(sp)
     _refuse_blocked_state(state)
     step, st = _current_running(state)
     if not step:
-        print("[ERROR] no running step.")
+        out.out("[ERROR] no running step.")
         sys.exit(1)
     by, ok, note = None, None, ""
     criteria = []
     seen_criteria = set()
 
     def reject(message):
-        print(f"[ERROR] {message}")
+        out.out(f"[ERROR] {message}")
         sys.exit(1)
 
-    i = 1
+    # The state path is optional (`_state_path`), so the flags start at 0 when it was
+    # left out — `verdict --by alice --pass` used to lose `--by` to the path slot.
+    i = 0 if (args and args[0].startswith("-")) else 1
     while i < len(args):
         if args[i] == "--by":
             if i + 1 >= len(args) or args[i + 1].startswith("--"):
@@ -424,23 +655,24 @@ def cmd_verdict(args):
         else:
             reject(f"unknown verdict argument: {args[i]}")
     if by is None or ok is None:
-        print("[ERROR] --by <verifier-name> and --pass|--fail are required.")
+        out.out("[ERROR] --by <verifier-name> and --pass|--fail are required.")
         sys.exit(1)
     record_verdicts(step, st, [{"by": by, "ok": ok, "note": note,
                                 "criteria": criteria}])
     save_state(state, sp)
     guard = " (independent)" if by.lower() not in ("self", "generator", "producer") else " (⚠ generator itself = invalid)"
-    print(f"verdict recorded: step `{step['id']}` by={by}{guard} → {'PASS' if ok else 'FAIL'}. Proceed with `next`.")
+    out.out(f"verdict recorded: step `{step['id']}` by={by}{guard} → {'PASS' if ok else 'FAIL'}. Proceed with `next`.")
 
 
+@_reports_refusals
 @_locked_secure_state_mutation(_state_path)
-def cmd_next(args):
+def cmd_next(args, *, out: Presenter = CONSOLE):
     sp = _state_path(args)
-    state = load_state(sp)
+    state = _read_state(sp)
     _refuse_blocked_state(state)
     action, msg = compute_next(state)
     save_state(state, sp)
-    print(f"▶ {action}: {msg}")
+    out.out(f"▶ {action}: {msg}")
     if action == "ESCALATE":
         sys.exit(1)
     if action == "BLOCKED":
@@ -452,19 +684,20 @@ def cmd_next(args):
         sys.exit(3)     # parked on a person, not failed
 
 
-def cmd_status(args):
+@_reports_refusals
+def cmd_status(args, *, out: Presenter = CONSOLE):
     sp = _state_path(args)
-    state = load_state(sp)
-    print(f"## run: {state['recipe']}  cursor={state['cursor']}/{len(state['steps'])}  "
-          f"done={state['done']}  stopped={bool(state['stopped'])}")
+    state = _read_state(sp)
+    out.out(f"## run: {state['recipe']}  cursor={state['cursor']}/{len(state['steps'])}  "
+            f"done={state['done']}  stopped={bool(state['stopped'])}")
     for s in state["steps"]:
         st = state["step_state"][s["id"]]
-        print(f"  {s['id']:<14} {st['status']:<18} retries={st['retries']} "
-              f"checks={sum(1 for c in st['checks'] if c['ok'])}/{len(st['checks'])} "
-              f"verdicts={len(st['verdicts'])}"
-              + (f" approvals={len(st.get('approvals') or [])}" if st.get("approvals") else ""))
+        out.out(f"  {s['id']:<14} {st['status']:<18} retries={st['retries']} "
+                f"checks={sum(1 for c in st['checks'] if c['ok'])}/{len(st['checks'])} "
+                f"verdicts={len(st['verdicts'])}"
+                + (f" approvals={len(st.get('approvals') or [])}" if st.get("approvals") else ""))
         for line in _stage_gate_lines(s, st):
-            print(f"      {line}")
+            out.out(f"      {line}")
 
 
 def _stage_gate_lines(step: dict, st: dict) -> list[str]:
@@ -503,8 +736,10 @@ def _approve_state_path(args) -> pathlib.Path | None:
     return _state_path(positional)
 
 
+@_reports_refusals
 @_locked_secure_state_mutation(_approve_state_path)
-def cmd_approve(args):
+def cmd_approve(args, *, out: Presenter = CONSOLE,
+                governance: StageGovernance = GOVERN_SURFACES):
     """Cast a human-gate decision on a step of a run (v2.1).
 
     `orchestrate approve <step-id> [state.json] [--deny] [--note "..."] [--actor NAME]`
@@ -515,7 +750,7 @@ def cmd_approve(args):
     mirrors it into the tamper-evident ledger.
     """
     if not args:
-        print("[ERROR] usage: approve <step-id> [state.json] [--deny] [--note \"...\"] [--actor NAME]")
+        out.out("[ERROR] usage: approve <step-id> [state.json] [--deny] [--note \"...\"] [--actor NAME]")
         sys.exit(1)
     sid = args[0]
     rest = args[1:]
@@ -539,89 +774,98 @@ def cmd_approve(args):
         else:
             i += 1
     sp = _state_path(positional)
-    state = load_state(sp)
+    state = _read_state(sp)
     step = next((s for s in state["steps"] if s["id"] == sid), None)
     if step is None:
-        print(f"[ERROR] no step `{sid}` in this run (steps: "
-              f"{', '.join(s['id'] for s in state['steps'])})")
+        out.out(f"[ERROR] no step `{sid}` in this run (steps: "
+                f"{', '.join(s['id'] for s in state['steps'])})")
         sys.exit(1)
     st = state["step_state"][sid]
 
-    from ..govern import ledger
-    from ..govern.approval import make_decision, upsert
-    from ..govern.identity import current_actor, load_org_binding
-    from ..govern.policy import PolicyError, effective_policy
-    from ..govern.rbac import can, roles_of
-    from ..govern.stage import stage_rule
     from .runstate import govern_root
 
     root = govern_root()
-    try:
-        eff = effective_policy(root)
-    except PolicyError as e:
-        print(f"[ERROR] policy layer does not load: {e}")
+    eff, unloadable = governance.policy(root)
+    if unloadable is not None:
+        out.out(f"[ERROR] policy layer does not load: {unloadable}")
         sys.exit(1)
-    if stage_rule(eff, step) is None:
-        print(f"[ERROR] step `{sid}` declares no human gate, and no policy `stage:{sid}` rule "
-              "applies — there is nothing to approve here")
+    if not governance.has_stage_rule(eff, step):
+        out.out(f"[ERROR] step `{sid}` declares no human gate, and no policy `stage:{sid}` rule "
+                "applies — there is nothing to approve here")
         sys.exit(1)
-    actor = actor_override or current_actor(root)
-    if eff.active:
-        allowed = can(eff, actor, "approve")
-        if not allowed.allowed:
-            print(f"[ERROR] not permitted to approve: {allowed.reason}")
-            sys.exit(1)
+    actor = actor_override or governance.current_actor(root)
+    refused = governance.refusal(eff, actor, "approve")
+    if refused is not None:
+        out.out(f"[ERROR] not permitted to approve: {refused}")
+        sys.exit(1)
     if st.get("ran_as") and st["ran_as"] == actor:
-        print(f"[WARN] {actor} ran this step; separation of duties means this decision "
-              "will not count toward the quorum")
+        out.out(f"[WARN] {actor} ran this step; separation of duties means this decision "
+                "will not count toward the quorum")
 
-    entry = make_decision(actor=actor, decision=decision, roles=roles_of(eff, actor),
-                          head=_git_head(), note=note)
-    st["approvals"] = upsert(st.get("approvals") or [], entry)
-    binding = load_org_binding(root)
-    ledger.append(root, f"stage.{decision}", actor=actor, subject=f"{state['recipe']}:{sid}",
-                  org=binding.org, team=binding.team,
-                  data={"recipe": state["recipe"], "step": sid, "note": note,
-                        "state": str(sp)})
+    entry = governance.decision(eff, actor=actor, decision=decision,
+                                head=_git_head(), note=note)
+    st["approvals"] = governance.upsert(st.get("approvals") or [], entry)
+    governance.record(root, f"stage.{decision}", actor=actor,
+                      subject=f"{state['recipe']}:{sid}",
+                      data={"recipe": state["recipe"], "step": sid, "note": note,
+                            "state": str(sp)})
 
     action, msg = compute_next(state)
     save_state(state, sp)
-    print(f"## approve: {state['recipe']}:{sid} — {decision} by {actor}")
+    out.out(f"## approve: {state['recipe']}:{sid} — {decision} by {actor}")
     for line in _stage_gate_lines(step, st):
-        print(f"  {line}")
-    print(f"\n▶ {action}: {msg}")
+        out.out(f"  {line}")
+    out.out(f"\n▶ {action}: {msg}")
     if action in ("ESCALATE", "BLOCKED"):
         sys.exit(1)
     sys.exit(3 if action == "AWAIT_APPROVAL" else 0)   # 3 = still parked (quorum unmet / denied)
 
 
-def _git_head() -> str | None:
-    """The current commit, so an approval is bound to what it approved."""
-    proc = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True,
-                          cwd=str(config.INVOCATION_CWD))
-    return proc.stdout.strip() or None if proc.returncode == 0 else None
+def _git_head(*, proc: ProcessRunner = SUBPROCESS) -> str | None:
+    """The current commit, so an approval is bound to what it approved.
 
-def cmd_run(args):
+    `GitRepo.head()` answers exactly this question and is **deliberately not** used here.
+    It goes through `gitroot._git`, which strips `GIT_DIR` / `GIT_WORK_TREE` /
+    `GIT_COMMON_DIR` first — so swapping it in would change which repository this reads
+    whenever those are set, which is the #471 fix and not a port swap.
+    `rig_workbench/ports/local.py`'s `GitCli` docstring says so in as many words: that
+    change belongs in the commit that makes it, with its own test. This one keeps asking
+    the question the way it is asked today, through the runner rather than around it.
+    """
+    result = proc.run(["git", "rev-parse", "HEAD"], cwd=str(config.INVOCATION_CWD))
+    return result.stdout.strip() or None if result.returncode == 0 else None
+
+@_reports_refusals
+def cmd_run(args, *, out: Presenter = CONSOLE, env: Env = OS_ENV):
     if not args:
-        print("[ERROR] usage: run <recipe> --provider <name> [--verifier-provider <name>] "
-              "[--provider-cmd \"...{prompt}...\"] [--step-model <step-id>=<model>] "
-              "[--secure-provider-config /absolute/path/to/provider-pins.json | "
-              "--generator-executable PATH --generator-executable-sha256 HEX "
-              "[--generator-interpreter PATH --generator-interpreter-sha256 HEX] "
-              "--verifier-executable PATH --verifier-executable-sha256 HEX "
-              "[--verifier-interpreter PATH --verifier-interpreter-sha256 HEX]] "
-              "[--max-steps N] [--goal G | --goal-stdin] [--check command] "
-              "[--review-category general|incident_report|support_reply] "
-              "[--material-profile none|technical|conversation] "
-              "[--out f] [--timeout seconds] [--isolate] [--auto-route] "
-              "[--auto-route-learn [--auto-route-mode shadow|active] [--exploration-pct N] [--exploration-date D]]")
+        out.out("[ERROR] usage: run <recipe> --provider <name> [--verifier-provider <name>] "
+                "[--provider-cmd \"...{prompt}...\"] [--step-model <step-id>=<model>] "
+                "[--secure-provider-config /absolute/path/to/provider-pins.json | "
+                "--generator-executable PATH --generator-executable-sha256 HEX "
+                "[--generator-interpreter PATH --generator-interpreter-sha256 HEX] "
+                "--verifier-executable PATH --verifier-executable-sha256 HEX "
+                "[--verifier-interpreter PATH --verifier-interpreter-sha256 HEX]] "
+                "[--max-steps N] [--goal G | --goal-stdin] [--check command] "
+                "[--review-category general|incident_report|support_reply] "
+                "[--material-profile none|technical|conversation] "
+                "[--out f] [--timeout seconds] [--isolate] [--auto-route] "
+                "[--auto-route-learn [--auto-route-mode shadow|active] [--exploration-pct N] [--exploration-date D]]")
         sys.exit(1)
     path = resolve_recipe(args[0])
-    fm, _warns = resolve_extends(parse_frontmatter(path), path)
+    fm, _warns = resolve_extends(parse_frontmatter(path, out=out), path)
     artifact_stdout = fm.get("name", path.stem) in JAPANESE_WRITING_RECIPES
 
-    def diagnostic(*items, **kwargs):
-        print(*items, file=sys.stderr if artifact_stdout else sys.stdout, **kwargs)
+    def diagnostic(text: str = "") -> None:
+        """Progress and errors, on whichever stream is not carrying the artifact.
+
+        A Japanese-writing recipe puts the finished text on stdout and nothing else, so
+        everything the run says about itself has to move aside; every other recipe says it
+        on stdout as always. That is the whole of the conditional, and it is the reason
+        this is a call and not a `print(..., file=...)`: `Presenter` has `out` and `err`
+        and deliberately no `warn()`, so the choice of stream stays visible here rather
+        than being smuggled into the port.
+        """
+        (out.err if artifact_stdout else out.out)(text)
 
     execution = _require_executable_recipe(fm, fm.get("name", path.stem))
     steps = load_steps(fm)
@@ -632,7 +876,7 @@ def cmd_run(args):
     goal_stdin = False
     review_category = None
     material_profile = "none"
-    out = pathlib.Path("run-state.json")
+    out_path = pathlib.Path("run-state.json")
     out_explicit = False
     max_steps = 40
     max_parallel = 4
@@ -724,7 +968,7 @@ def cmd_run(args):
             cli_checks.append(args[i + 1])
             i += 2
         elif a == "--out" and i + 1 < len(args):
-            out = pathlib.Path(args[i + 1])
+            out_path = pathlib.Path(args[i + 1])
             out_explicit = True
             i += 2
         elif a == "--max-steps" and i + 1 < len(args):
@@ -866,7 +1110,7 @@ def cmd_run(args):
     # running session and may land subscription usage in a different bucket, or
     # bill an API key if one is configured (environment-dependent).
     # Stop unless `--allow-headless-in-cc` is given explicitly.
-    _cc_env = os.environ.get("CLAUDECODE") or os.environ.get("CLAUDE_CODE_SESSION_ID")
+    _cc_env = env.get("CLAUDECODE") or env.get("CLAUDE_CODE_SESSION_ID")
     _headless_claude = gen in ("claude", "rig") or ver in ("claude", "rig") or \
         any(p in ("claude", "rig") for p in generators) or \
         (isinstance(ver, list) and any(p in ("claude", "rig") for p in ver))
@@ -878,7 +1122,7 @@ def cmd_run(args):
             "You are already using Claude in this session, so this risks double-firing and "
             "billing to a different bucket. Switch to one of:\n"
             "\n"
-            "  1. Use `/rig:rig \"<task>\"` (manual backend = via the Agent tool, same session)\n"
+            "  1. Use `/rig:go \"<task>\"` (manual backend = via the Agent tool, same session)\n"
             "  2. `--provider ollama` / `--provider lmstudio` (local, no billing)\n"
             "  3. `--provider mock` (for tests)\n"
             "  4. If you really must run headless, pass `--allow-headless-in-cc` explicitly\n"
@@ -892,15 +1136,26 @@ def cmd_run(args):
             )
             raise SystemExit(2)
         if not out_explicit:
-            out = pathlib.Path(".rig") / "secure-runs" / (
-                f"run-{time.time_ns()}-{os.getpid()}.json"
+            # Not a `Clock` read, and deliberately still not one. The clock is the
+            # *uniqueness source* here — pid plus nanoseconds is what keeps two secure runs
+            # from naming the same sealed artifact, which is then exclusively locked. A port
+            # method for this is one a substituted or frozen clock turns into a collision,
+            # which is the opposite of what a port is for. `runstate.make_run_id` shows the
+            # shape that does belong on the port: the clock for ordering, `secrets` for
+            # uniqueness — and adopting it here would change this filename, which is a
+            # decision about an artifact path and not a migration.
+            # noqa below is permanent, for the reason the paragraph above gives: the
+            # `Clock` port answers a moment, and what this needs is a value no second run
+            # can repeat.
+            out_path = pathlib.Path(".rig") / "secure-runs" / (
+                f"run-{time.time_ns()}-{os.getpid()}.json"  # noqa: TID251
             )
         try:
-            prepare_output_target(out)
-            cfg["_secure_output_lock"] = acquire_output_lock(out)
+            prepare_output_target(out_path)
+            cfg["_secure_output_lock"] = acquire_output_lock(out_path)
             material_snapshot = None
             if material_text is not None:
-                snapshot_path = out.parent / f".{out.name}.material"
+                snapshot_path = out_path.parent / f".{out_path.name}.material"
                 snapshot_bytes = material_text.encode("utf-8")
                 atomic_write_bytes(snapshot_path, snapshot_bytes)
                 material_snapshot = {
@@ -990,20 +1245,20 @@ def cmd_run(args):
     diagnostic(metering_note([*(generators or [gen]), *(ver if isinstance(ver, list) else [ver])])
                + "\n")
     try:
-        final = run_loop(state, out, gen, ver, cfg, max_steps,
+        final = run_loop(state, out_path, gen, ver, cfg, max_steps,
                          max_parallel=max_parallel, quorum=quorum,
                          generators=(generators or None), quiet=artifact_stdout)
         if iso:
             outcome = teardown_isolation(iso, final)
             state["isolation"]["outcome"] = outcome
-            save_state(state, out)
+            save_state(state, out_path)
             label = {
                 "merged": f"gate green → ff-merged {iso['branch']} and removed the worktree",
                 "clean-removed": "no changes → removed the worktree",
                 "kept": f"worktree and branch preserved (please inspect): {iso['dir']}",
             }[outcome]
             diagnostic(f"◈ Isolated run outcome: {label}")
-        diagnostic(f"\n=== Finished: {final} ===  run-state: {out}")
+        diagnostic(f"\n=== Finished: {final} ===  run-state: {out_path}")
         # Repeated on the way out rather than assumed remembered: the run that just spent the
         # money is the one whose report gets read.
         diagnostic(metering_note([*(generators or [gen]),
@@ -1012,7 +1267,7 @@ def cmd_run(args):
         if final == "DONE" and isinstance(artifact, dict) and artifact.get("path"):
             diagnostic(f"deliverable: {artifact['path']}")
             if state.get("recipe") in JAPANESE_WRITING_RECIPES:
-                content = read_result_artifact(state, out)
+                content = read_result_artifact(state, out_path)
                 if content is None:
                     diagnostic("[ERROR] completed deliverable cannot be read safely")
                     sys.exit(1)
@@ -1021,7 +1276,7 @@ def cmd_run(args):
             # Parked on a person, not failed. A distinct code so CI can tell "waiting for
             # sign-off" from "the run broke" — reporting either as the other is wrong.
             diagnostic("The run is parked at a human gate. Approve with "
-                       f"`rig-wb orchestrate approve <step-id> {out}`, then `resume`.")
+                       f"`rig-wb orchestrate approve <step-id> {out_path}`, then `resume`.")
             sys.exit(3)
         sys.exit(1 if final in ("ESCALATE", "BLOCKED") else 0)
     finally:
@@ -1081,7 +1336,8 @@ def _run_ab_variant(recipe_path: pathlib.Path, goal: str | None, gen: str, ver: 
     }
 
 
-def cmd_ab(args):
+@_reports_refusals
+def cmd_ab(args, *, out: Presenter = CONSOLE):
     """Run the same goal through multiple recipe variants concurrently and compare
     speed/retries/results (#291).
 
@@ -1091,9 +1347,9 @@ def cmd_ab(args):
     recipe differences, not model/provider differences.
     """
     if len(args) < 1:
-        print("[ERROR] usage: ab <recipe1> <recipe2> [...] --provider <name> --goal G "
-              "[--verifier-provider V] [--max-steps N] [--model M]\n"
-              "       ab <recipe> --manifest-a <path> --manifest-b <path> --provider <name> --goal G")
+        out.out("[ERROR] usage: ab <recipe1> <recipe2> [...] --provider <name> --goal G "
+                "[--verifier-provider V] [--max-steps N] [--model M]\n"
+                "       ab <recipe> --manifest-a <path> --manifest-b <path> --provider <name> --goal G")
         sys.exit(1)
     recipes: list[str] = []
     i = 0
@@ -1139,20 +1395,20 @@ def cmd_ab(args):
         # Rule A/B (#317): same recipe, two manifests. Everything else stays
         # identical so the measured difference is the rules', nothing else's.
         if not (manifest_a and manifest_b):
-            print("[ERROR] manifest A/B needs BOTH --manifest-a and --manifest-b")
+            out.out("[ERROR] manifest A/B needs BOTH --manifest-a and --manifest-b")
             sys.exit(1)
         if len(recipes) != 1:
-            print("[ERROR] manifest A/B compares one recipe under two manifests — give exactly 1 recipe")
+            out.out("[ERROR] manifest A/B compares one recipe under two manifests — give exactly 1 recipe")
             sys.exit(1)
         for p in (manifest_a, manifest_b):
             if not p.is_file():
-                print(f"[ERROR] manifest file '{p}' does not exist")
+                out.out(f"[ERROR] manifest file '{p}' does not exist")
                 sys.exit(1)
     elif len(recipes) < 2:
-        print("[ERROR] specify 2 or more recipes to compare")
+        out.out("[ERROR] specify 2 or more recipes to compare")
         sys.exit(1)
     if not gen:
-        print("[ERROR] --provider <name> is required (rig|claude|codex|grok|ollama|lmstudio|anthropic|cmd|mock)")
+        out.out("[ERROR] --provider <name> is required (rig|claude|codex|grok|ollama|lmstudio|anthropic|cmd|mock)")
         sys.exit(1)
     ver = ver or gen
 
@@ -1166,10 +1422,10 @@ def cmd_ab(args):
         variants = [(p, m, lbl, pathlib.Path(f"ab-{p.stem}-state.json")) for p, m, lbl, _ in variants]
         title = " vs ".join(recipes)
     for path, _manifest, _label, _out_path in variants:
-        fm, _warns = resolve_extends(parse_frontmatter(path), path)
+        fm, _warns = resolve_extends(parse_frontmatter(path, out=out), path)
         _require_executable_recipe(fm, fm.get("name", path.stem))
     results: list[dict | None] = [None] * len(variants)
-    print(f"◈ A/B experiment: {title} (provider={gen} / {len(variants)} concurrent variants)\n")
+    out.out(f"◈ A/B experiment: {title} (provider={gen} / {len(variants)} concurrent variants)\n")
     with futures.ThreadPoolExecutor(max_workers=len(variants)) as ex:
         fut_to_idx = {
             ex.submit(_run_ab_variant, path, goal, gen, ver, dict(cfg), max_steps, max_parallel, quorum,
@@ -1179,15 +1435,15 @@ def cmd_ab(args):
         for fut in futures.as_completed(fut_to_idx):
             results[fut_to_idx[fut]] = fut.result()
 
-    print(f"## rig ab — {title}\n")
-    print(f"{'recipe':<20} {'final':<10} {'elapsed(s)':<12} {'retries':<8} worktree")
+    out.out(f"## rig ab — {title}\n")
+    out.out(f"{'recipe':<20} {'final':<10} {'elapsed(s)':<12} {'retries':<8} worktree")
     for r in results:
         wt = r["worktree_dir"] or "-"
-        print(f"{r['recipe']:<20} {r['final']:<10} {r['elapsed_sec']:<12} {r['retries']:<8} {wt}")
+        out.out(f"{r['recipe']:<20} {r['final']:<10} {r['elapsed_sec']:<12} {r['retries']:<8} {wt}")
     kept = [r for r in results if r["worktree_outcome"] == "kept"]
     if kept:
-        print(f"\n{len(kept)} worktree(s) were preserved (unmet/dirty). After inspecting, clean up with "
-              f"`git worktree remove --force <dir>`.")
+        out.out(f"\n{len(kept)} worktree(s) were preserved (unmet/dirty). After inspecting, clean up with "
+                f"`git worktree remove --force <dir>`.")
 
 
 def _read_jsonl(path: pathlib.Path) -> list[dict]:
@@ -1204,7 +1460,8 @@ def _read_jsonl(path: pathlib.Path) -> list[dict]:
     return rows
 
 
-def cmd_fleet(args):
+def cmd_fleet(args, *, out: Presenter = CONSOLE,
+              projects: ProjectIndex = KNOWN_PROJECTS):
     """Aggregate multiple repositories' `.rig/runs.jsonl`/`drill-results.jsonl` across projects (#272).
 
     Read-only, no side effects — no repository's `.rig/` data is ever written to. Meant for
@@ -1243,25 +1500,24 @@ def cmd_fleet(args):
     if repos_arg and discovered:
         # Silently unioning them would make the report's scope depend on which flag the reader
         # noticed first, and there is no answer here that is not a guess at what was meant.
-        print("[ERROR] fleet: --repos and --discovered choose the repository list two "
-              "different ways; pass one")
+        out.out("[ERROR] fleet: --repos and --discovered choose the repository list two "
+                "different ways; pass one")
         sys.exit(1)
     if not repos_arg and not discovered:
         # Keeps the existing usage line's opening intact — an added option is no reason to
         # change what an existing message says, and a test has been pinning this text.
-        print("[ERROR] usage: fleet --repos <path1>,<path2>,... | fleet --discovered  "
-              "[--anonymize] [--json]")
+        out.out("[ERROR] usage: fleet --repos <path1>,<path2>,... | fleet --discovered  "
+                "[--anonymize] [--json]")
         sys.exit(1)
 
     if discovered:
-        from ..workbench.run_index import known_projects
-        names = known_projects()
+        names = projects()
     else:
         names = [p for p in repos_arg.split(",") if p.strip()]
     repo_paths = [pathlib.Path(p).expanduser().resolve() for p in names]
     if not repo_paths:
         source = "no project has recorded a run yet" if discovered else "--repos has no valid paths"
-        print(f"[ERROR] fleet: nothing to report ({source})")
+        out.out(f"[ERROR] fleet: nothing to report ({source})")
         sys.exit(1)
 
     per_repo = []
@@ -1296,21 +1552,21 @@ def cmd_fleet(args):
                            for repo, personas in persona_by_repo.items()},
     }
     if as_json:
-        print(json.dumps(result, ensure_ascii=False, indent=2))
+        out.out(json.dumps(result, ensure_ascii=False, indent=2))
         return
 
-    print(f"## rig fleet — {len(repo_paths)} repos\n")
-    print(f"{'repo':<40} {'runs':<8} {'done':<8} drills")
+    out.out(f"## rig fleet — {len(repo_paths)} repos\n")
+    out.out(f"{'repo':<40} {'runs':<8} {'done':<8} drills")
     for r in per_repo:
         note = "" if r["exists"] else "  (no .rig/)"
-        print(f"{r['repo']:<40} {r['runs']:<8} {r['done']:<8} {r['drills']}{note}")
+        out.out(f"{r['repo']:<40} {r['runs']:<8} {r['done']:<8} {r['drills']}{note}")
 
     if persona_totals:
-        print("\nPer-persona detection rate (summed across all repos):")
+        out.out("\nPer-persona detection rate (summed across all repos):")
         for name, a in sorted(result["persona_totals"].items(), key=lambda kv: -(kv[1]["rate"] or 0)):
             rate = f"{a['rate'] * 100:.0f}%" if a["rate"] is not None else "unmeasured"
-            print(f"  {name}: {rate} ({a['detected']}/{a['seeded']})")
-        print("\nPer-persona cross-repo comparison (which project detects more/less):")
+            out.out(f"  {name}: {rate} ({a['detected']}/{a['seeded']})")
+        out.out("\nPer-persona cross-repo comparison (which project detects more/less):")
         for name in sorted(persona_totals):
             per_repo_rates = []
             for repo, personas in persona_by_repo.items():
@@ -1318,9 +1574,9 @@ def cmd_fleet(args):
                 if a and a.get("seeded"):
                     per_repo_rates.append(f"{repo}={_rate(a) * 100:.0f}%")
             if per_repo_rates:
-                print(f"  {name}: " + " / ".join(per_repo_rates))
+                out.out(f"  {name}: " + " / ".join(per_repo_rates))
     else:
-        print("\nPer-persona detection rate: unmeasured (no /rig:drill runs in the target repos)")
+        out.out("\nPer-persona detection rate: unmeasured (no /rig:drill runs in the target repos)")
 
 
 def collect_auto_route_regret(rows: list) -> list[dict]:
@@ -1390,28 +1646,28 @@ def collect_auto_route_regret(rows: list) -> list[dict]:
     return report
 
 
-def _print_auto_route_regret(rows: list) -> None:
+def _print_auto_route_regret(rows: list, *, out: Presenter = CONSOLE) -> None:
     report = collect_auto_route_regret(rows)
     if not report:
-        print("No auto-routed steps recorded yet. This report reads `auto_route` / `learned_route`\n"
-              "entries appended by runs that used cost-tier routing; until one runs there is\n"
-              "nothing to second-guess.")
+        out.out("No auto-routed steps recorded yet. This report reads `auto_route` / `learned_route`\n"
+                "entries appended by runs that used cost-tier routing; until one runs there is\n"
+                "nothing to second-guess.")
         return
-    print(f"## rig runs --auto-route-regret ({len(report)} routed step(s) across {len(rows)} runs)\n")
+    out.out(f"## rig runs --auto-route-regret ({len(report)} routed step(s) across {len(rows)} runs)\n")
     for entry in report:
-        print(f"  {entry['recipe']}.{entry['step']}")
-        print(f"    {'model':28s} {'n':>4s} {'PASS':>5s} {'PASS%':>7s}")
+        out.out(f"  {entry['recipe']}.{entry['step']}")
+        out.out(f"    {'model':28s} {'n':>4s} {'PASS':>5s} {'PASS%':>7s}")
         for item in entry["models"]:
             mark = "*" if item["chosen"] else " "
             rate = "—" if item["pass_rate"] is None else f"{item['pass_rate'] * 100:6.0f}%"
-            print(f"  {mark} {item['model']:28s} {item['n']:4d} {item['passed']:5d} {rate:>7s}")
+            out.out(f"  {mark} {item['model']:28s} {item['n']:4d} {item['passed']:5d} {rate:>7s}")
         if entry["insufficient"]:
-            print("    (too few observations to compare — routing is still guessing)")
+            out.out("    (too few observations to compare — routing is still guessing)")
         for regret in entry["regrets"]:
-            print(f"    possible regret: {regret['chosen']} was chosen but {regret['better']} "
-                  f"passes more often on this step — the cheaper tier may be costing rework")
-        print()
-    print("  * = routed to at least once. Read-only: this reports recorded runs and changes no routing.")
+            out.out(f"    possible regret: {regret['chosen']} was chosen but {regret['better']} "
+                    f"passes more often on this step — the cheaper tier may be costing rework")
+        out.out()
+    out.out("  * = routed to at least once. Read-only: this reports recorded runs and changes no routing.")
 
 
 # `--personas` counts anything that produced a verdict, but not everything that produces a
@@ -1486,7 +1742,7 @@ def _perf_budget(explicit: str | None) -> dict:
     return budget if isinstance(budget, dict) else {}
 
 
-def cmd_perf(args):
+def cmd_perf(args, *, out: Presenter = CONSOLE):
     """Where runs spend their time, and whether that is still within budget (#502).
 
         perf [--recipe R] [--limit N]                 phase breakdown of recent runs
@@ -1527,34 +1783,34 @@ def cmd_perf(args):
     if current is None:
         # Not an error on its own — but never a silent pass under --check: a gate with no
         # measurements to judge has not judged anything.
-        print(f"[perf] no timed runs in {config.RUNS_PATH}"
-              + (f" for recipe {recipe}" if recipe else ""))
+        out.out(f"[perf] no timed runs in {config.RUNS_PATH}"
+                + (f" for recipe {recipe}" if recipe else ""))
         sys.exit(1 if check else 0)
 
     if save_path:
         pathlib.Path(save_path).write_text(
             json.dumps({"recipe": recipe, "tolerance_pct": tolerance, **current},
                        indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-        print(f"[perf] baseline written: {save_path} ({current['runs']} run(s))")
+        out.out(f"[perf] baseline written: {save_path} ({current['runs']} run(s))")
         return
 
-    print(f"[perf] {current['runs']} run(s)"
-          + (f", recipe={recipe}" if recipe else "") + "  — median ms per phase")
+    out.out(f"[perf] {current['runs']} run(s)"
+            + (f", recipe={recipe}" if recipe else "") + "  — median ms per phase")
     for name, entry in current["phases"].items():
         thin = "" if entry["runs"] == current["runs"] else f"  ({entry['runs']} of {current['runs']} runs)"
         # Three decimals, not one: a phase that really took 19 microseconds should not print as
         # `0.0` beside the ones this module says are never rendered as zero.
         gated = "" if name in perf.PROVIDER_PHASES else "  *"
-        print(f"  {name:<20} {entry['ms']:>12.3f}{gated}{thin}")
-    print("  (* = rig's own time, what --check gates on; the rest is provider latency)")
+        out.out(f"  {name:<20} {entry['ms']:>12.3f}{gated}{thin}")
+    out.out("  (* = rig's own time, what --check gates on; the rest is provider latency)")
     if current["unmeasured"]:
-        print("  not measured in any run: " + ", ".join(current["unmeasured"]))
+        out.out("  not measured in any run: " + ", ".join(current["unmeasured"]))
     for key in perf.SCALARS:
         if current.get(key) is not None:
             value = current[key]
             shown = (f"{value:,.0f}" if key.endswith("_bytes_emitted") or key.endswith("_tokens")
                      else f"{value:.3f}")
-            print(f"  {key:<20} {shown:>12}  ({current[f'{key}_runs']} run(s))")
+            out.out(f"  {key:<20} {shown:>12}  ({current[f'{key}_runs']} run(s))")
 
     if not check:
         return
@@ -1567,9 +1823,9 @@ def cmd_perf(args):
         baseline = json.loads(pathlib.Path(baseline_path).read_text(encoding="utf-8"))
         comparison = perf.compare(baseline, current,
                                   tolerance_pct=baseline.get("tolerance_pct", tolerance))
-        print("")
+        out.out("")
         for line in perf.render(comparison):
-            print(line)
+            out.out(line)
         failures += [f"{item['phase']}: +{item['delta_pct']}% over baseline "
                      f"({item['baseline_ms']}ms → {item['current_ms']}ms)"
                      for item in comparison["regressed"]]
@@ -1587,15 +1843,15 @@ def cmd_perf(args):
         failures.append("--check with no budget and no --baseline: nothing to check against")
 
     if failures:
-        print("")
+        out.out("")
         for line in failures:
-            print(f"[perf] FAIL {line}")
+            out.out(f"[perf] FAIL {line}")
         sys.exit(1)
-    print("\n[perf] within budget")
+    out.out("\n[perf] within budget")
 
 
 # ── OpenTelemetry export (#501) ─────────────────────────────────────────────────
-def cmd_otel(args):
+def cmd_otel(args, *, out: Presenter = CONSOLE):
     """Project recorded runs to OpenTelemetry and send them (#501).
 
         otel [--recipe R] [--limit N] [--dry-run]
@@ -1635,7 +1891,7 @@ def cmd_otel(args):
     if endpoint is None:
         if not configured["enabled"] and not dry_run:
             reason = configured.get("reason") or "observability.enabled is not true"
-            print(f"[otel] nothing sent: {reason} (and no --endpoint given)")
+            out.out(f"[otel] nothing sent: {reason} (and no --endpoint given)")
             sys.exit(0)
         endpoint = configured.get("otlp_endpoint")
         traces = traces and configured.get("export_traces", True)
@@ -1645,8 +1901,8 @@ def cmd_otel(args):
     rows = [row for row in _read_jsonl(config.RUNS_PATH)
             if recipe is None or row.get("recipe") == recipe][-limit:]
     if not rows:
-        print(f"[otel] no runs in {config.RUNS_PATH}"
-              + (f" for recipe {recipe}" if recipe else ""))
+        out.out(f"[otel] no runs in {config.RUNS_PATH}"
+                + (f" for recipe {recipe}" if recipe else ""))
         sys.exit(0)
 
     payloads = []
@@ -1657,8 +1913,8 @@ def cmd_otel(args):
 
     if dry_run or not endpoint:
         for signal, payload in payloads:
-            print(f"--- {signal} ---")
-            print(json.dumps(payload, indent=2, ensure_ascii=False))
+            out.out(f"--- {signal} ---")
+            out.out(json.dumps(payload, indent=2, ensure_ascii=False))
         return
 
     failures = []
@@ -1667,14 +1923,15 @@ def cmd_otel(args):
         if error:
             failures.append(f"{signal}: {error}")
         else:
-            print(f"[otel] {signal} sent to {endpoint} ({len(rows)} run(s))")
+            out.out(f"[otel] {signal} sent to {endpoint} ({len(rows)} run(s))")
     for line in failures:
         # A warning, never a raise. Every path that reaches an exporter has already decided the
         # run, and telemetry that could fail a task would eventually fail one for no reason.
-        print(f"[otel] WARN export failed — {line}")
+        out.out(f"[otel] WARN export failed — {line}")
 
 
-def cmd_runs(args):
+def cmd_runs(args, *, out: Presenter = CONSOLE,
+             scripts: ScriptLocator = SCRIPT_LOCATOR):
     """Run telemetry listing: runs [--limit N] [--recipe R] [--personas] [--html <path>] [--since YYYY-MM-DD].
 
     Reads .rig/runs.jsonl (appended by telemetry_append; the manual backend appends the same
@@ -1718,9 +1975,9 @@ def cmd_runs(args):
         # Shared resolver: RIG_HOME, then the install source, then cwd. A path
         # computed from this file's parents lands inside site-packages once
         # installed, where there is no scripts/ at all.
-        dash = repo_paths.find_script("dashboard.py")
+        dash = scripts.find("dashboard.py")
         if dash is None:
-            print(f"[ERROR] dashboard.py not found: {repo_paths.script_path('dashboard.py')}")
+            out.out(f"[ERROR] dashboard.py not found: {scripts.expected('dashboard.py')}")
             sys.exit(1)
         cmd = [sys.executable, str(dash), "--repo", str(config.INVOCATION_CWD),
                "--out", html_out, "--limit", str(limit)]
@@ -1728,11 +1985,13 @@ def cmd_runs(args):
             cmd += ["--recipe", recipe]
         if since:
             cmd += ["--since", since]
-        rc = subprocess.run(cmd).returncode
+        # noqa is permanent: this hands the dashboard's own stdout/stderr through to
+        # the terminal, and `ProcessRunner` requires capture. Capturing would break it.
+        rc = subprocess.run(cmd).returncode  # noqa: TID251
         sys.exit(rc)
     if not config.RUNS_PATH.exists():
-        print(f"No run records yet ({config.RUNS_PATH}). They are appended by orchestrate run / "
-              "queue go, or by completing a manual-backend flow (SKILL.md §6).")
+        out.out(f"No run records yet ({config.RUNS_PATH}). They are appended by orchestrate run / "
+                "queue go, or by completing a manual-backend flow (SKILL.md §6).")
         return
     rows = []
     for line in config.RUNS_PATH.read_text(encoding="utf-8").splitlines():
@@ -1745,7 +2004,7 @@ def cmd_runs(args):
     if recipe:
         rows = [r for r in rows if r.get("recipe") == recipe]
     if not rows:
-        print("No matching run records.")
+        out.out("No matching run records.")
         return
 
     if personas_mode:
@@ -1761,39 +2020,39 @@ def cmd_runs(args):
                     a["votes"] += 1
                     a["ok" if v.get("ok") else "reject"] += 1
         if not stats:
-            print("No verdict records yet (they accumulate from runs that pass review-gate / acceptance-gate).")
+            out.out("No verdict records yet (they accumulate from runs that pass review-gate / acceptance-gate).")
             return
         by_kind: dict[str, list[str]] = {}
         for by in stats:
             by_kind.setdefault(_verifier_kind(by), []).append(by)
-        print(f"## rig runs --personas (verifier votes across {len(rows)} runs)\n")
+        out.out(f"## rig runs --personas (verifier votes across {len(rows)} runs)\n")
         for kind, heading in _VERIFIER_KIND_HEADINGS:
             names = by_kind.get(kind)
             if not names:
                 continue
-            print(f"  {heading}")
-            print(f"  {'verifier':28s} {'votes':>6s} {'PASS':>6s} {'REJECT':>7s} {'REJECT%':>8s}")
+            out.out(f"  {heading}")
+            out.out(f"  {'verifier':28s} {'votes':>6s} {'PASS':>6s} {'REJECT':>7s} {'REJECT%':>8s}")
             for by in sorted(names, key=lambda k: -stats[k]["votes"]):
                 a = stats[by]
-                print(f"  {by:28s} {a['votes']:6d} {a['ok']:6d} {a['reject']:7d} "
-                      f"{a['reject'] / a['votes'] * 100:7.0f}%")
-            print()
+                out.out(f"  {by:28s} {a['votes']:6d} {a['ok']:6d} {a['reject']:7d} "
+                        f"{a['reject'] / a['votes'] * 100:7.0f}%")
+            out.out()
         # Only reviewers can rubber-stamp. A mechanism verdict is constant by construction
         # and a fixture is test scaffolding; flagging either as "no bite" reads as a finding
         # about review quality when it is a fact about the code that emits it.
         rubber = [by for by in by_kind.get("reviewer", ())
                   if stats[by]["votes"] >= 5 and stats[by]["reject"] == 0]
         if rubber:
-            print("  Pruning hint: " + ", ".join(sorted(rubber))
-                  + " cast 5+ votes without a single REJECT (possible rubber-stamping, or the lens"
-                    " has no bite; consider dropping them or sharpening the lens)")
+            out.out("  Pruning hint: " + ", ".join(sorted(rubber))
+                    + " cast 5+ votes without a single REJECT (possible rubber-stamping, or the lens"
+                      " has no bite; consider dropping them or sharpening the lens)")
         if by_kind.keys() - {"reviewer"}:
-            print("  Kinds are recovered from the verifier name (runs.jsonl keeps only {by, ok});"
-                  " an unrecognized name counts as a reviewer, so a new lens is never hidden.")
+            out.out("  Kinds are recovered from the verifier name (runs.jsonl keeps only {by, ok});"
+                    " an unrecognized name counts as a reviewer, so a new lens is never hidden.")
         return
 
     if regret_mode:
-        _print_auto_route_regret(rows)
+        _print_auto_route_regret(rows, out=out)
         return
 
     if cost_mode:
@@ -1821,20 +2080,20 @@ def cmd_runs(args):
                         fallback_count += 1
                     elif ev.get("kind") == "refusal":
                         refusal_count += 1
-        print(f"## rig runs --cost ({len(rows)} runs)\n")
+        out.out(f"## rig runs --cost ({len(rows)} runs)\n")
         if not any_usage:
-            print("No token usage recorded (unmeasured). HTTP providers (ollama/lmstudio/anthropic) are metered "
-                  "automatically from the usage field. claude/codex run via CLI and "
-                  "don't expose structured usage, so they're out of scope here — see Anthropic's Usage & "
-                  "Cost Admin API for those instead of estimating.")
+            out.out("No token usage recorded (unmeasured). HTTP providers (ollama/lmstudio/anthropic) are metered "
+                    "automatically from the usage field. claude/codex run via CLI and "
+                    "don't expose structured usage, so they're out of scope here — see Anthropic's Usage & "
+                    "Cost Admin API for those instead of estimating.")
         else:
             for rcp, providers in sorted(by_recipe.items()):
-                print(f"  {rcp}:")
+                out.out(f"  {rcp}:")
                 for provider, a in sorted(providers.items()):
                     total = a["prompt_tokens"] + a["completion_tokens"]
                     cache = f"  cache_read={a['cache_read_input_tokens']}" if a["cache_read_input_tokens"] else ""
-                    print(f"    {provider:16s} calls={a['calls']:4d}  prompt={a['prompt_tokens']:8d}  "
-                          f"completion={a['completion_tokens']:8d}  total={total:8d}{cache}")
+                    out.out(f"    {provider:16s} calls={a['calls']:4d}  prompt={a['prompt_tokens']:8d}  "
+                            f"completion={a['completion_tokens']:8d}  total={total:8d}{cache}")
             # Harness-context load (#319): per-provider prompt weight, derived from the
             # rollup above (no new metering). The prompt includes the user's own task
             # text, so this is an UPPER BOUND on harness overhead, not the overhead
@@ -1846,25 +2105,25 @@ def cmd_runs(args):
                     t = by_provider.setdefault(provider, {"prompt_tokens": 0, "completion_tokens": 0, "calls": 0})
                     for k in t:
                         t[k] += a[k]
-            print("\n  Harness-context load (upper bound — prompts include the task text itself):")
+            out.out("\n  Harness-context load (upper bound — prompts include the task text itself):")
             for provider, t in sorted(by_provider.items()):
                 if not t["calls"]:
                     continue
                 per_call = t["prompt_tokens"] / t["calls"]
                 ratio = (t["prompt_tokens"] / t["completion_tokens"]) if t["completion_tokens"] else float("inf")
-                print(f"    {provider:16s} avg prompt/call={per_call:8.0f}  prompt:completion={ratio:.1f}:1")
+                out.out(f"    {provider:16s} avg prompt/call={per_call:8.0f}  prompt:completion={ratio:.1f}:1")
         if fallback_count or refusal_count:
-            print(f"\nFable 5 refusal-classifier (#297): fallback={fallback_count}  direct-refusal={refusal_count}  "
-                  "(a fallback is treated as a transparent success and doesn't block the gate; cache_read is the "
-                  "fallback-prefix token count billed at 10%)")
+            out.out(f"\nFable 5 refusal-classifier (#297): fallback={fallback_count}  direct-refusal={refusal_count}  "
+                    "(a fallback is treated as a transparent success and doesn't block the gate; cache_read is the "
+                    "fallback-prefix token count billed at 10%)")
         return
 
-    print(f"## rig runs (latest {min(limit, len(rows))} of {len(rows)})\n")
+    out.out(f"## rig runs (latest {min(limit, len(rows))} of {len(rows)})\n")
     for r in rows[-limit:]:
         esc = f" / escalated@{r['escalated_at']}" if r.get("escalated_at") else ""
-        print(f"  {r.get('ts', '?'):25s} {r.get('recipe', '?'):20s} {r.get('final', '?'):9s} "
-              f"steps {r.get('steps_passed', '?')}/{r.get('steps_total', '?')} "
-              f"retries {r.get('retries') or 0}{esc}")
+        out.out(f"  {r.get('ts', '?'):25s} {r.get('recipe', '?'):20s} {r.get('final', '?'):9s} "
+                f"steps {r.get('steps_passed', '?')}/{r.get('steps_total', '?')} "
+                f"retries {r.get('retries') or 0}{esc}")
 
     agg: dict[str, dict] = {}
     for r in rows:
@@ -1876,12 +2135,12 @@ def cmd_runs(args):
         # never reaches the default. dashboard.py:86 already reads it this way.
         a["retries"] += int(r.get("retries") or 0)
         a["esc"] += 1 if r.get("escalated_at") else 0
-    print("\n## Per-recipe aggregates\n")
-    print(f"  {'recipe':20s} {'runs':>5s} {'DONE%':>7s} {'avg-retry':>9s} {'esc':>4s}")
+    out.out("\n## Per-recipe aggregates\n")
+    out.out(f"  {'recipe':20s} {'runs':>5s} {'DONE%':>7s} {'avg-retry':>9s} {'esc':>4s}")
     for name in sorted(agg):
         a = agg[name]
-        print(f"  {name:20s} {a['n']:5d} {a['done'] / a['n'] * 100:6.0f}% "
-              f"{a['retries'] / a['n']:9.1f} {a['esc']:4d}")
+        out.out(f"  {name:20s} {a['n']:5d} {a['done'] / a['n'] * 100:6.0f}% "
+                f"{a['retries'] / a['n']:9.1f} {a['esc']:4d}")
 
     # Gap prescriptions: if the same (recipe, step) escalated twice or more, suggest acquiring capability
     # (telemetry → /rig:import --discover / /rig:forge = the entry to the self-completion loop; #268)
@@ -1903,18 +2162,18 @@ def cmd_runs(args):
                     c[(v.get("by") or "?").split(":", 1)[-1]] += 1
     hot = {k: v for k, v in gaps.items() if v >= 2}
     if hot:
-        print("\n## Gap prescriptions (repeated escalations at the same step; #268)\n")
+        out.out("\n## Gap prescriptions (repeated escalations at the same step; #268)\n")
         for (rcp, sid), n in sorted(hot.items(), key=lambda kv: -kv[1]):
             rejecters = gap_verifiers.get((rcp, sid), Counter())
             who = ", ".join(name for name, _ in rejecters.most_common(3)) or "(no verdicts recorded)"
             forge_desc = (f"capability to resolve the recurring failure in the {sid} step of the "
                           f"{rcp} recipe (most rejections from: {who})")
-            print(f"  {rcp} / {sid}: escalated {n} times — most rejections from: {who}")
-            print(f"    draft request: /rig:forge \"{forge_desc}\"")
-            print("    (after confirming forge's draft, re-measure with /rig:drill --replay)")
-            print(f"    (to search for an external skill instead: /rig:import --discover \"skill to strengthen {sid}\")")
+            out.out(f"  {rcp} / {sid}: escalated {n} times — most rejections from: {who}")
+            out.out(f"    draft request: /rig:forge \"{forge_desc}\"")
+            out.out("    (after confirming forge's draft, re-measure with /rig:drill --replay)")
+            out.out(f"    (to search for an external skill instead: /rig:import --discover \"skill to strengthen {sid}\")")
 
-def cmd_install_shim(args):
+def cmd_install_shim(args, *, out: Presenter = CONSOLE, env: Env = OS_ENV):
     """Place the shim as a symlink at ~/.local/bin/rig (or the path given via --to).
     Run once; afterwards `rig <subcommand>` works from any directory."""
     target = pathlib.Path("~/.local/bin/rig").expanduser()
@@ -1932,18 +2191,18 @@ def cmd_install_shim(args):
             i += 1
     src = config.RIG_HOME / ".claude-plugin" / "bin" / "rig"
     if not src.exists():
-        print(f"[ERROR] shim source not found: {src}")
+        out.out(f"[ERROR] shim source not found: {src}")
         sys.exit(1)
     target.parent.mkdir(parents=True, exist_ok=True)
     if target.exists() or target.is_symlink():
         if not force:
-            print(f"[ERROR] already exists: {target} (overwrite with --force)")
+            out.out(f"[ERROR] already exists: {target} (overwrite with --force)")
             sys.exit(1)
         target.unlink()
     target.symlink_to(src)
-    print(f"✓ symlink: {target} → {src}")
-    path_dirs = (os.environ.get("PATH") or "").split(os.pathsep)
+    out.out(f"✓ symlink: {target} → {src}")
+    path_dirs = (env.get("PATH") or "").split(os.pathsep)
     if str(target.parent) not in path_dirs:
-        print(f"⚠ {target.parent} does not seem to be on $PATH. Add this:")
-        print(f"    export PATH=\"{target.parent}:$PATH\"")
-    print(f"Verify: `rig models` or `rig --help` (RIG_HOME={config.RIG_HOME})")
+        out.out(f"⚠ {target.parent} does not seem to be on $PATH. Add this:")
+        out.out(f"    export PATH=\"{target.parent}:$PATH\"")
+    out.out(f"Verify: `rig models` or `rig --help` (RIG_HOME={config.RIG_HOME})")

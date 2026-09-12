@@ -1,6 +1,70 @@
 # Changelog
 
-## Unreleased
+## [3.0.0] - 2026-09-12
+
+### Breaking
+
+**Publisher signing is gone — signing, verification, trust roots, key generation and
+revocation, the whole rung.** `rig-wb pack sign` and `rig-wb pack keygen` are removed, and so is
+`--allow-unverified` on `pack install` and `pack update`. All four now exit 2: the two verbs as
+argparse's `invalid choice`, the flag as `unrecognized arguments`. That is the loud half, and it is
+loud on purpose — a pipeline that signed or that passed the flag stops on the next run rather than
+carrying on with a guarantee that is no longer there. `cryptography` leaves the dependency list with
+them; rig is stdlib plus `pyyaml` and `pytest` again.
+
+**Why: the cost of the first pack.** The rung was paid for entirely at the start — generate a key,
+keep it, sign each release, distribute a trust root, and teach every consumer to configure one —
+and it was charged to the person who had not yet decided whether rig was worth using, before they
+had installed anything. Removing it is a judgement that the barrier cost more than the rung
+returned, not that the rung was worthless.
+
+**What it cost, plainly.** Nothing now binds a pack's bytes to an author, and that binding was the
+only protection that worked on *first acquisition* — the moment the pack arrives from somewhere you
+have not checked, which is the moment that actually matters. The lock's hash chain is not a
+substitute and should not be read as one: it proves nothing changed *after* install, which says
+nothing about what was installed. Revocation has no mechanism left at all; a pack found to be
+malicious cannot be recalled by rig, only removed by hand wherever it landed. What remains is
+trust-on-first-use — an explicit consent before a project-tier asset executes — the lock's hash
+chain, and declaration-drift validation, which refuses any file the manifest did not declare and
+hashes every file it did.
+
+**Four upgrade situations, measured by running `install_pack` and `resolved_collection` against
+each shape rather than reasoned about.** Every "before" in this entry is the 2.13.0 release commit,
+because that is where a reader of this entry is upgrading from; a branch point is the wrong ruler
+for a changelog even when, as here, the two happen to coincide.
+
+| situation | what happens |
+|---|---|
+| a signed pack is installed; the lock says `verified-publisher` with both publisher columns filled | works, and says nothing. `pack list` still prints `verified-publisher`; nothing verifies it any more |
+| the lock says `verified-publisher` with null columns | `PackError: pack lock drift: invalid publisher trust`, and because resolution is fail-closed the whole tier goes down with it. Not a 3.0.0 change: 2.13.0 carries the same check and the same message, which is also why 2.x can never have written the combination |
+| `--allow-unverified` in a script or CI job | exit 2, argparse error — fails loudly |
+| `pack sign` or `pack keygen` in a pipeline | exit 2, `invalid choice` — fails loudly |
+
+The first row is the one to read twice: the label survives the upgrade and is still displayed, so a
+lock carrying it reads exactly as it did before while meaning strictly less. It is kept rather than
+rejected because dropping the value refuses such a lock outright, and on a fail-closed resolve path
+that is every `rig` run and not merely `pack`. New installs record `verified-local` or `unverified`,
+decided by the pack's own evidence — there is no third rung above them to reach for now.
+
+**A sensor-backed criterion is the sensor's to answer, and `--set` is refused where it
+contradicts one.** The five fail-grade sensors (`no_secret_leak`, `no_gate_tampering`,
+`no_injection_markers`, `no_destructive_operation`, `evidence_anchors_resolve`) used to
+treat an explicit `gate --set <criterion>=passed` as a recorded override, so a hand-written
+declaration beat the scan that had just found something. It does not now: the sensors run
+after the `--set` loop and write their own verdict, and a declaration one of them
+contradicts ends the command with exit 2 — the usage code, not the failed-gate 1 a script
+branches on — naming what was declared against what was measured. Only that criterion is
+refused; the rest of the invocation is recorded, and so is the sensor's finding. A
+declaration stricter than the sensor still stands, warning-grade sensors (the OpenAPI
+schema diff) annotate rather than refuse, `ja_lint_clean` and `ja_prose_ai_smell_reviewed`
+are tightened by a `--set` but never loosened, and a missing `ai-smell-reviewer` verdict
+stays `pending` however it is declared around. A check carries `by` once a status has been
+written to it, naming whoever wrote that status (`build_acceptance` emits none). An acceptance gate with no criteria at all is refused
+rather than passed. The one way past a finding you have reviewed and accepted is
+`accept --force`, which names the bypassed criteria in `.rig/audit.jsonl`, needs a waiver
+under a governance policy, and marks the task forced in the signed provenance record — the
+accountability a gate-time override erased, since `gate_status: passed` left `accept` with
+nothing to force.
 
 ### Changed
 
@@ -18,6 +82,83 @@ silently either way. Make the verdict blocking again once the corpus covers the 
 people actually edit.
 
 ### Added
+
+**One table of what rig can do — declaration only, nothing rewired.** `rig_workbench/registry/`
+now declares all 135 dispatchable capabilities as data: 37 top-level verbs, 51 under `rig-wb wb`,
+and 47 across `govern`, `pack`, `eval`, `baseline` and `githooks`. Each record carries what
+argparse never asked anybody to write — what the person wanted (`intent`), what a machine can
+check before running (`preconditions`), the sentence to show immediately before it runs
+(`effect_line`), and two independent axes: what it disturbs on this machine (`effect_class`) and
+whether anything leaves it (`network`). No field may hold a callable, so the table can be
+serialised and read without importing the code it describes. **Nothing a user does changes.**
+`rig-wb` still dispatches through the same hand-written registration mechanisms, every command takes the
+same flags, prints the same output and returns the same codes; there is no new command and no
+removed one. What exists now is a second, independent statement of the command surface, and
+`tests/test_capability_registry_vs_cli.py` reads both sides at run time and fails if they ever
+disagree. This is the second stage of the migration in `docs/v3-architecture-design-brief.ja.md`;
+wiring the surfaces onto the table is the third.
+
+**Writing the surface down found things nobody had counted, and they are recorded rather than
+fixed.** Closing any of them changes behaviour, which is a stage-3 decision, so each is pinned as
+a measurement that fails if it silently changes. Thirteen of the thirty-seven top-level verbs were
+dispatchable and appeared in no help text, no contract test and no README; they have since been
+audited one at a time, and nine of the thirteen now have a help line — see Changed below. Two more
+were worse than undocumented — `list` and `review`, delegated to the orchestrator and never
+registered there — and those two were removed rather than pinned; see Removed below. Not one
+top-level verb emits a frozen `rig.<name>/v<N>` id; all 22 capabilities that declare one are `wb`
+and `govern` sub-verbs. The stdio MCP server offers `rig_orchestrate_status`, which reaches a verb
+`rig-wb status` answers with `Unknown sub-command`. `govern` defines its own `EXIT_OK, EXIT_ERROR,
+EXIT_NONCONFORMANT = 0, 1, 3`, so a govern error lands on the code `exitcodes.py` reserves for a
+verdict. And nine of the thirty `/rig:*` commands name no rig command at all — they hand their
+work to an instruction facet performed in the session — so roughly a third of the front door never
+reaches the CLI.
+
+**Where a brick is looked for, declared once — and four claims corrected by measuring.**
+`rig_workbench/registry/bricks.py` declares every directory the resolver walks, per asset kind and
+tier, as strings against a named anchor; `tests/test_brick_resolution_declaration.py` observes what
+the resolver *actually* walks at run time and compares. The observation corrected the standing
+account of the divergence between rig's prose and its code. A user tier does exist — it is
+`~/.rig/packs/<pack>/…`, not the `~/.claude/rig/recipes` and `~/.claude/rig/personas` that
+`skills/engine/RESOLVE.md` §4.2.1, `skills/engine/COMPOSE.md` §5 and
+`facets/instructions/resolve.md` promise, and no code reads those.
+`official` is a fifth tier the code walks and no prose table mentions, so the vocabulary gap is
+wider than `shipped` versus `core`. Recipes are resolved by two walks, not one: when the pack walk
+comes back empty, `orchestrate.recipes.resolve_recipe` walks `.rig/recipes`, `<org>/recipes` and
+the shipped recipes itself, and the manifest's `org_dir:` reaches only that second walk. Within the
+project tier, `.claude/rig/recipes` beats `.rig/recipes` because the sort key falls through to the
+source path, though the code lists `.rig/recipes` first — a precedence nobody chose. The documents
+are not corrected here; each divergence is one entry in that test's `KNOWN_PROSE_DRIFT`, and
+fixing a document without deleting its entry turns the test red.
+
+**The first run was already free of setup; now a test says so.** `tests/test_first_run_cost.py`
+drives `python3 scripts/workbench.py new "<task>" --type bugfix` in a bare `git init` repository
+with `rig-wb` removed from PATH (verified with `shutil.which` inside the child), every `RIG_ALLOW_*`
+consent variable unset, and stdin at `/dev/null`: it exits 0 and writes a run. So the documented
+way in — `/rig:setup` then `/rig:init` — asks for two steps the code does not require; the real
+prerequisites are a git repository and `python3`. Nothing was made easier here and the guidance is
+unchanged: what changed is that the cost is now measured, and a prerequisite creeping back into the
+first run fails a test instead of quietly becoming true. Three `-k degrade` tests name which one
+came back — routing that leaves the shipped `core` tier and so demands pack trust, a `hostcheck`
+that exits the `--strict` failure without `--strict`, or an unconsented `.claude/rig.md` that stops
+the run instead of warning once on stderr and continuing.
+
+**The effective policy has a name: `rig.effective-policy/v1`.** `rig-wb govern policy show
+--json` prints the composed result of the org, team and project layers, and until now it
+printed it anonymously — a consumer had no field to branch on and would learn the shape had
+changed by breaking on it. It now carries a top-level `schema`. The id is deliberately not
+the `rig.policy/v2` of the layers it was folded from: that name belongs to one stored,
+authored, publishable document that `policy lint` validates key by key, while this is a
+derived view with no `scope` and no single `id`. Naming the fold after the layer would
+invite a reader to validate it as one. The trail between them stays where it was —
+`layers[].path` still points at the `rig.policy/v2` files the view was resolved from.
+
+**Nothing else about the output moved.** `schema` is added; every other key keeps its name,
+its place and its value, so existing readers are unaffected. `govern` stays on
+`jsonio.LEGACY`: that list is about the `{schema, status, data}` envelope, and taking the
+envelope would move every key under `data` — a breaking change, and a separate decision from
+giving the document a name. The new id is frozen in `tests/test_schema_registry.py` and
+pinned against the real process in `tests/test_schema_cli_contract.py`, which until now
+asserted the *absence* of a schema field.
 
 **A textlint-ja-style Japanese prose sensor, stdlib only.** textlint-ja (`preset-ja-technical-writing`,
 `preset-ja-spacing`, `ja-hiragana-*`, `prh`) is the de-facto lint for Japanese technical
@@ -102,9 +243,10 @@ unchanged at 77 / 85 / 57.
 criteria join the acceptance gate the way `prompt_regression_passed` does — present only
 while the task's diff adds Japanese prose, judged only on the added lines the way
 `no_secret_leak` is. `ja_lint_clean` is machine-owned by `rig_workbench/workbench/ja_prose.py`:
-errors on added Japanese lines fail it, warnings leave it at `warning`, `--set
-ja_lint_clean=passed` is the recorded escape hatch, and `rig-wb wb scan-ja-prose` prints
-what it saw. `ja_prose_ai_smell_reviewed` is owned by a reviewer: the sensor transcribes
+errors on added Japanese lines fail it, warnings leave it at `warning`, a `--set
+ja_lint_clean=passed` the lint contradicts is overwritten on the next evaluation while a
+stricter `--set ja_lint_clean=failed` stands, and `rig-wb wb scan-ja-prose` prints what it
+saw. `ja_prose_ai_smell_reviewed` is owned by a reviewer: the sensor transcribes
 the `ai-smell-reviewer` verdict from `review.json` (REJECT fails, APPROVE_WITH_CONDITIONS
 warns) and a missing verdict stays `pending`, so the lane `parallel-review` now adds
 whenever the diff carries Japanese cannot be skipped by silence. Nothing in that sensor
@@ -129,6 +271,694 @@ heaviest check is that content was preserved. Schema and template ship in
 `skills/engine/manifests/`, `/rig:init` points at them without filling them in, and the
 `japanese-writing` reviewer gains the sensor as an optional stdin pre-pass — evidence for
 `readability`, never a verdict.
+
+**Six ports, three ratchets, and four of seven pillars behind them.** `rig_workbench/ports/`
+declares six protocols — `Presenter`, `ProcessRunner`, `FileStore`, `Env`, `GitRepo`, `Clock` —
+with one adapter module (`ports/local.py`) wrapping today's behaviour exactly. Three ratchets went
+in before any pillar moved, because stage 3 of `docs/v3-architecture-design-brief.ja.md` spans many
+sessions and a change that large cannot tell progress from drift: `tests/test_architecture_inventory.py`
+freezes the import cycles as an *exact set* (six at run time, plus one that exists only under
+`if TYPE_CHECKING:`) so a cycle that vanishes cannot pay for one that appears, together with the hub
+and god-module edge counts (37 modules import `workbench/state.py`; `workbench/cli.py` reaches 39
+distinct modules through 40 import statements) and the effect sites per package per kind, all counted
+over the AST rather than by line match — which is why `print` is 1,073 and not the 1,082 the design
+brief had been carrying, `write_text`/`open(w,a)` are 53/17 and not 63/27, and wall-clock reads, never
+counted before, are 43. `pyproject.toml` bans the 22 calls the ports replace and covers every
+unmigrated path in a per-file-ignores ledger whose 42 lines each carry the count sitting behind them.
+`tests/test_layering_contract.py` asserts the one import rule: a migrated pillar's judgement layer may
+reach the standard library, its own pillar, and `rig_workbench.ports`, and nothing else. A pillar's
+migration is *completed* by deleting its ledger line, and four of those lines are gone: govern's
+`68 print, 12 banned`, eval's `16 print, 31 banned`, packs' `51 print, 11 banned` and validation's
+`13 print, 3 banned`. `tests/test_layering_contract.py`'s `MIGRATED` names the same four.
+**Nothing a user runs behaves differently**, with the single exception recorded under Changed.
+
+**govern went first because it measured smallest, not because it looked easiest.** Of the five
+pillars the module graph actually has — which do not match the directory names — govern is the only
+one in no run-time cycle whose judgement layer exercises all six ports: 11 modules, 87 effect sites,
+and exactly two edges leaving the package. Its effect counts are now `print` 0, `subprocess` 0,
+`open(w,a)` 0, `os.environ` 0, clock 0, and `write_text` 6 — the last honestly not zero, because four
+of the six are the shell's own `pathlib` writes for the files `init`, `migrate` and `--out` create and
+the other two are `files.write_text(...)` port calls the AST counts by attribute name. The last edge
+out of the judgement layer was inverted rather than moved: `conformance.py` states what it needs of
+run records as a protocol of its own and takes them as an argument, and the shell passes them in.
+
+**govern's parser is now generated from the capability table.** `rig_workbench/registry/parser.py`
+builds the argparse tree from `children("govern")`, and `tests/test_generated_parser_equivalence.py`
+holds it to the parser govern shipped across four layers — verb sets, eight attributes per action,
+eleven rendered help screens byte for byte, and real argument vectors compared on namespace and on
+argparse's own stderr. Writing the surface down found four things. Three `dest` collisions, of which
+one was losing data: `govern audit --action` derived the same attribute as `audit`'s own `action`
+positional and silently overwrote it, and `mutation`'s `--report` and `--format` do the same thing
+against their positionals — the shipping code had spelled `report_flag` and `format_flag` and the
+declaration had not said so. `Flag` gained `dest`, `Capability` now refuses two flags landing on one
+attribute, and 4 of the table's 580 flags declare a `dest`. `Flag` also gained `aliases`, for
+`wb route`'s `--explicit-recipe` beside `--recipe`, which no field could express. And one thing still
+cannot be a field at all: `wb compose-options --diff` passes a custom converter (`non_negative_diff`),
+which the registry's callable ban excludes, so the table says `type="int"` and the rejection of a
+negative value lives outside the declaration. That one is left open for the remaining pillars.
+
+**A ratchet that reported zero for a reason that was not true.** The clock walk matched three
+spellings (`now`, `utcnow`, `time.time`) out of the thirteen a file can use, so govern's ceiling read
+0 while `govern/cli.py` still called `datetime.date.today()`. The walk and the ruff ban now name the
+same thirteen and a test reads the ban table out of `pyproject.toml` so the two halves cannot drift.
+Widening it found a second `datetime.date.today()` in `validation/catalog.py` and raised
+`orchestrate` from 4 to 6; those numbers are re-measured, not regressed.
+
+**What is left is three ledger lines, and they continue in 3.x.** The ledger states the remaining
+cost in the same units it charged the migrated four: `rig_workbench/orchestrate/**` is down to
+`0 print, 5 banned` — and those five are not a queue but a decision, the three import-time
+`os.environ` reads in `orchestrate/config.py` (wiring, not judgement: moving them changes *when* the
+value resolves) and two `time.time_ns()` sites whose reasons are written where they sit;
+`rig_workbench/workbench/**` stands at `513 print, 31 banned`, the largest pillar by far; and the 27
+modules directly under `rig_workbench/` carry `195 print, 69 banned` between them, listed one line
+each because ruff's per-file-ignores glob cannot express "directly under" without also matching the
+pillars and silently voiding their rows. `registry/` needs no line — it holds data and no effects —
+and neither does `ports/__init__.py`, which is protocols only; both pass the checks untouched, which
+is their design claim rather than an exemption.
+
+**`tests/test_reviewer_surface.py` pins the reviewer surface to the directories behind it.** The
+agent and persona rows of `BRICKS.md` §2, the dispatch lanes of `facets/instructions/parallel-review`
+and `adversarial-review`, and each reviewer agent's read-only tool allowlist are parsed out of the
+shipped files and held against `agents/` and `facets/personas/`, so a lane a document names with no
+brick behind it fails here rather than at dispatch.
+
+### Changed
+
+**`wb accept` stops counting rig's own untracked state as a dirty working tree.** The clean-tree
+pre-check exists so that a failed squash can be rolled back without destroying uncommitted work
+— and that rollback is a hard reset, which does not touch untracked files, so untracked
+`.rig/` was never what it was protecting. It refused anyway, and in a repository with no `.rig/`
+entry in `.gitignore` that is every task: `wb new` writes the run directory, the context meter
+appends `context.jsonl`, the locks land in `locks/`. The advice it gave — commit or stash —
+committed rig's execution history into the project, which is the contamination the ignore entry
+exists to prevent, arriving by instruction. Untracked paths under `.rig/` no longer block accept.
+Everything else still does, and where the blocking paths are `.rig/` files somebody has already
+committed (a reset there *would* move index content) the message says to untrack and ignore them
+rather than to commit more.
+
+**`wb new` no longer edits your `.gitignore` without being asked.** Registering a task used to
+append `.rig/` to the repository's `.gitignore` on its own and print that it had — a line in
+somebody's next commit that they never typed, in the one file outside `.rig/` that task creation
+touches. It is now offered, three ways and no fourth: `RIG_ALLOW_GITIGNORE=1` is standing consent
+and writes (the shape `RIG_ALLOW_PROJECT_PACKS` and its kin already use, not a new config file);
+on a terminal it asks once, y/N, default no; and anywhere without one — CI, `claude -p`, a
+subagent, `/rig:go` itself — it writes nothing and prints one line naming the entry to add and
+why. `wb import` takes the same path. A repository that already ignores `.rig/` in any spelling
+sees nothing, as before, and `rig-wb hostcheck`'s `state_ignored` check is unchanged: it is now
+the thing that keeps telling you the entry is missing.
+
+**`rig-wb hostcheck` still runs every time and stops saying the same thing every time.** The
+workbench enters through it on every pass — rig holds no "once per session" state and will not
+pretend to — and it printed its whole six-check report on each of them, which is how a report
+becomes wallpaper: by the fifth identical block nobody reads the line that finally changed. The
+verdicts are now recorded, one JSON line per *change*, appended to `.rig/hostcheck.jsonl` beside
+the other append-only records rig keeps there (`runs.jsonl`, `audit.jsonl`, `context.jsonl`). The
+second and later runs in the same repository print only the checks whose verdict moved — each with
+what it was (`← was MISS`) — plus one summary line, and name the file they compared against. A
+repository with no record yet gets the full report, `--full` asks for it back at any time, and
+`--json` is unchanged: it always carries every check, because that is the data channel. Exit codes
+are untouched (0 / 3, and 1 only under `--strict`). That append is this command's only write and
+it never creates a directory: `.rig/` belongs to `wb new`, hostcheck is step 0 of every `/rig:go`,
+and a record written unconditionally would leave `?? .rig/` in `git status` in a repository nobody
+had started a task in. Until `.rig/` exists the report prints in full and says so in one line; a
+tree that cannot be written does the same.
+
+**The last lines `wb new` prints stop telling you to open a second session.** They opened with
+"Next: open the session again inside this worktree" and closed with `cd <worktree> && claude`,
+which is a step README §1-§2 promise nobody has to take: saying `/rig:go "<task>"` is enough, and the session
+that said it keeps driving. That is not only prose — `facets/instructions/workbench` §③-2 and
+`patterns/isolated-worktree` §2 are the mechanism, pinning each subagent's working directory to the
+worktree while the parent dispatches. The command was contradicting both the documentation and its
+own harness, and the documentation was the side that was right, so the output moved: it now says
+this session drives and there is nothing to reopen, that the work stays inside the worktree until
+`accept`, and — as a condition rather than as the next step — that a *second* session opened for
+this task has to be opened inside the worktree, because an agent session is filed under the
+directory it starts in (#471). The path and the `cd` are still printed; only the instruction to
+follow them is gone.
+
+**The assurance family left `rig_workbench/workbench/` for `rig_workbench/assurance/`, and
+every old import path still resolves.** The nineteen modules behind the eighteen `rig-wb wb`
+verbs an external orchestrator drives — `import`, `receipt`, `contract`, `intent`,
+`intent-derive`, `assurance-target`, `assurance-derive`, `knowledge-candidate`,
+`change-graph`, `anomaly-trigger`, `synthesise`, `dev-loop`, `route-team`, `budget-plan`,
+`provenance`, `expected-outcome`, `effectiveness` and `compose-options` — are a package of
+their own, alongside `govern`, `eval`, `packs`, `validation` and `orchestrate`. **Nothing a
+user does changes.** Every verb takes the same flags, prints the same output and returns the
+same codes. 127 `--help` pages were captured before and after and are byte-identical:
+`rig-wb --help` itself plus the 126 subcommands `tests/test_cli_surface_contract.py`
+declares answer the flag (33 top-level and 96 grouped, less the three `githooks` verbs that
+parse their arguments by hand and reject it). `rig-wb usage` is in that 127 and is compared
+separately, because it ignores `--help`, runs, and prints live counters out of
+`.rig/runs.jsonl`; captured back to back it is identical too.
+
+For anyone importing the package rather than running it, each `rig_workbench.workbench.<name>`
+path is now a re-export shim: it resolves to the same objects and is **kept for the whole of
+3.x, removed in 4.0.0**. Change `from rig_workbench.workbench import assurance` to
+`from rig_workbench.assurance import assurance` while you have the major to do it in. One
+thing the bridge cannot carry, and it fails silently rather than loudly: a test that
+substitutes a name — `monkeypatch.setattr("rig_workbench.workbench.assurance.build_receipt", …)`
+— patches the shim's copy, and the functions that read it resolve it in
+`rig_workbench.assurance.assurance`'s globals, so the substitution does not land. Patch the
+new path. Everything in this repo already does.
+
+**So each shim says so out loud: importing one raises a `DeprecationWarning` naming the new
+module and 4.0.0.** That is a new precedent rather than an existing convention —
+`rig_workbench/orchestrate/providers.py`, the re-export bridge 3.0.0's composition split
+left behind, raises none — and it is deliberately not applied there: that file is a live
+module five others import for its own code — `orchestrate/cli.py`, `commands.py`,
+`selftest.py`, `queueing.py` and `workbench/adjudication.py` — so a module-level warning
+would fire on every legitimate import instead of on a use of the bridge. These nineteen are
+bridges and nothing else. Nothing in the ratchet, layering, surface or assurance suites
+imports one: all four run clean under `-W error::DeprecationWarning`.
+
+The lists are written out rather than starred in because `import *` drops every
+underscore name: measured against the first draft of these shims — names a module defines
+at top level that the draft did not expose — seventeen of the nineteen were handing back
+less than their module has, and `import *` on its own would have been eighteen, `intent_wiring`
+being the one module that defines no privates.
+
+**One thing the explicit list deliberately drops, and it fails loudly rather than
+silently.** `import *` used to leak 57 module objects — counted as module objects in
+`dir()`, which is 47 top-level `import X` plus 10 bound by `from … import X` forms —
+`json`, `pathlib`, and seven that are sibling assurance modules, among them
+`workbench.assurance.assurance_target`, `contract.assurance` and `intent_wiring.intent`.
+The named lists do not carry them, so a downstream `setattr` on one of those raises
+`AttributeError` at the patch site instead of succeeding on a copy nothing reads. All 602
+non-module names survive the move unchanged.
+
+Why: `rig_workbench/workbench/` was five pillars wearing one name, and this was the largest
+of them — 19 files, 8,903 lines, and 160 of the 508 `print` sites the package carries after
+T7/T8's five came off. The split leaves the
+workbench as the task lifecycle it is named for. It is a move, not a migration: ten of the
+nineteen modules still import `workbench.state`, so the new package is **not** registered as
+behind-the-ports in `tests/test_layering_contract.py`, and `docs/v3-architecture-design-brief.ja.md`
+§11 T11 records that measurement against the claim the split was argued from.
+
+**`skills/engine/SKILL.md` keeps what a first turn needs; its four longest sections moved to files
+beside it.** The SessionStart hook has the entry read the whole document before the user has said
+anything, and it had reached 104,492 B / 742 lines. §2's brick catalogue, §3.5's recipe schema,
+§4 RESOLVE and §5 COMPOSE are read when a run reaches them, not when it starts, so each has its own
+file now — `BRICKS.md`, `RECIPE-SCHEMA.md`, `RESOLVE.md` and `COMPOSE.md` — on the pattern
+`PACKS.md` set. SKILL.md keeps each section's heading, a one-line summary and the reference, so the
+numbered outline still reads end to end and every `§4.2`-style cross-reference still lands where it
+says it does. 104,492 B / 742 lines → 53,194 B / 465 lines, and the Agent Skills warning that
+the body exceeded the spec's recommended 500 lines clears at 462. The japanese-lint pass
+below then split over-long sentences here and in the four new files, and that is the whole of
+the entry document's growth since the move: measured at a31c54c, SKILL.md is 53,531 B / 472
+lines, 469 body lines by the validator's count, still clear of the recommended 500. The 337
+bytes are sentence splits and one fenced block, not a section drifting back in. §2 is a parsed
+contract rather than prose, so `--validate`'s three catalogue checks read `BRICKS.md`, named once in
+`catalog.CATALOG_FILE`; a missing reference file is a FAIL rather than a quietly smaller corpus.
+PASS/WARN/FAIL is unchanged but for that cleared warning.
+
+**`rig-wb govern --help` reads differently on seven lines, and that is the only user-visible part of
+the port migration.** The ten verb summaries are byte-identical to the ones govern shipped; what moved
+is seven argument lines, in exactly two kinds. Six arguments gained help text where the hand-written
+parser gave them none — the `action` positional of `policy`, `approve`, `waiver` and `audit`,
+`migrate --scope`, and `rollup --since-days` (which `conformance` had always explained and `rollup`
+had not). One line lost something: `govern can`'s `permission` used to interpolate the live
+`PERMISSIONS` tuple and now reads "the permission to check". Declaring it as a `choice` would put the
+list back and would also move the refusal of an unknown permission from govern's exit 1 to argparse's
+exit 2 — a caller-visible contract, so the list is the cheaper thing to lose. Every verb, flag, exit
+code and output schema is otherwise unchanged. Each of the seven is recorded in
+`tests/test_generated_parser_equivalence.py`, which renders both parsers in one process and compares
+all eleven screens byte for byte, so the next such change has to be a decision rather than a silent
+rewrite.
+
+**Nine verbs `rig-wb` had always accepted now appear in `rig-wb --help`: `approve`,
+`bench-invariance`, `check`, `fleet`, `init`, `next`, `otel`, `perf` and `verdict`.** Nothing about
+any of them changed — same flags, same output, same exit codes; what changed is that the help text
+stopped denying they exist. The thirteen undocumented verbs recorded above were audited one at a
+time, and for each of these nine some document or test already handed a person the `rig-wb <verb>`
+spelling: the READMEs print `$ rig-wb next` and `$ rig-wb approve architecture_review` as a
+walkthrough in both languages, and `rig-wb perf --check` as a line to paste into CI;
+`tests/test_exit_code_surface.py` drives the human gate as `rig-wb init / check / verdict / next`
+because, in its own words, that is "the spelling the installed CLI actually offers"; and
+`tests/test_cli_smoke.py` asserts `rig-wb verdict --help` byte-equal to the shim's. `fleet` is the
+plainest of the nine: `cli.py`'s comment says it was added to the dispatch table precisely because
+"the command that answers 'how are my projects doing' could not be run from the CLI people
+install", and then nobody wrote the line.
+
+**Four stay dispatchable and out of the help text on purpose, each with its reason recorded.**
+`graph` is machinery behind `rig-wb validate`'s check_graph and `/rig:catalog --graph`, both of
+which spawn `scripts/orchestrate.py graph --json`; `install-shim` installs an entry point for
+people who have none, so anybody able to type `rig-wb install-shim` already has what it provides;
+`models` configures the orchestrate surface for `run --auto-model`; and `probe` is cited eight
+times across the two READMEs, always as `scripts/orchestrate.py probe`, because the sandbox claim
+it evidences is about that process. The reason sits beside each name in `cli.py`'s `_orch_delegates`
+and in `tests/test_capability_registry_vs_cli.py`, whose literal is now those four and nothing
+else — so a fifth verb going undocumented fails a test instead of joining a remainder.
+
+**Nothing was dropped.** Unlike `list` and `review` below, each of the thirteen had a document or a
+test behind it, so the removal that closed those two was available to none of these. Two findings
+are recorded without being fixed, because fixing either changes behaviour. `models`, `probe` and
+`queue` answer `--help` with the orchestrator's whole ninety-line module docstring, since
+`_usage_for` has no entry to slice for any of the three — and `queue` is advertised, which is what
+makes it a defect owed a fix rather than a curiosity about two hidden verbs; the set is pinned in
+`tests/test_cli_smoke.py` so it cannot grow or be fixed silently. And `check` / `next` / `verdict`
+/ `init` answer a missing state file with a traceback before `exitcodes.guard` turns it into
+exit 2.
+
+### Deprecated
+
+**`/rig:rig` is deprecated in favour of `/rig:go`, and is removed in 4.0.0.** The two are the
+same command: `commands/rig.md` does nothing but re-read `commands/go.md`, so every argument and
+every subcommand is identical and the fix is to change the word. Nothing breaks in 3.x — the name
+keeps working for the whole major, which is what 1.11.0 promised when `/rig:go` arrived and the
+alias stayed. In 4.0.0 the file goes and typing `/rig:rig` gets the host's unknown-command error,
+so a script that runs `claude -p "/rig:rig …"` has this major to change one word rather than a
+release note to discover after it has already stopped. Two surfaces say so ahead of time: the
+command's own `description` opens with `[deprecated: use /rig:go; removed in 4.0.0]`, and the
+`rig:engine` skill's `description` — the line a host prints when it lists skills — names `/rig:go`
+alone, so nothing advertises the old name to somebody meeting rig for the first time.
+
+### Removed
+
+**`rig-wb list` and `rig-wb review` are gone; both reached no handler.** Each was in
+`rig_workbench/cli.py`'s `_orch_delegates` and in no `COMMANDS` dict, so typing either one
+fell through to `rig_workbench/orchestrate/cli.py`, matched nothing, printed ninety lines of
+that module's docstring and exited 1 — no listing, no review, and not one word naming the
+verb that was typed. They now answer `[ERROR] Unknown sub-command: 'list'` on stderr and exit
+2, which is what every other unknown word has always got. Nothing else changes: no feature
+sat behind either name, which is why the two entries written for them when the capability
+table above was first filled in said as much in their own `intent` — "a name that reaches no
+command today" — and those entries are removed with the verbs.
+
+**`rig-wb wb review` is a different verb and is untouched.** It records a per-persona verdict
+(`rig-wb wb review <task_id> --set <persona>=<verdict>`), is what `/rig review` and the
+engine's flows call, and is unaffected by the removal above — the two only ever shared a
+word. Every prose line that spelled it `rig-wb review` is corrected to the form that runs.
+
+### Fixed
+
+**Two governance-integrity follow-ups the G2 and G3 reviews recorded, each measured through the
+real CLI before it was closed.**
+
+- **A decision no ledger entry attests no longer counts toward the quorum.** `approvals.json`
+  is plain JSON in a tree the task's own author can write, and nothing reconciled it against the
+  HMAC-chained ledger: measured on a governed scratch task, a hand-written
+  `{"actor": "bob", "decision": "approve"}` nobody granted printed `approvals: 1/1  ✓ satisfied`
+  and `accept` carried on, with no `approval.grant` anywhere in the chain. `accept`, `govern
+  approve status` and conformance's `approvals` check now read the ledger and drop a decision no
+  `approval.grant` / `approval.deny` entry attests for the same task, actor, decision, org, team
+  and branch tip, with its own line — `· bob — not counted: no ledger entry attests this
+  decision` — and the accept is refused with `approval requirement not met (0/1)`. An entry
+  written before the shas existed (b5016ed) carries neither, so it is matched on task, actor and
+  decision alone and keeps counting: an upgrade must not lock a team out of work its own ledger
+  already attests. Identities are compared case-folded, because `Bob` and `bob` are one person.
+  Enforced where the repository holds `.rig/provenance.key` or the policy sets
+  `audit.chain_required`; a repository with neither has no chain to reconcile against and behaves
+  exactly as before. **A signature on the attesting entry is deliberately not required**: the key
+  is created lazily by the first successful accept, so honest grants made before it are unsigned
+  for good — measured, requiring one refused a real approval the moment the repository first
+  signed anything — and it buys nothing, because the chain needs no secret and a forger can
+  append an unsigned entry too. Denials are never reconciled away. **Two limits, measured and
+  stated rather than implied.** Without a key this buys ordering and visibility, not resistance:
+  an attacker who can write `approvals.json` can append the matching `approval.grant` with
+  `entry_hash` and `prev` recomputed by hand, and `verify` still answers `ledger intact — 2
+  entries, unsigned`. And a repository that *had* a key can be talked out of having had one —
+  strip every `sig`, recompute the chain, delete the key, and enforcement drops away silently.
+  That one is documented and not closed: every marker that could remember lives in `.rig/`, which
+  the same attacker can write. `audit.chain_required` in a git-tracked policy layer is the only
+  durable answer, and it is the knob an org that wants this closed sets.
+- **Both ledgers cap a repeated event at four lines a day.** `.rig/ledger.jsonl` and
+  `.rig/audit.jsonl` grew one line per event with no bound, and a caller who is being refused can
+  loop — most of all through the `accept_refused` line the entry above adds on seven refusal paths.
+  Measured at 66bd4fe, 1000 identical appends wrote 369,890 bytes over 1000 lines in 2.5s, and the
+  time is quadratic because every append re-reads the file to find `prev`; the same 1000 now write
+  1,392 bytes over 4 lines in 0.10s, and the plain audit log 484 bytes over 4. Three lines are
+  written as they always were and the fourth carries `collapsed`; the rest of that day are not
+  written, and `append` returns the candidate marked `suppressed` so a caller can tell. The key is
+  the event **and the date**, counted wherever it appears rather than at the tail: counting a
+  consecutive run left alternating two events completely unbounded (measured, 200 alternating calls
+  wrote 200 lines; now 8), and the date is what keeps the cap from silencing an event that
+  legitimately recurs next week and keeps a campaign that runs for days visible as days. Nothing is
+  rewritten, so the chain is untouched — `seq` stays dense and `govern audit --verify` answers
+  `ledger intact` — and the two readers that must not mistake a capped line for a single event now
+  say so: `workbench audit` and `govern audit log` print `(+3 more like it that day; further
+  repeats that day were not recorded)`, and `audit_event_weights` weights the line by what it
+  stands for — which is what `force_bypass_counter`, and `stats`, `digest` and `cockpit`
+  behind it, then count. Each file caps its own writes only:
+  the cap used to return before the ledger mirror, which let four hand-written lines in the
+  unsigned audit log suppress a real `accept_force` from the chain (measured, audit 4 → 4 and
+  ledger 0 → 0). **One payload shape changes with it:** an `audit.*` ledger entry's `data` no
+  longer repeats the event's own `ts`, because that made every mirror unique and the chain could
+  never recognise a repeat of itself — so `govern audit export` output for those entries has one
+  field fewer, and the entry's own `ts` is the same moment. `collapsed` is dropped from the mirror
+  for the same reason. `audit_event_weights` clamps that same weight at what the cap can write,
+  so a hand-written `"collapsed": 1000000` in the unsigned audit file cannot reach
+  `force_bypass_counter` as a million forced accepts; and where the cap has floored a count,
+  `stats`, `digest` and `cockpit` print it as `4+ (repeats capped)` rather than as a total. And the
+  cap's read is inside `audit_append`'s swallow-all: a `.rig/audit.jsonl` holding one 0xff byte
+  raised `UnicodeDecodeError` out of `accept` *after* the squash, so a forced bypass applied with
+  no record at all; the read now defaults to appending anyway, and the line and its ledger mirror
+  are both written. **What it costs:** within one day, an event that happened four times and one
+  that happened a thousand times read the same. Recording that exactly is impossible append-only —
+  advancing a count requires writing, and a suppressed event writes nothing — and the alternatives
+  are a non-atomic rewrite of the tail entry or a counter file beside the chain. Recorded as debt
+  rather than taken, along with the cost of the cap's own read: `audit_append` and
+  `ledger._event_total` both walk the whole file per append, both with a `json.dumps` per entry,
+  which is quadratic on the path the cap exists to bound. It is the shape `ledger.append` has
+  always paid for `prev`, and the cap shortens it by holding the line count down rather than by
+  avoiding it.
+
+**Three acceptance-gate integrity holes, each measured on a scratch `feature` task before it
+was closed.**
+
+- **A criterion nobody judged no longer counts as one that passed.** `accept.py`'s `gate_ok`
+  counted `skipped` alongside `passed` and `passed_with_warnings`, so fifteen
+  `--set <criterion>=skipped` pairs produced a SKIPPED gate that `accept` squash-merged unforced —
+  no `.rig/audit.jsonl` entry, and task.json and provenance recording `forced: false`. A
+  sensor-backed criterion could never be declared `passed`, but `skipped` is a status every
+  criterion accepts, so the gate could be declared away criterion by criterion. `accept` now refuses an all-skipped gate unless `--force`,
+  which records the bypass the same way it records a failed gate; and because one `passed` plus
+  fourteen `skipped` still scored `passed` outright, **any** skipped criterion now caps the
+  verdict at `passed_with_warnings`. That still accepts without `--force` — a warning has never
+  blocked accept — and the skipped names are now printed by `gate`, printed by `accept`, and
+  listed in provenance.json under `skipped_criteria`.
+- **`gate` no longer exits 0 without a verdict.** Measured: all passed `0`, passed with
+  warnings `0`, one failed `1`, a `--set` the sensor contradicts `2` — and *some still pending*
+  `0`, which let a CI step read "nobody has judged this yet" as green. Pending is now `3`, and so
+  is an all-skipped gate, which is the same condition from the other side; `rig-wb wb contract`
+  already answers 3 for `pending` and the orchestrator for a step parked on a human gate. An
+  all-skipped gate also stops moving task.json to `gate_passed`, which `rig_workbench/eval/
+  capture.py` counted as `explicitly_successful`. The other three codes are unchanged.
+- **`accept` now checks which commits the gate judged.** acceptance.json recorded `checked_at`
+  and nothing about what the gate ran over, so a clean gate followed by another commit carried an
+  unmeasured change through the squash under a verdict that never saw it. `gate` records
+  `evaluated_head` on every evaluation (and `evaluated_branch_tip` when the worktree is detached),
+  and `accept_requirements` gains `gate_judged_this_head`. It compares against **the branch
+  `accept` squashes**, not only the worktree's HEAD: guarding the worktree alone was bypassable by
+  detaching it at the judged sha and moving the task branch onto an unmeasured commit, which
+  measured as a clean accept. A run with no recorded head is refused as unknown rather than
+  treated as a match. This is a head-identity check and not a sensor re-run — the criteria keep
+  exactly the statuses `gate` wrote, and re-running `gate` clears it. The sha the check approved
+  is the sha handed to `git merge --squash`; passing the branch NAME let the sink resolve it a
+  second time, and a `git update-ref` inside that window staged an unmeasured commit with a
+  clean exit.
+
+  **What `evaluated_head` is worth.** acceptance.json is an ordinary file in a tree the task's own
+  author can write, so the recorded head is *reported*, not measured: the check catches a branch
+  that moved under a gate, not an author who edited the record. The `accept_force` audit entry
+  names all three refs (`evaluated_head` as reported, `branch_tip` and `worktree_head` as read
+  from git at accept time) so a later reader can tell which is which.
+
+**An approval is bound to the commit `accept` squashes, not to the worktree's HEAD.** The
+same detached-worktree hole as the entry above, one layer up, and it outlived the fix for
+it: `govern approve grant` recorded the worktree's HEAD and `check_accept` read the
+worktree's HEAD again, so the rule went vacuous exactly when the worktree was detached.
+Measured on a scratch `feature` task with a live policy: approve at A, `git checkout
+--detach A` in the worktree, `git branch -f rig/<task> B`, and `accept --force` printed
+`approvals: 1/1  ✓ satisfied`, exited 0 and squash-merged B — a commit the approver never
+saw — into the main tree. `--force` is where it bit, because it is the one door past
+`gate_judged_this_head` and the approval quorum is the only human check behind it.
+
+`accept` now hands `check_accept` the branch tip it resolved for the squash
+(`state.task_branch_tip`, read in the main tree) rather than the worktree's HEAD, and a
+decision bound to any other commit is ignored with the line it always had, now carrying
+the next move — `approved <a>, the branch is now at <b> (the branch moved after this
+approval); re-approve at <b>` — after which accept refuses exactly as it does for a
+missing approval. The sha is resolved by `accept`, which already holds all three, and
+passed in: govern's judgement layer may not import `workbench.state`
+(`tests/test_layering_contract.py`), and the hub it lives in is at its ceiling
+(`tests/test_architecture_inventory.py`). A decision now records `branch_tip`
+**alongside** `head` rather than redefining it, so an existing `approvals.json` still says
+what it said; a decision carrying only `head` is compared against the branch tip too — one
+taken on the branch (every ordinary approval) still counts, one taken from a detached
+worktree no longer does. `govern approve status` reports against the same sha, so the
+preview and the gate cannot disagree.
+
+**A task branch that no longer resolves is refused, not treated as unconstrained.** The
+same review measured the other half: delete the task branch and every check that reads it
+gets `None`, which each of them read as "nothing to compare". `--force` covered the gate,
+governance was handed `head=None` and counted every approval, `approvals: 1/1  ✓
+satisfied` printed, an `accept_force` line was appended to `.rig/audit.jsonl`, and only
+then did a raw `git rev-list` failure end the run at exit 2 — a weakened check and a false
+ledger entry for an accept that never reached the squash, where the unfixed base had
+refused 0/1. `accept` now stops on the missing ref before the checklist and long before
+anything is written — "branch '<name>' does not resolve, so neither the acceptance gate
+nor an approval can be about it and there is nothing to squash", followed by the two ways
+back (restore the ref with `git branch`, or start the work again with `workbench.py new`).
+And `approval.evaluate` grows `UNKNOWN_HEAD`, a named third answer: `head=None` means *no
+such commit exists* (a `--no-worktree` run, an orchestrator stage gate) and rightly holds
+no approval to one, while `UNKNOWN_HEAD` means *there is one and it could not be
+resolved*, under which every approval is ignored with its own line. A caller can no
+longer switch the binding off by omission. `govern approve status` reads a missing branch
+the same way, so it and the gate still agree.
+
+**The audit ledger records which commit an approval was for.** `approvals.json` is plain
+unsigned JSON in a tree the task's own author can write, so a decision that was never
+granted reads back as a real one and meets the quorum; the `approval.grant` chain entry
+carried only the task type and the note, which says an approval happened and not what it
+was for. The entry's `data` now carries the verdict, the `head` and the `branch_tip`. It
+does not stop the file being edited — it makes the edit visible, because a decision
+claiming a commit no chain entry ever attested is now a difference somebody can find.
+*`410092c` is the half that makes govern see it: such a decision is no longer counted.*
+
+**Known debt, recorded and not fixed here.** The `accept_force` audit line is written
+before the squash can fail, so the ledger can still record a forced accept that never
+applied. A refused force writes nothing anywhere, so repeated probing of a governance
+boundary leaves no trace; a blocked-accept ledger entry would show it. `govern/ledger.py`'s
+`_key` reads the signing key with `read_bytes` rather than the `read_secret_bytes` the
+`FileStore` port offers, and `govern audit` has no `--verify` of its own. Stage-gate
+decisions carry `head` and no `branch_tip` by design — a stage has no task branch — and
+nothing asserts that intent, so a later reader cannot tell the design from an omission.
+
+**Four audit-ledger integrity debts, the four the paragraph above recorded, each measured
+through the real CLI before and after.**
+
+- **The forced-accept line is written after the squash, not before it.** `accept --force`
+  appended `accept_force` beside the `forced: true` warning, seventy-two lines above the
+  merge it was about — counted at the parent commit, where the write sat at line 498 and
+  the squash at 570 — with three refusals in between: a dirty worktree, a branch with no
+  commits on top of its base, and a dirty main tree. (The two refusals a force meets
+  earlier, an unresolvable branch and governance, were above the write and could never
+  emit it.) Measured on a scratch bugfix task that passed its gate and whose base then
+  moved under it: exit 2, the working tree rolled back, task.json still at `gate_passed`
+  with no `forced` key and no provenance.json written — and one `accept_force` line saying
+  a forced accept had been applied. The line now goes in once the squash has applied, so
+  the count every reader takes is forced accepts that landed. The readers were checked one
+  by one and none needed a change: `reporting.py`'s `force_bypass_counter` (and through it
+  `wb stats`, `wb digest`, `cockpit` and mission control), `reporting.py`'s `wb audit`
+  listing, and the `audit.accept_force` entry `state.audit_append` mirrors into the
+  governance ledger. The alternative shape — write it early with an `outcome` and append a
+  failure line — was rejected for that reason: each of those readers filters on the action
+  name and reads no `outcome`.
+- **A refused force is now a line instead of nothing.** Seven ways a force can end without
+  applying wrote nothing at all — not `.rig/audit.jsonl`, not the chained ledger, not
+  task.json — so somebody probing the boundary once a day was indistinguishable from
+  somebody who never tried. Each of the seven now appends one `accept_refused` line
+  carrying `reason`, `detail`, the actor (`RIG_USER`, then `git config user.name`) and the
+  invoker; `reason` says which of the seven it was, and `_audit_force_refused`'s docstring
+  lists them. **Unforced refusals are deliberately not audited** and the same docstring
+  says why: the ordinary gate loop refuses far more often than it accepts, every one of
+  those refusals is already in `acceptance.json` with the sensor's finding under it, and
+  auditing them would bury the one signal this file exists for — somebody reaching past a
+  judgement that was already given. `wb audit` prints the refusal's reason where a force
+  prints its bypassed criteria.
+- **`govern audit --verify` exists.** The ledger has been an HMAC chain since v2 and
+  `ledger.verify` has always been able to report the first break in each category, but the
+  only door to it was a positional word between `log` and `export`. The flag is the same
+  check, the same output — `ledger intact — N entries, M signed`, or `ledger BROKEN` with
+  the entry number and the reason for each break — and the same codes: 0 intact, 3 broken,
+  the nonconformance code `govern can` already returns for a denial. Both spellings are
+  pinned against a real edited ledger in `tests/test_exit_code_surface.py`, and the flag is
+  declared in the capability registry beside the exit codes it returns.
+- **The chain key keeps its wide read, and now says what was measured.** `ledger._key`
+  reads `.rig/provenance.key` with the port's `read_bytes` rather than `read_secret_bytes`.
+  Three shapes were put in front of the strict read: a 0600 key inside a 0755 `.rig/` —
+  what every checkout has, because `.rig/` is created under the ambient umask and only the
+  key file is chmod-ed — was refused with `secure runtime directory must be owned by the
+  caller with mode 0700`; 0600 inside 0700 was read; 0644 inside 0700 was refused as
+  `secure runtime file must be caller-owned regular mode 0600 with one link`. The first row
+  is the legitimate ledger a swap would break: the refusal becomes `None`, and the chain
+  goes on appending silently unsigned while `verify` stops checking signatures for the same
+  reason. So the read stays as it is and the compensating check moved into `verify`, which
+  now reports a key that is present and unreadable as a problem of its own instead of
+  answering "intact, unsigned" for a repository whose entries are all signed. Tightening
+  the read is still a migration — narrow the directory, write the key through
+  `write_secret_bytes`, chmod what exists — in that order, because the strict read judges
+  the directory before it looks at the file.
+
+Two more holes in the same sink were found while closing those and are closed with them.
+`verify` now fails a ledger whose entries carry signatures when the key is gone: the hash
+chain needs no secret, so rewriting the entries, recomputing every `hash`, and *deleting*
+`.rig/provenance.key` is cheaper than forging a signature, and it used to answer "ledger
+intact — 1 entries, unsigned" — measured on a two-entry signed ledger cut to one. And `wb
+audit` sanitises the fields it prints: `actor` comes from `RIG_USER` and a refusal's
+`detail` quotes git, so a caller the command refused could put `ESC` and a newline into
+the listing and forge a line that is in no file. The entry keeps the claim verbatim; the
+listing strips C0 controls and caps each cell. `actor` is what a caller asserted and is
+not authenticated — the docstring now says so, and nothing decides on it.
+
+**Recorded and not fixed here.** `.rig/audit.jsonl` and `.rig/ledger.jsonl` have no bound
+and nothing prunes them, and a refused force is now a line somebody else can cause to be
+written — repeated refusals grow both files. *Closed by `410092c`: a repeated event is written three
+times, then once more carrying `collapsed`, and not again that day; 50 refused forces
+through the CLI leave 4 lines in each file and the chain still verifies.* `ledger._key` accepts a zero-byte key and
+signs with it (pre-existing). `state.audit_append` swallows every exception, so a write
+that fails is a gap rather than an error; `verify` reports the gap, and nothing reports the
+failure. Moving the force line after the squash leaves a window of its own: a signal
+between the merge and the append loses the `accept_force` for an accept that did apply —
+strictly narrower than the bug it replaces, which recorded an accept that did not, and
+visible as a staged tree with no line. And the
+capability registry still describes `wb audit` as the log of force bypasses alone, although
+the file now holds both kinds.
+
+**Three CLI commands answered a predictable absence with a traceback, a full validation
+run, or the whole module docstring.** Each was recorded as a debt in
+`docs/v3-architecture-design-brief.ja.md` and measured through the real process before it
+was touched.
+
+- **A run-state that is not there is refused in one line, exit 2.** `check`, `next`,
+  `verdict`, `approve`, `status` and `resume` reached `load_state`'s `os.open` with a path
+  that does not exist and printed a `FileNotFoundError` traceback — exit 1 through
+  `scripts/orchestrate.py`, exit 2 through `rig-wb` only because the entry point's guard
+  caught the crash. All six now print `[ERROR] no run-state at <path>: ...` and exit 2,
+  naming the `init` that creates one. The first four are the ones reachable both ways;
+  `status` and `resume` are not in `rig-wb`'s delegate set and answer on
+  `scripts/orchestrate.py` only, as before — no verb was added to `rig-wb` here. `init`
+  with no recipe after it exited on an `IndexError` traceback and is refused the same
+  way. A file that is present and unusable joins the absence rather than crashing behind
+  it: an empty or truncated state (a `JSONDecodeError` traceback before) and a path that
+  is a directory or fails `load_state`'s ownership guard (a bare `OSError`) each say
+  which of the three it was, in one line, at 2.
+
+- **The state path `rig-wb --help` advertises as optional is optional.** The help text
+  has always written `verdict [<state.json>] --by N --pass|--fail`, and the brackets did
+  not work: the first token became the filename, so `verdict --by alice --pass` opened
+  `./--by` and died there. A leading `-` now falls back to `run-state.json` like every
+  other verb's default, and `verdict`'s own flag scan starts at the right index, so the
+  advertised form runs. Passing the path explicitly is unchanged.
+
+- **`rig-wb validate --help` prints usage instead of running the validator.** The flag
+  was not recognised and not rejected: it fell through to the check loop, so `--help`
+  produced the 92-line report (`PASS: 71 / WARN: 15 / FAIL: 0`) in about 1.3 seconds and
+  exited 0 meaning "no FAIL". It now prints ten lines of usage in about 0.1 seconds and
+  exits 0 meaning "here is how to use this", before the PyYAML guard and without reading
+  the tree. `-h` and `validate selftest --help` answer the same way; every other
+  invocation of `validate` is unchanged. `python3 scripts/validate.py --help` too — it is
+  the same function behind both.
+
+- **`models --help`, `probe --help` and `queue --help` print a usage block, not the
+  manual.** All three were registered in orchestrate's dispatch table and never listed in
+  the module docstring `_usage_for` slices, so each answered with all 89 lines of it —
+  `queue` while being advertised in `rig-wb --help`. The docstring now carries an entry
+  for each, so `_usage_for` finds one: `models` 4 lines, `probe` 4, `queue` 6. Every one
+  of the 21 registered verbs now has a usage entry, and none answers `--help` with more
+  than 9 lines (`plan`, the longest). The fallback stays for a verb nobody registered.
+
+**A `textlint-disable` marker inside a code span no longer switches `rig-wb ja-lint` off.**
+`suppressions()` scanned raw lines, so a document that only showed the marker's syntax in
+backticks suppressed every finding from that line to the end of the file — `BRICKS.md`'s
+japanese-lint row does exactly that, and it is why `skills/engine/SKILL.md` went unchecked
+below its §2 table for a long time, silently. Inline code spans (single and double backtick)
+and fenced code blocks are blanked before the scan now, so only a real HTML comment counts as
+a directive.
+
+**An unclosed `<!-- textlint-disable -->` is reported rather than left silent.** It still
+suppresses to the end of the file, which is textlint's own semantics, but the report names the
+file and the line of the marker that was never closed, carries them under a new
+`unclosed_disable` key (and `summary.unclosed_disable`) in `--json` and `--report`, and
+`--strict` exits 1 on one. `--strict` therefore promotes more than warnings.
+
+**A workbench failure is no longer reported as a judgement: it exits 2, not 1.**
+`rig_workbench/exitcodes.py` has always promised `1 = rig judged this and said no` and
+`2 = rig could not produce an answer`, but `workbench/state.py`'s `die()` ended in a bare
+`sys.exit(1)`, so every workbench failure took the code reserved for a verdict — a task id
+that does not exist, a worktree that is gone, a flag that does not parse, a malformed
+`.rig/gates.json`, a git command that failed. A caller could not tell a failed acceptance
+gate from a typo in an argument. `die()` now exits `ERROR` (2), and a new `state.reject()`
+carries the verdicts at `REJECTED` (1); each call site picks one by name, so nothing
+inherits a code by default.
+
+**This is a breaking change for anything branching on exit 1.** A script that reads 1 from
+these commands as "rig refused" must now expect 2. Everything that fails through the
+workbench's own error path is affected — `wb status`, `wb note`, `wb log`, `wb gate`,
+`wb step`, `wb review`, `wb diff`, `wb accept`, `wb discard`, `wb gc`,
+`wb verify-provenance`, `wb new`, `wb import`, `wb receipt`, `wb scan-secrets`,
+`wb scan-injection`, `wb scan-anchors`, `wb scan-destructive`, `wb stream-checks`,
+`wb record-commit`, `wb trace-commit`, `wb record-outcome`, `wb digest` and
+`wb scan-ja-prose` — when the failure is a bad argument, missing run state or an unusable
+worktree. `wb route` moves with them: an unresolvable recipe was 1 and is now 2, the code it
+already used for `stopped` and `trust_required`.
+
+**What still exits 1 is exactly what rig judged.** `wb accept` keeps 1 for an unmet
+acceptance gate, a governance block (permission, quorum, a missing waiver) and an actor the
+`.rig/access.json` allowlist does not permit; `wb gate` keeps 1 for a failed gate;
+`wb verify-provenance` keeps 1 for an invalid signature; the scanners keep 1 for findings.
+`wb accept`'s structural preconditions (no worktree, no recorded base, no diff summary) are
+2 with the rest: there was nothing for the gate to judge. `wb contract` is unchanged from
+the caller's side — it already translated the old 1 into its own `execution-error` 2, and
+now simply passes the same code through while still printing the result record.
+
+**Four debts the architecture reviews recorded and left open, each reproduced with the real
+CLI before it was touched.**
+
+- **`rig-wb validate` refuses an unknown flag instead of validating anyway.** Measured:
+  `rig-wb validate --bogus` (and `python3 scripts/validate.py --bogus`) dropped the flag,
+  walked the tree, printed 92 lines ending in `PASS: 71 / WARN: 15 / FAIL: 0` and exited 0
+  in 1.4 seconds — "no FAIL" for a command the caller had misspelt. Now one
+  `[ERROR] validate: unknown flag '--bogus'; usage: rig-wb validate [selftest]` on stderr
+  and exit 2, in the form `gh-check` already uses, and answered where `--help` is
+  answered: above the PyYAML guard and above any read.
+  Flags only — `selftest` and the bare run are untouched, and a stray positional still runs
+  the validator as before.
+- **The orchestrator's `--help` names every status its verbs return, and no others.** The
+  line read `0=success / 1=error or ESCALATE / 3=run parked at a human gate (run only)`
+  while `check`, `next`, `verdict`, `approve` and `init` were each observed returning 2.
+  It now names 2, and attributes the parked 3 to the four verbs the capability table
+  declares it for and a gated run returned it from: `run`, `next`, `resume`, and `approve`
+  when the decision it records leaves the run parked (quorum unmet, or denied). The suite
+  measures one of those four — the parked 3 it drives comes out of `next` — and the other
+  three were driven by hand on a gated run for this entry. `check` is not one of them: its
+  only non-zero exit is 1, and at a parked step that is what it returns
+  (`[ERROR] no running step`); the `AWAIT_APPROVAL` tail that shape suggests belongs to
+  `resume` and `next`. The registry now also declares `approve`'s 3. The test reads the
+  `COMMANDS` table and the docstring out of `orchestrate/cli.py` and compares both ways —
+  a status a real process returned that the line omits, and a verb the line blames for a
+  status neither the measurements nor the capability table give it.
+- **The `.git` entry is out of the secret scanner's entropy allowlist, and one caller
+  changes.** Neither feed could reach it: the tree walk drops `.git` before opening a file
+  (a planted credential there yields no finding at all), and git never hands the diff side
+  a path inside its own directory, even after `add -f`. The third way in does reach it —
+  a file named on the command line, which `scan_paths` sends straight to `scan_file`.
+  Measured there: `rig-wb wb scan-secrets .git/x`, where `x` holds a high-entropy token,
+  reported nothing and exited 0; it now reports one `high_entropy` finding and exits 1 —
+  more findings, never fewer. Named patterns (`AKIA…`, PEM headers) were reported under
+  `.git/` before and after: the allowlist only ever silenced the entropy heuristic.
+  Scanning this repository's own tree with and without the entry gives the same findings
+  on both runs (263 on the run's own tree at `ac29294`; the number moves with the tree,
+  the equality does not). `node_modules` stays: a committed vendored tree does reach the
+  diff side.
+- **`shared_diff_cache` is nest-safe, as its docstring already claimed.** An inner `with`
+  set the memo to `None` on exit and left the enclosing scope uncached for the rest of its
+  life — degraded, never stale. The enclosing memo is restored instead: outer-inner-outer
+  over one (worktree, base) is 2 git subprocesses now and was 3, and leaving the outermost
+  scope still turns the cache off entirely.
+
+### Security
+
+**Typing `--allow-project-packs` as text was consent to run project-tier pack assets.**
+The trust gate asked `"--allow-project-packs" in sys.argv`, and `sys.argv` holds far more
+than this process's own options. Any argv element equal to the string granted trust,
+wherever it sat: a task title given after `--` (`rig-wb wb new --type bugfix --
+--allow-project-packs`, the only way to pass a title that starts with a dash), the value
+of a free-text option (`rig-wb run r.md --goal --allow-project-packs` — the orchestrate
+parsers take the next token unconditionally), or an argument forwarded to a pack past the
+separator. A project-tier asset's command and recipe bodies then ran without anyone having
+consented, and the trust record was written, so every later run passed silently too.
+`--allow-project-recipes` and `--allow-project-manifest` in `orchestrate/recipes.py` had
+the identical check and the identical hole; all three now go through one rule.
+
+**The flag counts only where it is genuinely an option**: exact token, never `argv[0]`,
+before the first bare `--`, and not sitting where a free-text option's value goes. It
+still grants trust when actually passed — an escape hatch that stops working is one people
+route around — and `RIG_ALLOW_PROJECT_PACKS=1` (env, not argv) is untouched. What the rule
+knowingly does not catch is written where it lives, in `rig_workbench/packs/trust.py`: a
+value handed to a value-taking option outside the free-text list, since ambiguity has to
+fail open here, and an argument forwarded to a pack *before* any `--`, which is
+character-for-character a real option and needs the caller's own parse to tell apart.
 
 ## [2.13.0] - 2026-09-08
 

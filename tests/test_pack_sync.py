@@ -2,7 +2,7 @@
 
 `pack.yaml` declares every asset by path and by sha256, and `validate_pack` byte-compares the
 file against `canonical()` — sorted keys, no separators, trailing newline. That form is right:
-it is what makes a manifest hashable and signable, and `read_json_yaml` parses only the JSON
+it is what makes a manifest hashable, and `read_json_yaml` parses only the JSON
 subset so a manifest cannot execute a YAML tag.
 
 What was missing was the writer. An author who added one persona file got `asset declaration
@@ -21,6 +21,7 @@ import pytest
 from rig_workbench.packs.cli import init_pack
 from rig_workbench.packs.model import PackError
 from rig_workbench.packs.sync import scan_assets, sync_manifest
+from rig_workbench.packs.resolver import core_reference_ids
 
 PERSONA = "---\nname: hello\ndescription: demo\n---\n\n# persona: hello\n"
 
@@ -79,7 +80,7 @@ def test_a_removed_asset_leaves_the_manifest(tmp_path):
 
 def test_syncing_twice_without_editing_produces_identical_bytes(tmp_path):
     """A manifest whose bytes depend on filesystem iteration order would churn the digest —
-    and every signature and lock entry computed over it — on a sync that changed nothing."""
+    and every lock entry computed over it — on a sync that changed nothing."""
     pack = _scaffold(tmp_path)
     for name in ("b", "a", "c"):
         (pack / f"facets/personas/{name}.md").write_text(PERSONA, encoding="utf-8")
@@ -113,14 +114,21 @@ def test_a_kind_the_pack_type_forbids_is_refused(tmp_path):
         sync_manifest(pack)
 
 
-def test_a_signed_pack_is_refused_rather_than_silently_invalidated(tmp_path):
-    """Rewriting the manifest breaks any signature over it. Proceeding would move the failure
-    from here — where the author can see what caused it — to the next `verify`, somewhere far
-    from the edit. Re-signing needs their key, so it is their call to make."""
+def test_pack_sig_json_is_no_longer_excused_by_name(tmp_path):
+    """`pack.sig.json` was a third non-asset, alongside the two manifest files.
+
+    Sync knew the name twice: it skipped the file when scanning, and refused the sync
+    outright because rewriting the manifest would have invalidated the signature over it.
+    Nothing signs a pack now, so the name means nothing, and a file carrying it is what it
+    looks like — a stray at the pack root. It is refused by the general rule above, not by a
+    special case, and the point of this test is that the name buys no exemption: were it
+    still in `NON_ASSETS`, sync would skip it, write a manifest that does not mention it,
+    and call the pack clean.
+    """
     pack = _scaffold(tmp_path)
     (pack / "pack.sig.json").write_text("{}\n", encoding="utf-8")
 
-    with pytest.raises(PackError, match="signed"):
+    with pytest.raises(PackError, match="no asset directory.*pack.sig.json"):
         sync_manifest(pack)
 
 
@@ -181,7 +189,7 @@ def test_a_resource_pack_validates_end_to_end_after_sync(tmp_path):
 
     sync_manifest(pack)
 
-    assert validate_pack(pack)["id"] == "res-pack"
+    assert validate_pack(pack, core_ids=core_reference_ids())["id"] == "res-pack"
 
 
 def test_resource_metadata_is_derived_and_not_left_to_the_author(tmp_path):
@@ -235,3 +243,116 @@ def test_an_executable_resource_extension_is_refused_by_sync_as_well(tmp_path):
 
     with pytest.raises(PackError, match="executable"):
         sync_manifest(pack)
+
+
+# --- the installed pack ---------------------------------------------------------------
+#
+# Everything above syncs a tree the author owns. `pack sync` takes a path, so it can also be
+# aimed at `.rig/packs/<id>` — a pack `pack install` put there and `pack.lock.json` pins by
+# digest. That is not the same object, and it is what these pin.
+
+PAGE = "# new\n\nbody\n"
+
+
+def _installed(tmp_path: pathlib.Path) -> tuple[pathlib.Path, pathlib.Path]:
+    """A project with one shipped domain pack actually installed, lock and all."""
+    from rig_workbench.packs.installer import install_pack
+
+    project = tmp_path / "project"
+    (project / ".git").mkdir(parents=True)
+    install_pack("domain:decision-humor", scope="project", project=project)
+    return project, project / ".rig" / "packs" / "decision-humor"
+
+
+def _stray(pack: pathlib.Path) -> pathlib.Path:
+    """One undeclared file inside the installed pack: what a user adds before reaching
+    for `pack sync` in the first place."""
+    page = pack / "facets" / "knowledge" / "new-page.md"
+    page.parent.mkdir(parents=True, exist_ok=True)
+    page.write_text(PAGE, encoding="utf-8")
+    return page
+
+
+def test_sync_refuses_the_installed_pack_a_lock_owns(tmp_path):
+    """The lock records `manifest_sha256` over `pack.yaml`'s bytes and `validate_lock_root`
+    recomputes it on every resolve. Rewriting the manifest under a lock that still names the
+    old digest is not a sync, it is the drift the lock exists to catch — and because
+    `resolved_collection` is fail-closed, it takes every persona, recipe and wiki lookup in
+    the project down with it.
+
+    Refused rather than repaired: updating the lock from whatever is on disk would make the
+    lock re-bless local edits it was written to detect, and could not be done honestly
+    anyway — `source.sha256` pins the artefact the pack was installed from and cannot be
+    re-derived from a modified installed tree.
+    """
+    _project, pack = _installed(tmp_path)
+    _stray(pack)
+    before = (pack / "pack.yaml").read_bytes()
+
+    with pytest.raises(PackError, match="installed"):
+        sync_manifest(pack)
+
+    assert (pack / "pack.yaml").read_bytes() == before, (
+        "the refusal has to land before the write, or the lock is already in drift")
+
+
+def test_the_refusal_leaves_a_failure_the_user_can_undo(tmp_path):
+    """Why refusing beats writing, stated as the difference the user sees.
+
+    Dropping a file into an installed pack already breaks resolution — `asset declaration
+    drift` names the undeclared file, so the way out is to delete it. Syncing replaced that
+    with `pack lock drift: manifest changed`, which names nothing to undo: the manifest's
+    original bytes are gone and `pack remove` goes through the same lock check, so the pack
+    cannot even be uninstalled. The refusal keeps the recoverable failure recoverable.
+    """
+    from rig_workbench.packs.resolver import resolved_collection
+
+    project, pack = _installed(tmp_path)
+    stray = _stray(pack)
+
+    with pytest.raises(PackError) as refusal:
+        sync_manifest(pack)
+    assert "decision-humor" in str(refusal.value)
+
+    with pytest.raises(PackError, match=r"asset declaration drift.*new-page\.md"):
+        resolved_collection(project=project)
+    stray.unlink()
+    assert resolved_collection(project=project), "deleting the file has to be the way back"
+
+
+def test_an_installed_pack_that_needs_no_sync_is_refused_and_keeps_resolving(tmp_path):
+    """The unchanged case. Nothing here is broken yet, so this is the one that says the
+    refusal is a refusal and not a crash: `pack sync` declines, the manifest is untouched,
+    and the project resolves exactly as it did before the command was run."""
+    from rig_workbench.packs.resolver import resolved_collection
+
+    project, pack = _installed(tmp_path)
+    before = (pack / "pack.yaml").read_bytes()
+    assert resolved_collection(project=project), "precondition: the project resolved to start"
+
+    with pytest.raises(PackError, match="installed"):
+        sync_manifest(pack)
+
+    assert (pack / "pack.yaml").read_bytes() == before
+    assert resolved_collection(project=project)
+
+
+def test_an_author_tree_in_the_same_place_is_still_synced(tmp_path):
+    """The author side, aimed at the location the rule could have been written against.
+
+    `.rig/packs/<id>` is where installed packs live, and it is also where `pack init`'s own
+    signposting tells an author to scaffold one. What makes a pack untouchable is the lock
+    that pins its bytes, not the directory it sits in — so a pack root with no lock in it
+    syncs, here as anywhere else.
+    """
+    from rig_workbench.packs.lock import LOCK_NAME
+
+    root = tmp_path / "project" / ".rig" / "packs"
+    pack = init_pack("demo-pack", kind="project", type_="skill", root=root)
+    assert not (root / LOCK_NAME).exists(), "precondition: nothing installed anything here"
+    (pack / "facets/personas/hello.md").write_text(PERSONA, encoding="utf-8")
+
+    result = sync_manifest(pack)
+
+    assert result["added"] == ["facets/personas/hello.md"]
+    assert _manifest(pack)["assets"]["persona"] == ["facets/personas/hello.md"]

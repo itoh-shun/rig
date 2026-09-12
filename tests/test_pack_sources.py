@@ -89,8 +89,7 @@ def project(tmp_path, remote):
 def test_a_spec_installs_from_a_named_source_and_the_lock_pins_the_commit(project, remote):
     """The whole point of the slice: `product:northwind@1.4.0` reaches a private-style remote,
     and what lands is pinned to a commit rather than to whatever the tag says next week."""
-    result = install_pack("product:northwind@1.4.0", scope="project", project=project,
-                          allow_unverified=True)
+    result = install_pack("product:northwind@1.4.0", scope="project", project=project)
     assert result.manifest["id"] == "northwind"
 
     entry, = read_lock(result.path.parent)["packs"]
@@ -104,8 +103,7 @@ def test_a_spec_installs_from_a_named_source_and_the_lock_pins_the_commit(projec
 def test_the_lock_records_the_source_name_and_never_the_url(project):
     """A lock that carried the URL would carry however the remote was addressed — including
     a credential — and would have to be rewritten by every consumer if the pack moved."""
-    result = install_pack("product:northwind@1.4.0", scope="project", project=project,
-                          allow_unverified=True)
+    result = install_pack("product:northwind@1.4.0", scope="project", project=project)
     text = (result.path.parent / LOCK_NAME).read_text(encoding="utf-8")
     assert "product" in text
     assert "rig-pack-northwind" not in text
@@ -136,8 +134,7 @@ def test_a_moved_tag_is_refused_rather_than_installed(project, remote, monkeypat
 
     monkeypatch.setattr(installer_module, "fetch_revision", move_tag_then_fetch)
     with pytest.raises(RevisionNotFound, match="moved while installing"):
-        install_pack("product:northwind@1.4.0", scope="project", project=project,
-                     allow_unverified=True)
+        install_pack("product:northwind@1.4.0", scope="project", project=project)
     assert _git(remote, "rev-parse", "v1.4.0^{commit}") != stale
 
 
@@ -145,8 +142,7 @@ def test_a_missing_tag_is_revision_not_found_and_not_a_generic_failure(project):
     """The four failures the issue asks to distinguish are only useful if they arrive apart:
     a missing version is the author's problem, an unreachable host is the network's."""
     with pytest.raises(RevisionNotFound, match="no tag v9.9.9"):
-        install_pack("product:northwind@9.9.9", scope="project", project=project,
-                     allow_unverified=True)
+        install_pack("product:northwind@9.9.9", scope="project", project=project)
 
 
 def test_an_unreachable_source_is_not_reported_as_a_missing_version(tmp_path):
@@ -155,8 +151,7 @@ def test_an_unreachable_source_is_not_reported_as_a_missing_version(tmp_path):
     write_sources(project, {"product": {
         "scheme": "git+file", "url": str(tmp_path / "nowhere" / "rig-pack-{pack}")}})
     with pytest.raises(SourceUnreachable) as raised:
-        install_pack("product:northwind@1.4.0", scope="project", project=project,
-                     allow_unverified=True)
+        install_pack("product:northwind@1.4.0", scope="project", project=project)
     assert raised.value.reason == "source-unreachable"
     assert not isinstance(raised.value, RevisionNotFound)
 
@@ -166,8 +161,7 @@ def test_an_undeclared_source_names_what_is_declared(tmp_path):
     project = tmp_path / "project"
     project.mkdir()
     with pytest.raises(PackError, match="not declared in .rig/sources.json"):
-        install_pack("absent:northwind@1.4.0", scope="project", project=project,
-                     allow_unverified=True)
+        install_pack("absent:northwind@1.4.0", scope="project", project=project)
 
 
 def test_reasons_are_distinct_and_machine_readable():
@@ -183,8 +177,7 @@ def test_reasons_are_distinct_and_machine_readable():
 def test_verify_pin_separates_a_moved_tag_from_a_source_that_cannot_be_read(project, remote):
     """`verify-sources` is where a moved tag stops being invisible, and it has to say which
     kind of trouble it found: logging in fixes one of these and never fixes the other."""
-    result = install_pack("product:northwind@1.4.0", scope="project", project=project,
-                          allow_unverified=True)
+    result = install_pack("product:northwind@1.4.0", scope="project", project=project)
     entry, = read_lock(result.path.parent)["packs"]
     declared = read_sources(project)
 

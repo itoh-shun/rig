@@ -4,6 +4,7 @@ import pathlib
 import pytest
 
 from test_eval_cases import valid_case
+from rig_workbench.packs.resolver import core_reference_ids
 
 
 def _write_pack(root: pathlib.Path, pack_id: str = "demo-pack", *, recipe: bool = True,
@@ -53,7 +54,7 @@ def test_pack_init_is_canonical_non_overwriting_and_valid(tmp_path):
     pack = init_pack("my-pack", kind="project", type_="skill", root=tmp_path)
     raw, value = read_json_yaml(pack / "pack.yaml")
     assert raw == canonical(value)
-    assert validate_pack(pack)["id"] == "my-pack"
+    assert validate_pack(pack, core_ids=core_reference_ids())["id"] == "my-pack"
     with pytest.raises(PackError, match="already exists"):
         init_pack("my-pack", kind="project", type_="skill", root=tmp_path)
 
@@ -80,7 +81,7 @@ def test_pack_validate_prompt_eval_hash_ref_compat_and_malicious(tmp_path):
     from rig_workbench.packs.validation import validate_pack
 
     valid = _write_pack(tmp_path / "valid")
-    assert validate_pack(valid)["id"] == "demo-pack"
+    assert validate_pack(valid, core_ids=core_reference_ids())["id"] == "demo-pack"
 
     no_eval = _write_pack(tmp_path / "no-eval")
     raw, manifest = read_json_yaml(no_eval / "pack.yaml")
@@ -89,7 +90,7 @@ def test_pack_validate_prompt_eval_hash_ref_compat_and_malicious(tmp_path):
     (no_eval / "evals/cases/hello-case/case.json").unlink()
     (no_eval / "pack.yaml").write_text(canonical(manifest), encoding="utf-8")
     with pytest.raises(PackError, match="requires at least one"):
-        validate_pack(no_eval)
+        validate_pack(no_eval, core_ids=core_reference_ids())
 
     malicious = _write_pack(tmp_path / "malicious")
     recipe = malicious / "recipes/hello.md"
@@ -99,7 +100,7 @@ def test_pack_validate_prompt_eval_hash_ref_compat_and_malicious(tmp_path):
     manifest["hashes"]["recipes/hello.md"] = hashlib.sha256(recipe.read_bytes()).hexdigest()
     (malicious / "pack.yaml").write_text(canonical(manifest), encoding="utf-8")
     with pytest.raises(PackError, match="unsafe|injection"):
-        validate_pack(malicious)
+        validate_pack(malicious, core_ids=core_reference_ids())
 
 
 def test_pack_rejects_symlink_dependency_cycle_and_collision(tmp_path):
@@ -109,19 +110,19 @@ def test_pack_rejects_symlink_dependency_cycle_and_collision(tmp_path):
     symlinked = _write_pack(tmp_path / "links")
     (symlinked / "commands/link.md").symlink_to(symlinked / "recipes/hello.md")
     with pytest.raises(PackError, match="symlink"):
-        validate_pack(symlinked)
+        validate_pack(symlinked, core_ids=core_reference_ids())
 
     a = _write_pack(tmp_path / "deps", "pack-a", recipe=False,
                     dependency=[{"id": "pack-b", "range": "*"}])
     b = _write_pack(tmp_path / "deps", "pack-b", recipe=False,
                     dependency=[{"id": "pack-a", "range": "*"}])
     with pytest.raises(PackError, match="cycle"):
-        validate_collection([a, b])
+        validate_collection([a, b], core_ids=core_reference_ids())
 
     one = _write_pack(tmp_path / "collision-a", "one")
     two = _write_pack(tmp_path / "collision-b", "two")
     with pytest.raises(PackError, match="collision"):
-        validate_collection([one, two])
+        validate_collection([one, two], core_ids=core_reference_ids())
 
 
 @pytest.mark.parametrize("kind", [
@@ -236,13 +237,13 @@ def test_multiline_frontmatter_refs_all_kinds_and_broken_ref(tmp_path):
     )
     manifest["hashes"]["recipes/hello.md"] = digest(recipe)
     (pack / "pack.yaml").write_text(canonical(manifest), encoding="utf-8")
-    assert validate_pack(pack)["id"] == "refs-pack"
+    assert validate_pack(pack, core_ids=core_reference_ids())["id"] == "refs-pack"
     recipe.write_text(recipe.read_text().replace("- safe", "- absent"), encoding="utf-8")
     _raw, manifest = read_json_yaml(pack / "pack.yaml")
     manifest["hashes"]["recipes/hello.md"] = digest(recipe)
     (pack / "pack.yaml").write_text(canonical(manifest), encoding="utf-8")
     with pytest.raises(PackError, match="broken pack reference: policy:absent"):
-        validate_pack(pack)
+        validate_pack(pack, core_ids=core_reference_ids())
 
 
 @pytest.mark.parametrize("frontmatter", [
@@ -261,7 +262,7 @@ def test_nested_frontmatter_references_are_not_flattened_or_missed(tmp_path, fro
     manifest["hashes"]["recipes/hello.md"] = digest(recipe)
     (pack / "pack.yaml").write_text(canonical(manifest), encoding="utf-8")
     with pytest.raises(PackError, match="broken pack reference: persona:absent"):
-        validate_pack(pack)
+        validate_pack(pack, core_ids=core_reference_ids())
 
 
 def test_frontmatter_subset_rejects_unsupported_yaml_and_parses_all_shipped_recipes(tmp_path):

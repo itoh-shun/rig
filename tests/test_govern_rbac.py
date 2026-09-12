@@ -9,7 +9,9 @@ import json
 
 import pytest
 
-from rig_workbench.govern.approval import evaluate, load_approvals, record_decision
+from rig_workbench.govern.approval import (UNKNOWN_HEAD, Attestations, evaluate,
+                                           ledger_attestations, load_approvals,
+                                           make_decision, record_decision)
 from rig_workbench.govern.identity import current_actor, load_org_binding
 from rig_workbench.govern.policy import (SCHEMA, EffectivePolicy, PolicyError,
                                          effective_policy)
@@ -168,6 +170,70 @@ def test_an_approval_still_counts_for_the_commit_it_approved():
     assert status.satisfied
 
 
+# ── which commit an approval is bound to ─────────────────────────────────────
+#
+# `evaluate`'s `head` is the commit the caller is about to apply — for `accept`, the tip of
+# the task branch resolved in the main tree. The two tests above use the OLD record shape
+# (a `head` and no `branch_tip`), which is what every ledger written before this field
+# existed holds, and they are the proof that such a record is still read: it is compared
+# against the branch tip, which closes the detached-worktree hole for old ledgers too.
+def test_an_old_format_decision_is_held_to_the_branch_tip():
+    """A record with only a worktree `head`. Equal to the tip, it counts; different, it does
+    not — and "different" now includes a worktree that was detached at the approved commit
+    while the branch had moved on, which is the case the old comparison could not see."""
+    old_shape = decision("alice", head="a" * 40)
+    assert "branch_tip" not in old_shape
+    on_the_tip = evaluate(approving_policy(quorum=1), TASK, approvals(old_shape), head="a" * 40)
+    moved_on = evaluate(approving_policy(quorum=1), TASK, approvals(old_shape), head="b" * 40)
+    assert on_the_tip.satisfied
+    assert not moved_on.satisfied
+    assert any(f"approved {'a' * 12}, the branch is now at {'b' * 12}" in why
+               for _d, why in moved_on.ignored)
+
+
+def test_a_decision_records_both_the_tree_read_and_the_tip_approved():
+    d = make_decision(actor="alice", decision="approve", roles=["reviewer"],
+                      head="a" * 40, branch_tip="b" * 40)
+    assert (d["head"], d["branch_tip"]) == ("a" * 40, "b" * 40)
+
+
+def test_a_new_format_decision_is_bound_to_the_tip_not_the_tree_the_approver_stood_in():
+    """Both shas recorded and disagreeing: the worktree was detached at A, the branch was at
+    B. The approval is for B — what `accept` squashes — so B counts and A does not."""
+    detached = decision("alice", head="a" * 40)
+    detached["branch_tip"] = "b" * 40
+    assert evaluate(approving_policy(quorum=1), TASK, approvals(detached), head="b" * 40).satisfied
+    spent_on_a = evaluate(approving_policy(quorum=1), TASK, approvals(detached), head="a" * 40)
+    assert not spent_on_a.satisfied
+    assert any(f"approved {'b' * 12}" in why for _d, why in spent_on_a.ignored)
+
+
+def test_a_decision_with_no_recorded_commit_is_not_held_to_one():
+    """An orchestrator stage gate records no branch, and a rule that was never recorded
+    cannot be applied retroactively. This is not new: a decision with no sha has counted
+    since the freshness rule existed, and `branch_tip` did not change it."""
+    assert evaluate(approving_policy(quorum=1), TASK,
+                    approvals(decision("alice")), head="b" * 40).satisfied
+
+
+def test_a_head_that_could_not_be_resolved_counts_no_approval_at_all():
+    """`UNKNOWN_HEAD`, which is the one thing `None` must not be allowed to mean. A caller
+    whose task branch has been deleted knows there is a commit and cannot name it; reading
+    that as "nothing to compare" is how a missing ref became permission."""
+    status = evaluate(approving_policy(quorum=1), TASK,
+                      approvals(decision("alice", head="a" * 40)), head=UNKNOWN_HEAD)
+    assert not status.satisfied and status.counted == 0
+    assert any("could not be resolved" in why for _d, why in status.ignored)
+
+
+def test_an_unknown_head_is_not_silently_equal_to_a_missing_one():
+    """The two answers have to stay distinguishable at the call site, or the sentinel is
+    decoration: same decisions, same rule, opposite verdicts."""
+    same = approvals(decision("alice", head="a" * 40))
+    assert evaluate(approving_policy(quorum=1), TASK, same, head=None).satisfied
+    assert not evaluate(approving_policy(quorum=1), TASK, same, head=UNKNOWN_HEAD).satisfied
+
+
 def test_an_expired_approval_stops_counting():
     old = (datetime.datetime.now().astimezone() - datetime.timedelta(hours=200)).isoformat(timespec="seconds")
     status = evaluate(approving_policy(quorum=1), TASK, approvals(decision("alice", ts=old)))
@@ -316,3 +382,146 @@ def test_a_broken_policy_never_strands_a_new_task(tmp_path):
     # sit there quietly costing the org its rules.
     with pytest.raises(PolicyError, match="not valid JSON"):
         effective_policy(tmp_path, {})
+
+
+# ── reconciliation: a decision the chain does not attest ─────────────────────
+def attestations(*entries, enforced=True):
+    return Attestations(entries=tuple(entries), enforced=enforced)
+
+
+def grant_entry(actor="alice", task="t1", verdict="approve", sig=None, **data):
+    entry = {"action": "approval.grant" if verdict == "approve" else "approval.deny",
+             "actor": actor, "subject": task,
+             "data": {"task_type": "feature", "note": "", "decision": verdict, **data}}
+    if sig:
+        entry["sig"] = sig
+    return entry
+
+
+def test_a_decision_the_chain_does_not_attest_is_not_counted():
+    status = evaluate(approving_policy(quorum=1), TASK, approvals(decision("alice")),
+                      attested=attestations())
+    assert not status.satisfied and status.counted == 0
+    assert [why for _, why in status.ignored] == ["no ledger entry attests this decision"]
+
+
+def test_a_decision_the_chain_attests_counts():
+    status = evaluate(approving_policy(quorum=1), TASK, approvals(decision("alice")),
+                      attested=attestations(grant_entry(head=None, branch_tip=None)))
+    assert status.satisfied and status.ignored == []
+
+
+def test_a_ledger_entry_for_another_commit_does_not_attest_this_decision():
+    """The whole point of G2's shas: an entry that says "alice approved something" cannot
+    stand in for an approval of the commit accept is about to squash."""
+    status = evaluate(approving_policy(quorum=1), TASK,
+                      approvals(decision("alice", head="a" * 40)), head="a" * 40,
+                      attested=attestations(grant_entry(head="b" * 40, branch_tip="b" * 40)))
+    assert not status.satisfied
+    assert status.ignored[0][1] == "no ledger entry attests this decision"
+
+
+def test_a_pre_g2_ledger_entry_still_attests_its_decision():
+    """The upgrade path. Entries written before b5016ed carry the task type and the note
+    and no shas at all, so they are matched on task_id, actor and decision alone — holding
+    them to a commit they never recorded would lock a team out of accepting work its own
+    ledger already attests."""
+    old = {"action": "approval.grant", "actor": "alice", "subject": "t1",
+           "data": {"task_type": "feature", "note": "looks right"}}
+    status = evaluate(approving_policy(quorum=1), TASK,
+                      approvals(decision("alice", head="a" * 40)), head="a" * 40,
+                      attested=attestations(old))
+    assert status.satisfied and status.ignored == []
+
+
+def test_an_unsigned_entry_still_attests_once_the_repository_has_a_key(tmp_path):
+    """The key is created lazily by the first successful accept, so honest grants made
+    before it exists are unsigned for good. Requiring a signature on the attesting entry
+    refused them from that moment on — measured, bob granted two tasks, accepting the first
+    created the key, and the second was then refused with "no ledger entry attests this
+    decision" while the ledger plainly attested it. It bought nothing either: the chain
+    needs no secret, so a forger can append an unsigned entry too."""
+    from rig_workbench.govern import ledger
+
+    ledger.append(tmp_path, "approval.grant", actor="alice", subject="t1",
+                  data={"task_type": "feature", "note": "", "decision": "approve",
+                        "head": None, "branch_tip": None})
+    assert "sig" not in ledger.read_ledger(tmp_path)[0]
+    (tmp_path / ".rig" / "provenance.key").write_bytes(b"k" * 32)
+    attested = ledger_attestations(tmp_path)
+    assert attested.enforced
+    assert evaluate(approving_policy(quorum=1), TASK, approvals(decision("alice")),
+                    attested=attested).satisfied
+
+
+def test_an_entry_from_another_org_does_not_attest_this_task():
+    other = grant_entry(head=None, branch_tip=None)
+    other["org"], other["team"] = "other-corp", "team-z"
+    status = evaluate(approving_policy(quorum=1),
+                      {**TASK, "org": "acme", "team": "team-a"},
+                      approvals(decision("alice")), attested=attestations(other))
+    assert not status.satisfied
+    assert status.ignored[0][1] == "no ledger entry attests this decision"
+
+
+def test_one_identity_typed_two_ways_is_one_person():
+    entry = grant_entry(actor="Alice ", head=None, branch_tip=None)
+    assert evaluate(approving_policy(quorum=1), TASK, approvals(decision("alice")),
+                    attested=attestations(entry)).satisfied
+
+
+def test_reconciliation_that_is_not_enforced_leaves_the_arithmetic_alone():
+    assert evaluate(approving_policy(quorum=1), TASK, approvals(decision("alice")),
+                    attested=attestations(enforced=False)).satisfied
+    assert evaluate(approving_policy(quorum=1), TASK, approvals(decision("alice")),
+                    attested=None).satisfied
+
+
+def test_a_denial_is_never_reconciled_away():
+    """Reconciliation removes reasons to proceed, never reasons to stop."""
+    status = evaluate(approving_policy(quorum=1), TASK,
+                      approvals(decision("bob", verdict="deny", note="race condition")),
+                      attested=attestations())
+    assert not status.satisfied and len(status.denials) == 1
+
+
+def test_an_empty_chain_in_a_signing_repository_attests_nothing(tmp_path):
+    (tmp_path / ".rig").mkdir()
+    (tmp_path / ".rig" / "provenance.key").write_bytes(b"k" * 32)
+    attested = ledger_attestations(tmp_path)
+    assert attested.enforced and attested.entries == ()
+    assert not evaluate(approving_policy(quorum=1), TASK, approvals(decision("alice")),
+                        attested=attested).satisfied
+
+
+def test_an_absent_chain_without_a_key_degrades_unless_the_policy_requires_it(tmp_path):
+    assert not ledger_attestations(tmp_path).enforced
+    assert ledger_attestations(tmp_path, chain_required=True).enforced
+
+
+def test_a_grant_for_another_task_does_not_attest_this_one():
+    """Dropping the `subject` comparison in `_matches` changed nothing that any other test
+    noticed: every fixture granted and evaluated the same task, so one approval anywhere in
+    an org's chain would have attested every task in it."""
+    elsewhere = grant_entry(task="t2", head=None, branch_tip=None)
+    status = evaluate(approving_policy(quorum=1), TASK, approvals(decision("alice")),
+                      attested=attestations(elsewhere))
+    assert not status.satisfied and status.counted == 0
+    assert status.ignored[0][1] == "no ledger entry attests this decision"
+    # ...and the same entry against its own task still counts, so this is the subject and
+    # not some other field refusing it.
+    assert evaluate(approving_policy(quorum=1), {**TASK, "task_id": "t2"},
+                    {"task_id": "t2", "decisions": [decision("alice")]},
+                    attested=attestations(elsewhere)).satisfied
+
+
+def test_a_denial_entry_does_not_attest_an_approval():
+    """Dropping the decision-word comparison changed nothing either: `approval.deny` and
+    `approval.grant` both name the right task and actor, so a recorded objection would have
+    stood in as the approval that overrode it."""
+    denial = grant_entry(verdict="deny", head=None, branch_tip=None)
+    assert denial["action"] == "approval.deny"
+    status = evaluate(approving_policy(quorum=1), TASK, approvals(decision("alice")),
+                      attested=attestations(denial))
+    assert not status.satisfied and status.counted == 0
+    assert status.ignored[0][1] == "no ledger entry attests this decision"

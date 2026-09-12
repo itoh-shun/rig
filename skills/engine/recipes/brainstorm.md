@@ -13,6 +13,10 @@ steps:
       - "設計がセクション別に提示され各節の合意（または未解決行き）が取れている"
       - "代替案を最低1つ検討し採否の理由がある"
       - "未解決の問いを捏造で埋めず明示している"
+    acceptance_binding:
+      - unobserved
+      - unobserved
+      - unobserved
 autonomy: interactive
 ---
 

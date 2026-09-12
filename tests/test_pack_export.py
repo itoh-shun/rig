@@ -23,6 +23,7 @@ from rig_workbench.packs.inventory import info
 from rig_workbench.packs.model import PackError
 from rig_workbench.packs.sources import write_sources
 from rig_workbench.packs.validation import validate_pack
+from rig_workbench.packs.resolver import core_reference_ids
 
 SHIPPED = pathlib.Path(__file__).resolve().parents[1] / "packs" / "domain"
 
@@ -45,8 +46,8 @@ def test_export_puts_the_pack_below_the_repository_and_keeps_it_valid(tmp_path):
 
     # Still a pack, byte for byte: an export that dropped a file is caught by whoever runs the
     # export rather than by their first consumer.
-    manifest = validate_pack(root / "sales")
-    assert manifest["hashes"] == validate_pack(SHIPPED / "sales")["hashes"]
+    manifest = validate_pack(root / "sales", core_ids=core_reference_ids())
+    assert manifest["hashes"] == validate_pack(SHIPPED / "sales", core_ids=core_reference_ids())["hashes"]
 
 
 def test_a_shipped_pack_survives_the_whole_migration(tmp_path):
@@ -59,7 +60,7 @@ def test_a_shipped_pack_survives_the_whole_migration(tmp_path):
     _git(repo, "config", "user.name", "packs")
     _git(repo, "add", "-A")
     _git(repo, "commit", "--quiet", "-m", "sales 0.6.0")
-    version = validate_pack(SHIPPED / "sales")["version"]
+    version = validate_pack(SHIPPED / "sales", core_ids=core_reference_ids())["version"]
     _git(repo, "tag", f"v{version}")
 
     project = tmp_path / "project"
@@ -67,7 +68,7 @@ def test_a_shipped_pack_survives_the_whole_migration(tmp_path):
     write_sources(project, {"product": {
         "scheme": "git+file", "url": str(tmp_path / "rig-pack-{pack}")}})
     result = install_pack(f"product:sales@{version}", scope="project",
-                          project=project, allow_unverified=True)
+                          project=project)
 
     assert result.manifest["id"] == "sales"
     detail = info(result.path.parent, "sales")
@@ -88,8 +89,7 @@ def test_a_repository_distributing_two_packs_is_refused_rather_than_guessed(tmp_
     project = tmp_path / "project"
     project.mkdir()
     with pytest.raises(PackError, match="2 pack roots"):
-        install_pack(tmp_path / "repo", scope="project", project=project,
-                     allow_unverified=True)
+        install_pack(tmp_path / "repo", scope="project", project=project)
 
 
 def test_a_source_with_no_pack_says_so(tmp_path):
@@ -99,7 +99,7 @@ def test_a_source_with_no_pack_says_so(tmp_path):
     (empty / "docs").mkdir(parents=True)
     (empty / "README.md").write_text("# nothing here\n", encoding="utf-8")
     with pytest.raises(PackError, match="no pack root"):
-        install_pack(empty, scope="project", project=project, allow_unverified=True)
+        install_pack(empty, scope="project", project=project)
 
 
 def test_export_refuses_a_target_that_already_has_something_in_it(tmp_path):

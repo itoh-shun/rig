@@ -99,6 +99,13 @@ def _make_acceptable_task(git_repo, task_id):
     acc = json.loads((d / "acceptance.json").read_text(encoding="utf-8"))
     for c in acc["checks"]:
         c["status"] = "passed" if c["name"] in ("no_unrelated_diff",) else "skipped"
+    # The head the gate is claimed to have judged. `accept`'s `gate_judged_this_head`
+    # compares it with the worktree's HEAD, and a hand-written acceptance.json that names
+    # none is refused as unknown — which would make this fixture block on the gate rather
+    # than on the RBAC rule it exists to isolate.
+    acc["evaluated_head"] = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=git_repo, check=True,
+        capture_output=True, text=True).stdout.strip()
     (d / "acceptance.json").write_text(json.dumps(acc), encoding="utf-8")
     (d / "diff.md").write_text("## Summary\nx\n", encoding="utf-8")
     task = json.loads((d / "task.json").read_text(encoding="utf-8"))

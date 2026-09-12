@@ -16,6 +16,28 @@ class EvalCaseError(ValueError):
     """An evaluation case is malformed or unsafe."""
 
 
+#: The executor that produced a measurement, written into every result
+#: (`runner.run_case`) and compared against by the gate that judges one
+#: (`gate.quality_result_failures`, `executor_version_mismatch`).
+#:
+#: **This pillar's own constant, and not `rig_workbench.__version__`.** The import it
+#: replaces was the last thing in `eval/` reaching outside the pillar for something that
+#: is not a port (`tests/test_layering_contract.py`), and a version is the weakest possible
+#: reason to hold such an edge: it is a value this code *records*, never one it consults to
+#: decide anything about the world. Recording it needs no dependency; it needs a string.
+#:
+#: **Divergence from the release version is acceptable, and is the point.** What the gate
+#: is asking is "was this evidence produced by the executor now judging it?", and the
+#: answer that matters is whether *evaluation execution* changed — the provider argv, the
+#: isolation levels, the result schema, the way a sample is scored. Tied to the release
+#: number, every unrelated patch release invalidated every committed measurement at once,
+#: and re-measuring is not free: it is a real provider run against a paid model, so the
+#: cheapest way past a wall of `executor_version_mismatch` is to stop gating. Bumped here
+#: instead, the refusal fires when execution actually moved. It starts at the release this
+#: was split out of, so no evidence changes meaning on the day of the split.
+EXECUTOR_VERSION = "2.13.0"
+
+
 _TOP_FIELDS = {
     "case_schema_version", "id", "version", "title", "status", "incident",
     "provenance", "surfaces", "suite", "tags", "provider_policy", "repeat",

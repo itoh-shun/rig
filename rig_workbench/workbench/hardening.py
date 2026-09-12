@@ -25,17 +25,20 @@ WARNING-grade (surfaced, never block on their own):
 
 Gate wiring mirrors secrets.apply_secret_sensor: `cmd_gate` calls
 apply_tamper_sensor() on every evaluation; findings are recorded on the check
-in acceptance.json under "tamper_findings" (bounded excerpts only); explicit
-`--set no_gate_tampering=passed` in the same invocation is the escape hatch —
-recorded as tamper_override on the check, sticky across later evaluations,
-exactly like secret_override.
+in acceptance.json under "tamper_findings" (bounded excerpts only). The scan is
+the verdict — a `--set no_gate_tampering=passed` that contradicts it is refused
+by `cmd_gate` (lifecycle.sensor_contradictions, whose docstring carries the
+reasoning). A finding reviewed and accepted anyway is carried by
+`accept --force`, which audits, waives and signs the bypass. A gate criterion
+that a declaration can talk past is precisely the reward-hacking surface this
+module exists to close.
 """
 
 import pathlib
 import re
 
 from .secrets import untracked_files, worktree_diff_text
-from .state import effective_base, git
+from .state import effective_base, git, record_sensor_status
 
 SENSOR_CRITERION = "no_gate_tampering"
 
@@ -200,10 +203,12 @@ def format_findings(findings: list[dict]) -> list[str]:
 
 # ── the sensor (called from cmd_gate) ─────────────────────────────────────────
 _SENSOR_DETAIL_PREFIX = "(tamper sensor)"
+#: config.WRITER_OPERATOR's counterpart: this sensor as the writer of a status.
+WRITER = "tamper-sensor"
 
 
-def apply_tamper_sensor(root: pathlib.Path, run_d: pathlib.Path, task: dict, acc: dict,
-                        explicit_set: set[str] | frozenset[str] = frozenset()) -> list[str]:
+def apply_tamper_sensor(root: pathlib.Path, run_d: pathlib.Path, task: dict,
+                       acc: dict) -> list[str]:
     """Machine-back `no_gate_tampering` with a diff-scoped tamper scan.
 
     Mutates `acc` in place (caller persists it) and returns printable notes.
@@ -213,9 +218,9 @@ def apply_tamper_sensor(root: pathlib.Path, run_d: pathlib.Path, task: dict, acc
     edit riding in a normal task diff must block accept). Warning-grade-only
     findings → the check becomes **warning** (never overrides an explicit
     failed). Findings are recorded on the check under "tamper_findings".
-    Escape hatch: an explicit `--set no_gate_tampering=passed` in the current
-    invocation is respected and recorded as tamper_override=True, which keeps
-    later evaluations from re-flagging while the findings stay visible.
+    The scan is the verdict, and it is written over whatever the gate's `--set`
+    put there; `cmd_gate` refuses an invocation whose hand-written status this
+    contradicts rather than recording either one.
     """
     check = next((c for c in acc.get("checks", []) if c["name"] == SENSOR_CRITERION), None)
     if check is None:
@@ -234,11 +239,9 @@ def apply_tamper_sensor(root: pathlib.Path, run_d: pathlib.Path, task: dict, acc
     if not findings:
         # Tampering gone from the diff: clear our state; un-flag only what WE flagged.
         if check.pop("tamper_findings", None) is not None:
-            check.pop("tamper_override", None)
             if check["status"] in ("failed", "warning") and \
                     str(check.get("detail", "")).startswith(_SENSOR_DETAIL_PREFIX):
-                check["status"] = "pending"
-                check["detail"] = ""
+                record_sensor_status(check, "pending", "", WRITER)
                 return [f"{_SENSOR_DETAIL_PREFIX} previously detected tampering patterns are no "
                         f"longer in the diff → {SENSOR_CRITERION} reset to pending"]
         return []
@@ -248,29 +251,22 @@ def apply_tamper_sensor(root: pathlib.Path, run_d: pathlib.Path, task: dict, acc
     n = len(findings)
     n_fail = sum(1 for f in findings if f["grade"] == "fail")
     notes: list[str] = []
-    if SENSOR_CRITERION in explicit_set and check["status"] == "passed":
-        check["tamper_override"] = True
-        if str(check.get("detail", "")).startswith(_SENSOR_DETAIL_PREFIX):
-            # replace our stale instruction (keep any user-supplied detail)
-            check["detail"] = (f"{_SENSOR_DETAIL_PREFIX} {n} finding(s) manually overridden "
-                               "after review (tamper_override)")
-        notes.append(f"{_SENSOR_DETAIL_PREFIX} {n} tampering pattern(s) still in the diff, but "
-                     f"{SENSOR_CRITERION} was explicitly set to passed — manual override recorded:")
-    elif check.get("tamper_override") and check["status"] == "passed":
-        notes.append(f"{_SENSOR_DETAIL_PREFIX} {n} tampering pattern(s) in the diff — "
-                     "manual override previously recorded, keeping passed:")
-    elif n_fail:
-        check["status"] = "failed"
-        check["detail"] = (f"{_SENSOR_DETAIL_PREFIX} {n_fail} gate/CI-config change(s) in the diff — "
-                           f"revert them, or after review override with --set {SENSOR_CRITERION}=passed")
+    if n_fail:
+        record_sensor_status(
+            check, "failed",
+            f"{_SENSOR_DETAIL_PREFIX} {n_fail} gate/CI-config change(s) in the diff — revert "
+            f"them; a change that is genuinely part of the task is carried by `accept --force`, "
+            f"which records the bypass", WRITER)
         notes.append(f"{_SENSOR_DETAIL_PREFIX} {n} tampering pattern(s) detected "
                      f"({n_fail} fail-grade) → {SENSOR_CRITERION} failed:")
     else:
         if check["status"] in ("pending", "passed", "warning"):
-            check["status"] = "warning"
-            if not check.get("detail") or str(check["detail"]).startswith(_SENSOR_DETAIL_PREFIX):
-                check["detail"] = (f"{_SENSOR_DETAIL_PREFIX} {n} test-weakening pattern(s) in the "
-                                   f"diff — review them (override with --set {SENSOR_CRITERION}=passed)")
+            # The detail goes with the status: this sensor just overwrote the status, so
+            # leaving somebody else's words under it explains the wrong verdict.
+            record_sensor_status(
+                check, "warning",
+                f"{_SENSOR_DETAIL_PREFIX} {n} test-weakening pattern(s) in the diff — "
+                f"review them (a warning never blocks accept)", WRITER)
         notes.append(f"{_SENSOR_DETAIL_PREFIX} {n} warning-grade tampering pattern(s) detected → "
                      f"{SENSOR_CRITERION} recorded as warning:")
     notes.extend(f"  {ln}" for ln in lines)

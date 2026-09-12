@@ -17,8 +17,26 @@ the run until the run needs them.
 
 Documenting that split is not the same as noticing when it is missing. This
 command performs the noticing: it inspects the environment deterministically —
-no LLM, no writes — and reports which prerequisites are in place, so "we meant to
+no LLM — and reports which prerequisites are in place, so "we meant to
 containerise it" cannot quietly persist as "we never did".
+
+**It runs every time. After the first report in a repository it prints only what
+changed.** rig holds no "once per session" state and will not pretend to, so
+`hostcheck` runs on every pass through the workbench. Printing the whole report on
+each of them is how a report becomes wallpaper: by the fifth identical block nobody
+reads the line that finally changed. So the verdicts are recorded — one JSON line per
+*change*, appended to `.rig/hostcheck.jsonl` beside the other append-only records rig
+keeps there — and a later run prints only the checks whose verdict moved, plus one
+summary line, and names the file it compared against. `--full` prints all of it, and a
+repository with no record yet gets the full report because there is nothing to have
+changed from.
+
+**That append is this command's only write, and it never creates a directory.**
+`.rig/` belongs to `wb new`: a repository that has never run a task does not have one,
+and hostcheck is step 0 of every `/rig:go`, so a record written unconditionally would
+leave `?? .rig/` in `git status` in a tree nobody had started work in — at exactly the
+moment `wb new` stopped adding the ignore entry without being asked. Recording begins
+once `.rig/` is there.
 
 **Network:** `gh_auth_scopes` runs `gh auth status`, which contacts github.com
 (bounded, read-only). It is the only check that leaves the machine, and it is
@@ -58,6 +76,8 @@ import subprocess
 import tempfile
 
 from . import gh_requirement
+from .ports import Clock, FileStore
+from .ports.local import LOCAL_FILES, SYSTEM_CLOCK
 from .workbench.injection import bounded_excerpt
 
 # Bounds for the untrusted strings below. `gh auth status` output, an import
@@ -864,14 +884,152 @@ def _check_detail(check: dict) -> list | None:
     )
 
 
-def _print_report(result: dict) -> None:
-    print("## rig-wb hostcheck — prerequisites rig cannot enforce itself\n")
+#: Where a repository keeps what hostcheck last said about it. `.rig/` is where rig already
+#: writes its append-only records (`runs.jsonl`, `audit.jsonl`, `context.jsonl`) and this is
+#: another of them, deliberately not a new kind of state in a new place. One line is appended
+#: per run whose verdicts *differ* from the line before it, so the file grows with the host's
+#: history rather than with the number of times the command ran.
+STATE_FILE = ".rig/hostcheck.jsonl"
+
+#: The directory whose existence is the permission to record. rig's own state root, created by
+#: `wb new` and by nothing here: `FileStore.append_line` makes parent directories, so without
+#: this check a bare `hostcheck` would conjure `.rig/` into a repository that has never run a
+#: task. See the module docstring.
+STATE_DIR = ".rig"
+
+
+def verdicts(result: dict) -> dict[str, str]:
+    """`{check id: verdict}` — what a second run compares against, and nothing more.
+
+    The verdict is the mark a reader acts on (`OK` / `MISS` / `N/A`) together with the `state`
+    that says *why*, because `MISS (scopes-unknown)` and `MISS (missing-repo-scope)` are
+    different news. Details are left out on purpose: the signals behind `process_isolation`
+    churn between runs on the same unchanged host, and a comparison that counted them would
+    report a change every time, which is the noise this exists to remove.
+    """
+    marks: dict[str, str] = {}
     for check in result["checks"]:
+        mark = "N/A" if check.get("applicable") is False else ("OK" if check["ok"] else "MISS")
+        state = check.get("state")
+        marks[check["id"]] = f"{mark} ({state})" if state and state != "ok" else mark
+    return marks
+
+
+def previous_run(root: pathlib.Path, *, files: FileStore = LOCAL_FILES) -> dict | None:
+    """The last recorded run in this repository, or `None` when there is nothing to compare to.
+
+    The last *parseable* line, not the last line: a record truncated by a full disk or an
+    interrupted write is a reason to fall back to the report before it, never a reason to
+    crash an advisory command.
+    """
+    path = root / STATE_FILE
+    if not files.is_file(path):
+        return None
+    try:
+        lines = files.read_text(path).splitlines()
+    except (OSError, UnicodeError):
+        return None
+    for line in reversed(lines):
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(record, dict) and isinstance(record.get("verdicts"), dict):
+            return record
+    return None
+
+
+def record_run(root: pathlib.Path, result: dict, previous: dict | None, *,
+               files: FileStore = LOCAL_FILES,
+               clock: Clock = SYSTEM_CLOCK) -> pathlib.Path | None:
+    """Append this run's verdicts when they differ from the last recorded ones.
+
+    Returns the file the next run will compare against, or `None` when there is none and this
+    run must not create one. Two ways that happens, and both print the full report instead.
+    `.rig/` is not there yet — recording is not worth conjuring rig's state directory into a
+    repository nobody has started a task in, which is what `FileStore.append_line`'s
+    `mkdir(parents=True)` would otherwise do. Or the tree cannot be written (a read-only
+    checkout, a `.rig/` somebody made root-owned), which is not a reason to fail an advisory
+    command: the only thing lost is the comparison a later run would have made.
+    """
+    if not files.is_dir(root / STATE_DIR):
+        return None
+    path = root / STATE_FILE
+    current = verdicts(result)
+    if previous is not None and previous.get("verdicts") == current:
+        return path
+    record = {"at": clock.stamp(), "verdicts": current,
+              "missing": result["missing"], "skipped": result["skipped"]}
+    try:
+        files.append_line(path, json.dumps(record, ensure_ascii=False, sort_keys=True))
+    except OSError:
+        return path if previous is not None else None
+    return path
+
+
+def _changed_ids(result: dict, previous: dict | None) -> list[str] | None:
+    """The ids whose verdict moved since `previous`, or `None` when there is no previous run."""
+    if previous is None:
+        return None
+    before = previous.get("verdicts") or {}
+    return [cid for cid, mark in verdicts(result).items() if before.get(cid) != mark]
+
+
+def _summary(result: dict, previous: dict | None, changed: list[str] | None) -> str:
+    """The one line that is printed whether or not anything changed.
+
+    A delta report that prints nothing when nothing moved is indistinguishable from a command
+    that did not run, which is how "it checks every time" quietly stops being believed.
+    """
+    total = len(result["checks"])
+    missing = f"{len(result['missing'])} missing" + (
+        f" ({', '.join(result['missing'])})" if result["missing"] else "")
+    if changed is None:
+        return ("All host-side prerequisites present." if result["ok"]
+                else f"Missing: {', '.join(result['missing'])}")
+    since = previous.get("at") if previous else None
+    when = f"since {since}" if since else "since the previous run"
+    head = f"{len(changed)} changed {when}" if changed else f"No change {when}"
+    return f"{head} — {total} checks, {missing}."
+
+
+def _record_line(result: dict, recorded: pathlib.Path | None,
+                 changed: list[str] | None) -> str:
+    """Where the verdicts went, or why they went nowhere — one line either way."""
+    if recorded is None:
+        return (f"Not recorded: {STATE_DIR}/ does not exist here yet. `wb new` creates it, and "
+                f"from then on {STATE_FILE} holds the verdicts and later runs print only what "
+                "changed.")
+    # Named relative to the repository when it is inside it: the reader is standing there, and
+    # an absolute path that wraps the terminal says less than `.rig/hostcheck.jsonl`.
+    try:
+        where = recorded.relative_to(result["root"])
+    except (TypeError, ValueError):
+        where = recorded
+    return (f"Verdicts recorded in {where}"
+            + (" — later runs in this repository print only what changed."
+               if changed is None else " — `--full` prints every check again."))
+
+
+def _print_report(result: dict, *, previous: dict | None = None,
+                  recorded: pathlib.Path | None = None, full: bool = False) -> None:
+    changed = None if full else _changed_ids(result, previous)
+    before = (previous or {}).get("verdicts") or {}
+    print("## rig-wb hostcheck — "
+          + ("prerequisites rig cannot enforce itself" if changed is None
+             else f"what changed since {previous.get('at') or 'the previous run'}") + "\n")
+    for check in result["checks"]:
+        if changed is not None and check["id"] not in changed:
+            continue
         mark = "OK  " if check["ok"] else "MISS"
         if check.get("applicable") is False:
             mark = "N/A "
         state = check.get("state")
-        print(f"[{mark}] {check['id']}" + (f" ({state})" if state and state != "ok" else ""))
+        was = before.get(check["id"]) if changed is not None else None
+        print(f"[{mark}] {check['id']}" + (f" ({state})" if state and state != "ok" else "")
+              + (f"   ← was {was}" if was else ""))
         print(f"       {check['requirement']}")
         detail = _check_detail(check)
         if detail:
@@ -884,13 +1042,12 @@ def _print_report(result: dict) -> None:
         if not check["ok"] and check.get("remedy"):
             print(f"       remedy: {check['remedy']}")
         print()
-    if result["ok"]:
-        print("All host-side prerequisites present.")
-    else:
-        print(f"Missing: {', '.join(result['missing'])}")
+    print(_summary(result, previous, changed))
+    if not result["ok"] and changed != []:
         print("rig still runs — these are the operator's side of the split, and rig only reports them.")
-    if result.get("skipped"):
+    if result.get("skipped") and changed is None:
         print(f"Not applicable here (not checked, not satisfied): {', '.join(result['skipped'])}")
+    print(_record_line(result, recorded, changed))
 
 
 # ── fixed corpus ────────────────────────────────────────────────────────
@@ -1289,6 +1446,9 @@ def cmd_hostcheck(argv: list[str]) -> int:
     parser.add_argument("--repo", default=".", help="repository root to inspect (default: cwd)")
     parser.add_argument("--json", action="store_true", help="emit the full result as JSON")
     parser.add_argument("--strict", action="store_true", help="exit 1 instead of 3 when a prerequisite is missing")
+    parser.add_argument("--full", action="store_true",
+                        help="print every check, not only the ones that changed since the "
+                             "previous run in this repository")
     parser.add_argument("--bench", action="store_true",
                         help="measure the checks against a fixed corpus instead of inspecting this repo")
     args = parser.parse_args(argv)
@@ -1303,10 +1463,15 @@ def cmd_hostcheck(argv: list[str]) -> int:
 
     root = pathlib.Path(args.repo).resolve()
     result = run_all(root)
+    # Recorded on the `--json` path too. The workbench instruction reaches hostcheck through
+    # `--json` and does its own filtering, so a record written only on the human path would
+    # leave the delta permanently unavailable to the caller that runs this most often.
+    previous = previous_run(root)
+    recorded = record_run(root, result, previous)
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
     else:
-        _print_report(result)
+        _print_report(result, previous=previous, recorded=recorded, full=args.full)
     if result["ok"]:
         return 0
     return 1 if args.strict else 3

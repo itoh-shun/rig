@@ -34,7 +34,7 @@ from __future__ import annotations
 
 import pathlib
 
-from . import assurance
+from ..assurance import assurance
 from .state import load_task
 
 SCHEMA = "rig.assurance-graph/v1"
@@ -145,7 +145,7 @@ def _reviewer_verdicts(review: dict | None) -> tuple[dict[str, str], set[str]]:
     """Each persona's verdict, and which personas were recorded more than once.
 
     Last row wins, matching `cmd_review`'s own upsert, so the graph and the writer agree
-    on which record is current. `rig-wb review` cannot produce a duplicate, but
+    on which record is current. `rig-wb wb review` cannot produce a duplicate, but
     `review.json` is a plain file and a hand-edited or externally-written one can — and
     a conflicting pair silently collapsing to whichever came last is the kind of quiet
     that this module exists to avoid. So the duplicates come back too, and the node says

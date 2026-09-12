@@ -163,13 +163,22 @@ python3 scripts/workbench.py diff [<task_id>]
 python3 scripts/workbench.py accept [<task_id>]
 ```
 
-`accept` はまず **accept_requirements チェックリスト**を表示する（`worktree_exists` / `base_branch_recorded` / `diff_summary_generated` / `acceptance_gate_not_failed` / `no_unrelated_diff`）。**accept 前に必ず**:
+`accept` はまず **accept_requirements チェックリスト**を表示する。項目は6件:
+
+- `worktree_exists`
+- `base_branch_recorded`
+- `diff_summary_generated`
+- `acceptance_gate_not_failed`
+- `no_unrelated_diff`
+- `gate_judged_this_head`
+
+**accept 前に必ず**:
 1. `workbench.py diff <task_id>` の内容（Summary/Risk/Tests/Unrelated diff）をユーザーに要約提示する。
 2. `worktree_exists`/`base_branch_recorded`/`diff_summary_generated` は**構造的な前提**であり `--force` でも上書きできない（diff.md が無ければ先に書く以外に道はない）。
-3. `acceptance_gate_not_failed`/`no_unrelated_diff` が未達（gate が `pending`/`failed`）の場合、スクリプトはエラーで拒否する（exit 1）。**`--force` は安全側のガードレールを外す明示操作**であり、以下を満たさない限り提案しない：
+3. 後半の3件が未達なら、スクリプトはエラーで拒否する（exit 1）。`acceptance_gate_not_failed` の未達とは、gate が `pending`／`failed`／全 criterion `skipped` のいずれかであることを指す。`gate_judged_this_head` の未達とは、3 つの commit が一致しないことを指す。3 つとは `evaluated_head`・squash 対象 branch の先端・worktree の HEAD である。head を記録していない run も「不明」＝未達である。この1件だけが未達なら、`gate` を評価し直すのが筋になる。`gate` 自身の終了コードは、決着した gate が 0、`failed` が 1、センサーと食い違う `--set` が 2 になる。判定に届かないうちは 3 を返す。`pending` が残るか、全件が `skipped` のときである。`wb contract` の `pending` と同じ 3 で、未判定を 0 と読ませない。**`--force` は安全側のガードレールを外す明示操作**であり、以下を満たさない限り提案しない：
    - ユーザーが未達基準を確認した上で明示的にリスクを許容している
    - `--force` 使用は `task.json.forced: true` として記録される旨を伝える
-4. gate が `passed_with_warnings`（`warning` 判定の criterion が残っている）場合も accept 自体はスクリプトが許可するが、**未解決の警告を要約提示してから**実行する。
+4. gate が `passed_with_warnings` の場合も accept 自体はスクリプトが許可する。ただし**未解決の項目を要約提示してから**実行する。この状態になるのは `warning` の criterion が残っているときである。`skipped` の criterion が1件でもあるときも同じ状態になる（判定していないものを `passed` にはしない）。`accept` は「N criteria nobody judged」の行で skip した criterion 名を出す。同じ名前が provenance.json の `skipped_criteria` にも残る。
 
 accept 成功後（squash merge → **staged**・コミットはしない）:
 - `git diff --staged` で確認できる旨と、コミットは人（またはユーザーの明示指示）が行う旨を案内する。
@@ -261,8 +270,10 @@ imported commit の位置に作る**。以降 `base..branch` が外部の変更�
   `--summary <file>` で人が書いたものを渡せば `authored` として記録される。
 
 `contract` は外部 caller が分岐するための答えで、**`die()` を一切呼ばない**。
-`die` はタスク ID の誤りでも壊れた state でも未達ゲートでも exit 1 なので、
-exit 1 だけでは「rig が拒否した」と「rig が答えられなかった」を区別できない。
+workbench の停止は 2 種類ある：`state.die` は「答えを出せなかった」で exit 2
+（タスク ID の誤り、壊れた state、git の失敗）、`state.reject` は「rig が見て否と判断した」
+で exit 1（未達ゲート、governance のブロック、accept 権限なし）。`contract` は
+`die` の SystemExit も捕まえて、exit だけでなく `execution-error` の結果ごと返す。
 
 | status | exit | 意味 |
 |---|---|---|
@@ -322,7 +333,7 @@ python3 scripts/workbench.py log --limit <N>
 python3 scripts/workbench.py board [--all]
 ```
 
-**複数タスクを並行で進めているときの単一の確認場所**（`/rig:rig` を何度も直接叩いた場合でも、`/rig:queue go --provider rig` で並列 dispatch した場合でも、全ての task は `.rig/runs/` に集約されるため同じ一覧に出る）。既定は非終端状態（`running`/`gate_passed`/`gate_failed`）のみ表示——`accepted`/`discarded` まで含めたい場合は `--all`。出力（task_id・input・type/recipe/mode/最終 step/gate）をそのまま提示する。整形の追加は不要。
+**複数タスクを並行で進めているときの単一の確認場所**。`/rig:go` を何度も直接叩いた場合でも、`/rig:queue go --provider rig` で並列 dispatch した場合でも同じ一覧に出る。全ての task が `.rig/runs/` に集約されるためだ。既定は非終端状態（`running`/`gate_passed`/`gate_failed`）のみ表示——`accepted`/`discarded` まで含めたい場合は `--all`。出力（task_id・input・type/recipe/mode/最終 step/gate）をそのまま提示する。整形の追加は不要。
 
 「ターミナルをいくつも開いていて何をしていたか忘れる」状況は、このコマンド1つに集約することで解消する——ユーザーが並行タスクの状態を尋ねたら、まず `board` を提案する。
 
@@ -382,7 +393,7 @@ python3 scripts/workbench.py gc [--older-than 14d] [--dry-run]
 python3 scripts/workbench.py audit [--limit 10] [--action accept_force] [--since 2026-07-01]
 ```
 
-`accept --force` 等で acceptance-gate の未達基準を上書きした際の恒久記録（`.rig/audit.jsonl`）の一覧。各エントリ（ts・action・task_id・bypassed 基準・gate 状態・failed checks）をそのまま提示する——整形の追加は不要。絞り込みは `--limit`（最新 N 件）・`--action`（例 `accept_force`）・`--since`（YYYY-MM-DD 以降）。
+`accept --force` の恒久記録（`.rig/audit.jsonl`）の一覧。action は 2 種あり、持つ欄が違う。`accept_force` は squash が適用された force である。欄は ts・action・task_id・bypassed 基準・gate 状態・failed checks。`accept_refused` は accept が拒んだ force である。経路は 7 本あり、`reason` の値で区別する。`branch_unresolvable`（task の branch が解決しない）・`governance`（定足数・権限・waiver）・`worktree_missing`・`worktree_dirty` の 4 本。残りは `branch_empty`（base の上に commit が無い）・`main_tree_dirty`・`squash_failed` の 3 本。`squash_failed` は衝突、または git が merge 自体を拒んだ場合である。欄は bypassed 基準も gate 状態も無く、代わりに reason・detail・実行者（actor）を持つ。`workbench.py audit` は 2 行目をこの 2 種で書き分ける。出力はそのまま提示する——整形の追加は不要。**ただし件数は上限つきである。** 同じ事象は 1 日あたり 4 行までしか書かれない。4 行目は `collapsed` を持つ。一覧では `(+3 more like it that day; further repeats that day were not recorded)` と出る。この行がある日の件数は「4 件」ではなく「4 件以上」である。実測では、拒まれた force を 50 回起こしても 4 行しか残らない。件数を答えるときはこの但し書きを付ける。絞り込みは `--limit`（最新 N 件）・`--action`（例 `accept_force`。拒まれた側は `accept_refused`）・`--since`（YYYY-MM-DD 以降）。
 
 ``No records (entries are appended by `accept --force`).`` の場合は「force-bypass の履歴が無い＝gate を押し切った accept が一度も無い」ことを意味するので、その旨をそのまま伝える。ユーザーが「force で通した履歴を見たい」「gate を無視した accept が無いか確認したい」と言ったらこのコマンドを提案する（**読み取り専用**——記録の追記は `workbench.py accept --force` 側が自動で行い、ここからは書き込まない）。
 
@@ -397,14 +408,14 @@ python3 scripts/workbench.py scan-secrets --diff <task_id>
 
 1. 出力の抜粋は**常にマスク済み**（先頭4文字＋末尾2文字のみ残る）——秘密の生値は findings に含まれないため、出力はそのままユーザーに提示してよい。検出ありは exit 1。
 2. `workbench.py gate` は評価のたびにこの scanner を task diff に自動適用し、findings があれば `no_secret_leak` を **failed** にする（warning ではない＝accept を機械的に止める。schema センサーと違い fail-grade）。
-3. 人が偽陽性と確認した場合の脱出口は `gate <task_id> --set no_secret_leak=passed`（明示 pass が優先され、`secret_override` として check に記録される）。判断せず黙って通さない——必ずユーザーに findings を見せてから提案する。
+3. **この criterion に `--set` の逃がし方は無い**。`gate <task_id> --set no_secret_leak=passed` はセンサーの測定と食い違うので拒否され（exit 2＝使い方の誤りで、gate 失敗の 1 とは別）、記録に残るのはセンサーの `failed` のほうである。diff から findings を取り除いて `gate` を評価し直せば、`--set no_secret_leak=passed` は測定と一致するので受け付けられる。センサーが自分で書くのは findings の有無までで、pass そのものは書かない。人が偽陽性と確認した上で進めるなら `accept --force` だけが道で、`.rig/audit.jsonl` と provenance に残る。判断せず黙って通さない——必ずユーザーに findings を見せてから提案する。
 
 ## `/rig scan-ja-prose [<task_id>]`
 
 `python3 scripts/workbench.py scan-ja-prose <task_id>` に委譲する。gate の `ja_lint_clean` センサーと同じ検査を、task の worktree の diff（base からの追加行と未追跡 file）に限って走らせ、`file:line:col: severity [rule] message` で出す。error があれば exit 1、warning だけなら 0。diff に日本語の散文が無ければその旨を出して 0。
 
 - 検査は `rig_workbench/ja_textlint.py`（`rig-wb ja-lint`）で、規則の正本は `facets/policies/japanese-textlint-rules`。project の `.claude/ja-textlint.json` があればそれを読む。
-- **判定は書き換えない。** 表示だけ。gate の状態を動かすのは `gate` の評価であり、`--set ja_lint_clean=passed` は review 後の明示的な逃がし方として記録される。
+- **判定は書き換えない。** 表示だけ。gate の状態を動かすのは `gate` の評価で、`ja_lint_clean` はセンサーが毎回書き直すため `--set ja_lint_clean=passed` は次の評価で上書きされる。人の手が残るのはセンサーより厳しい側だけ。`--set ja_lint_clean=failed` は lint が clean でも維持される。
 - 相方の `ja_prose_ai_smell_reviewed` はこのコマンドの対象ではない。あれは `ai-smell-reviewer` の verdict（`review --set ai-smell-reviewer=…`）を写す criterion で、`scripts/prose_rhythm.py` の数値は読まない。
 
 ## `/rig scan-injection [paths…] [--diff <task_id>]`
@@ -418,7 +429,7 @@ python3 scripts/workbench.py scan-injection --diff <task_id>
 
 1. 出力の抜粋では不可視文字が `<U+XXXX>` エスケープとして描画される（生の不可視文字は findings に含まれない）ため、出力はそのままユーザーに提示してよい。検出ありは exit 1。
 2. `workbench.py gate` は評価のたびにこの scanner を自動適用し、不可視 Unicode 検出で `no_injection_markers` を **failed** に（accept を機械的に止める）、フレーズのみなら **warning** にする。同様に、gate 評価ごとに anti-tamper センサー（`no_gate_tampering`）も走る——task diff 中の `.rig/gates.json`・`.rig/recipes/`・CI workflow の編集は fail-grade、bugfix/feature task での既存テスト改変・assert 削除・skip マーカー追加は warning-grade（こちらは gate 内蔵センサーのみで単独 scan コマンドは持たない）。
-3. 人がレビューして偽陽性と確認した場合の脱出口は `gate <task_id> --set no_injection_markers=passed`（`injection_override` として check に記録され、以降の評価でも維持される。`no_gate_tampering` 側は `--set no_gate_tampering=passed`＝`tamper_override`）。判断せず黙って通さない——必ずユーザーに findings を見せてから提案する。
+3. 偽陽性だと人が確認しても、`--set no_injection_markers=passed`（`no_gate_tampering` も同じ）は拒否される（exit 2）。findings を diff から消して評価し直せば、`--set no_injection_markers=passed` は測定と一致するので受け付けられる。センサーが自分で書くのは findings の有無までで、pass そのものは書かない。そのまま進めるなら `accept --force` だけが道で、`.rig/audit.jsonl` と provenance に残る。判断せず黙って通さない——必ずユーザーに findings を見せてから提案する。
 4. **`--deps`（#320・明示opt-in）**：依存ツリー（`node_modules`/`vendor`/`third_party`）配下の**prose面のみ**（`*.md`/`*.rst`/`*.txt`——ソースコードは対象外）を走査する。サードパーティ依存のドキュメントにエージェント向けの隠し指示を仕込むサプライチェーン攻撃（依存のREADMEがエージェントに出力削除を指示していた実例）への対抗。既定面には**決して含めない**（巨大ツリーの常時走査はコストが見合わない＋AI系ライブラリのREADMEはプロンプト例を正当に含むためフレーズ検出の偽陽性が多い）。検出時の推奨アクション（文脈確認→本物ならピン止め/隔離/上流報告。不可視Unicodeは正当な用途ゼロなので即隔離）は出力自体に含まれる。
 
 ## `/rig stream-checks [<task_id>] [--watch --interval N --max-passes M]`
@@ -462,7 +473,7 @@ python3 scripts/workbench.py scan-destructive --diff <task_id>
 相対パスの `rm -rf build/` は**意図的に検出しない**（Makefile の clean target 等で日常的に正当。このセンサーが守りたいのは絶対パスと空変数展開の事故）。
 
 1. `workbench.py gate` は評価のたびにこの scanner を task diff に自動適用し、fail-grade 検出で `no_destructive_operation` を **failed** に、warning のみなら **warning** にする。
-2. 人がレビューして問題なしと確認した場合の脱出口は `gate <task_id> --set no_destructive_operation=passed`（`destructive_override` として記録・以降の評価でも維持）。必ずユーザーに findings を見せてから提案する。
+2. 人がレビューして問題なしと確認しても、`gate <task_id> --set no_destructive_operation=passed` は拒否される（exit 2）。diff から該当行を消して `gate` を評価し直すか、そのまま進めるなら `accept --force`（`.rig/audit.jsonl` と provenance に残る）。必ずユーザーに findings を見せてから提案する。
 3. **スコープの正直な明示**：これは**差分に書き込まれた**破壊的コマンド（スクリプト・CI設定・マイグレーション）の検出であり、エージェントが実行時に打つコマンドの傍受ではない（それはホストのパーミッション機構の責務）。rig が完全に管理できる成果物＝diff の中の時限爆弾を人に見せるのがこのセンサーの仕事。
 
 ## `/rig scan-anchors [paths…] [--diff <task_id>]`
@@ -476,7 +487,7 @@ python3 scripts/workbench.py scan-anchors --diff <task_id>
 
 1. 解決は **worktree が先・base commit が後**。diff が削除／改名したファイルへの引用を fail にしないための必須の2段目であり、抜けると正当な引用が偽陽性になる。
 2. 判定は3値で、**SKIPPED を黙って合格にしない**（バイナリ・生成物・symlink・読めないファイルは理由つきで別枠に出す）。grade は2段階——参照先を特定できたのにアンカーが誤り（行数超過・行 0・範囲逆転・ディレクトリ指定）は **fail-grade**、ファイル自体を特定できなかった（`streaming.py:67` のような裸の basename 等）は **warning-grade**。
-3. gate 側は **既定では走らない**。`evidence_anchors_resolve` はどのプリセットにも入っておらず、プロジェクトが `.rig/gates.json` の `extra_criteria` で追加したときだけ有効になる（未導入のうちは no-op）。有効時は fail-grade 検出で **failed**、warning のみなら **warning**。脱出口は `gate <task_id> --set evidence_anchors_resolve=passed`（`anchor_override` として記録・以降の評価でも維持）。必ずユーザーに findings を見せてから提案する。
+3. gate 側は **既定では走らない**。`evidence_anchors_resolve` はどのプリセットにも入っておらず、プロジェクトが `.rig/gates.json` の `extra_criteria` で追加したときだけ有効になる（未導入のうちは no-op）。有効時は fail-grade 検出で **failed**、warning のみなら **warning**。`--set evidence_anchors_resolve=passed` は測定と食い違えば拒否される（exit 2）。アンカーを直して評価し直すのが筋で、そのまま進めるなら `accept --force`（記録に残る）。必ずユーザーに findings を見せてから提案する。
 4. **どこに入れるか**：アンカーは **task の worktree を基準に解決する**ので、worktree を持つ task 種別のプリセットに入れる。既定は `standard`（`bugfix`/`feature`/`refactor`/`test`/`performance`/`documentation`/`design`/`investigation`/`release_support` が合成する土台）＝
 
    ```json

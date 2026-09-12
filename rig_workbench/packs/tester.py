@@ -2,15 +2,14 @@ from __future__ import annotations
 
 import hashlib
 import pathlib
+from contextlib import AbstractContextManager
+from typing import Any, Protocol, runtime_checkable
 
-from rig_workbench.eval.runner import make_judge_adapter, read_only_workspace, run_case
-from rig_workbench.eval.cases import validate_case
-from rig_workbench.eval.gate import quality_result_failures
-
+from .eval_bridge import EVALUATION
 from .manifest import canonical, read_json_yaml
 from .lock import tree_hash
 from .model import ASSET_DIRS, PROMPT_KINDS, PackError
-from .resolver import pack_roots
+from .resolver import core_reference_ids, pack_roots
 from .validation import validate_pack
 
 
@@ -91,8 +90,66 @@ def resolve_pack(value: pathlib.Path | str, *, project: pathlib.Path) -> pathlib
     return matches[0].resolve()
 
 
+@runtime_checkable
+class CaseRunner(Protocol):
+    """What `pack test` needs of evaluation — and the only one of these that is not pure.
+
+    The other pillars' inverted edges are all pure functions: a value in, a verdict out.
+    This one is not. `run_case` spends real money on a real provider, `read_only_workspace`
+    makes a directory the operating system refuses writes to, and `make_judge_adapter`
+    builds a second bounded process. That is the reason to borrow rather than reimplement,
+    not a reason against it: a pack measured through a second runner would not be
+    comparable with the evidence `eval` produces, and the whole point of holding a pack to
+    its own cases is that it is the same measurement, in the same isolation, judged the
+    same way. A parallel implementation here would differ in exactly the details that
+    decide whether two numbers may be compared.
+
+    Stated as a protocol rather than imported because the import is what the layering rule
+    forbids a judgement module (`tests/test_layering_contract.py`): the standard library,
+    its own pillar and the six ports, and `eval` is none of the three. What this module
+    still owns is unchanged and is the part that is `packs`' to own — which cases run, what
+    prompt they are composed from, what the pack's tree hashed to, and what verdict the run
+    reports. `packs/eval_bridge.py` satisfies this, as it does the two narrower
+    declarations in `evidence.py` and `installer.py`.
+    """
+
+    def validate_case(self, case: Any) -> dict:
+        """The case, checked; raises if it is not one."""
+        ...
+
+    def result_failures(self, result: dict, case: dict, *, provider: str | None = None,
+                        model: str | None = None, judge_provider: str | None = None,
+                        judge_model: str | None = None) -> list[str]:
+        """Why a measured result does not clear quality, empty when it does."""
+        ...
+
+    def read_only_workspace(
+        self, root: pathlib.Path | str,
+    ) -> AbstractContextManager[pathlib.Path]:
+        """A directory outside the repository that neither adapter may write to."""
+        ...
+
+    def make_judge_adapter(self, *, provider: str, model: str, repo: pathlib.Path | str,
+                           command: str | None = None, timeout_s: float = 30) -> Any:
+        """A bounded semantic judge, or a refusal if the provider is not one."""
+        ...
+
+    def run_case(self, case: dict, *, repo: pathlib.Path | str, provider: str, model: str,
+                 repeat: int, phase: str, command: str | None = None, timeout_s: float = 30,
+                 judge_adapter: Any = None,
+                 result_root: pathlib.Path | str | None = None,
+                 prompt_prefix: str | None = None,
+                 prompt_binding_sha256: str | None = None,
+                 pack_tree_sha256: str | None = None,
+                 execution_cwd: pathlib.Path | str | None = None,
+                 ) -> tuple[pathlib.Path, dict]:
+        """One measurement, written where asked, and the result it produced."""
+        ...
+
+
 def _cases_to_run(pack: pathlib.Path, manifest: dict, case_paths: list[str],
-                  project: pathlib.Path, draft: str | None) -> list[dict]:
+                  project: pathlib.Path, draft: str | None, *,
+                  evaluation: CaseRunner = EVALUATION) -> list[dict]:
     """The cases this run measures: the pack's approved ones, or the one named draft.
 
     A draft lives in the *project*, at `.rig/evals/drafts/<id>/case.json`, and not in the pack
@@ -110,7 +167,7 @@ def _cases_to_run(pack: pathlib.Path, manifest: dict, case_paths: list[str],
     if not path.is_file():
         raise PackError(f"evaluation draft not found: {path}")
     _raw, case = read_json_yaml(path)
-    validate_case(case)
+    evaluation.validate_case(case)
     if case["status"] != "draft":
         raise PackError(f"pack test --draft takes a draft; {draft} is {case['status']!r}")
     owned = {
@@ -134,13 +191,15 @@ def test_pack(
     command: str | None = None, judge_command: str | None = None,
     timeout: float = 30, result_dir: pathlib.Path | str | None = None,
     allow_paid_provider: bool = False, draft: str | None = None,
+    evaluation: CaseRunner = EVALUATION,
 ) -> tuple[dict, int]:
     project_path = pathlib.Path(project).resolve()
     pack = resolve_pack(value, project=project_path)
     # A draft run is the one caller allowed to skip the approved-case rule, because it exists
     # to produce the evidence that rule waits for. Everything else about the pack is still
     # validated, and no other entry point passes this.
-    manifest = validate_pack(pack, require_evaluation=draft is None)
+    manifest = validate_pack(pack, core_ids=core_reference_ids(),
+                             require_evaluation=draft is None)
     case_paths = manifest["assets"]["eval-case"]
     if provider is None:
         return ({"pack_test_schema_version": 1, "pack": manifest["id"],
@@ -165,15 +224,16 @@ def test_pack(
     if bool(judge_provider) != bool(judge_model):
         raise PackError("judge provider and judge model must be specified together")
     try:
-        cases_to_run = _cases_to_run(pack, manifest, case_paths, project_path, draft)
+        cases_to_run = _cases_to_run(pack, manifest, case_paths, project_path, draft,
+                                     evaluation=evaluation)
         # The same 0555 workspace the eval harness builds, cleanup and "not inside the
         # measured tree" check included, rather than a second hand-rolled one. Unlike
         # `eval`, pack evaluation runs *both* adapters from it and never routes through
         # `adapter_cwd()`: `compose_case_prompt` makes the prompt self-contained, so
         # neither the subject nor the judge needs the repository as a cwd, and giving
         # codex `--cd <project>` back would hand it the tree it does not need to see.
-        with read_only_workspace(project_path) as workspace:
-            judge = make_judge_adapter(
+        with evaluation.read_only_workspace(project_path) as workspace:
+            judge = evaluation.make_judge_adapter(
                 provider=judge_provider, model=judge_model, repo=workspace,
                 command=judge_command, timeout_s=timeout,
             ) if judge_provider and judge_model else None
@@ -182,7 +242,7 @@ def test_pack(
             for case in cases_to_run:
                 prompt = compose_case_prompt(pack, manifest, case, project=project_path)
                 binding = prompt_binding_sha256(manifest, case, prompt)
-                result_path, result = run_case(
+                result_path, result = evaluation.run_case(
                     case, repo=project_path, provider=provider, model=model,
                     repeat=case["repeat"], phase="current", command=command,
                     timeout_s=timeout, judge_adapter=judge, result_root=result_root,
@@ -211,7 +271,7 @@ def test_pack(
     else:
         by_id = {case["id"]: case for case in cases_to_run}
         failures = sorted({failure for result in results
-                           for failure in quality_result_failures(
+                           for failure in evaluation.result_failures(
                                result, by_id[result["case_id"]], provider=provider,
                                model=model, judge_provider=judge_provider,
                                judge_model=judge_model,

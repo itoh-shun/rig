@@ -25,6 +25,14 @@ steps:
       - "元の下書きとは別の成果物として渡され、source file を編集・上書きしていない"
       - "完成稿を rig-wb ja-lint に stdin で通し、error が 0 である（走らなかった場合は UNVERIFIED）"
       - "最終判定は生成者と異なるモデルまたは provider の japanese-writing-reviewer が行っている"
+    acceptance_binding:
+      - unobserved
+      - unobserved
+      - unobserved
+      - unobserved
+      - unobserved
+      - unobserved
+      - unobserved
     personas: [japanese-writing-reviewer]
     policies: [independent-verification, secure-provider-execution, japanese-writing-rules-v2, japanese-writing-modes]
     output_contract: japanese-writing-verdict

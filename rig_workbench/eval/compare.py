@@ -8,6 +8,8 @@ import math
 import re
 from typing import Any
 
+from ..ports import Clock, Env
+from ..ports.local import OS_ENV, SYSTEM_CLOCK
 from .attestation import verify_result_attestation
 from .cases import (
     ISOLATION_LEVELS,
@@ -35,6 +37,7 @@ def _sha(value: Any) -> str:
 
 def validate_result(
     result: Any, *, now: dt.datetime | None = None, verify_attestation: bool = True,
+    clock: Clock = SYSTEM_CLOCK, env: Env = OS_ENV,
 ) -> dict:
     if not isinstance(result, dict):
         raise EvalCaseError("evaluation result must be an object")
@@ -61,7 +64,7 @@ def validate_result(
     missing = required - set(result)
     if unknown or missing:
         raise EvalCaseError("evaluation result schema fields are invalid")
-    if verify_attestation and not verify_result_attestation(result):
+    if verify_attestation and not verify_result_attestation(result, env=env):
         raise EvalCaseError("evaluation result attestation is invalid")
     for field in (
         "case_id", "provider", "model", "executor_version", "judge_provider",
@@ -236,7 +239,10 @@ def validate_result(
         raise EvalCaseError("evaluation result started_at is invalid") from exc
     if started.tzinfo is None:
         raise EvalCaseError("evaluation result started_at must include timezone")
-    current = now or dt.datetime.now(dt.timezone.utc)
+    # `clock.now()` carries the local offset; this comparison is against stored UTC ISO
+    # text, so the moment is converted rather than re-read. Same instant, same rendering
+    # the recorder used — `astimezone` on an aware datetime moves the offset, not the time.
+    current = now or clock.now().astimezone(dt.timezone.utc)
     if current.tzinfo is None:
         raise EvalCaseError("comparison time must include timezone")
     if started > current + FUTURE_TOLERANCE:
@@ -247,11 +253,12 @@ def validate_result(
 
 
 def compare_results(
-    baseline: dict, current: dict, *, case: dict, now: dt.datetime | None = None
+    baseline: dict, current: dict, *, case: dict, now: dt.datetime | None = None,
+    clock: Clock = SYSTEM_CLOCK, env: Env = OS_ENV,
 ) -> dict:
     validate_case(case)
-    validate_result(baseline, now=now)
-    validate_result(current, now=now)
+    validate_result(baseline, now=now, clock=clock, env=env)
+    validate_result(current, now=now, clock=clock, env=env)
     if baseline["execution_status"] != "available" or current["execution_status"] != "available":
         raise EvalCaseError("git execution identity is unavailable")
     if any(row["infra_status"] is not None

@@ -22,8 +22,17 @@ Patterns covered (kind → shape):
 The entropy detector carries a path allowlist for the obvious false-positive
 factories — lockfile hashes and vendored trees: *.lock, *.sum,
 package-lock.json / npm-shrinkwrap.json / pnpm-lock.yaml, and anything under
-node_modules/ or .git/. The named patterns still run there (a real token is a
-leak wherever it sits); only the entropy heuristic is silenced.
+node_modules/. It also carries two content rules, independent of path,
+each keyed on the value's OWN key rather than on a word near it: a 64/128-hex token
+whose key is a digest key (sha256 / sha512 / *_sha256 / digest / checksum / …), and a
+40-hex token whose key is either a digest key or a git-id key (commit / blob / tree /
+object_id / oid) — 40 hex being a sha1 and a git object id alike. An unquoted
+`key=value` is split back into the two before those rules run, since `=` is in the
+token charset and would otherwise merge `api_key=<40 hex>` into one mixed-charset blob
+that is neither hex nor entropic enough to report; the merged token keeps its own
+score, so the split only ever adds a reason to report. The named patterns still run in
+every case (a real token is a leak wherever it sits); only the entropy heuristic is
+silenced.
 
 CLI: `workbench.py scan-secrets [paths...]` scans files/trees;
 `scan-secrets --diff <task-id>` scans only the task worktree's diff vs its
@@ -33,11 +42,11 @@ Gate wiring (mirrors schema_diff.apply_schema_sensor, but fail-grade):
 `cmd_gate` calls apply_secret_sensor() on every evaluation. When the gate
 contains `no_secret_leak` and the diff-scoped scan finds anything, the check
 is set to **failed** — a secret in the diff must block accept. This is NOT
-warning-grade like the schema sensor. Escape hatch: after reviewing a false
-positive, the user can run `gate <id> --set no_secret_leak=passed` — an
-explicit pass in the same invocation is respected (recorded as
-secret_override on the check) and sticks across later evaluations, exactly
-how manual overrides already work for every criterion.
+warning-grade like the schema sensor. The scan is the verdict: a
+`gate <id> --set no_secret_leak=passed` that contradicts it is refused by
+`cmd_gate` (lifecycle.sensor_contradictions, whose docstring carries the
+reasoning), and a reviewed false positive is carried through `accept --force`,
+where the bypass is audited, waived, and signed into the provenance record.
 """
 
 import argparse
@@ -47,7 +56,9 @@ import pathlib
 import re
 import sys
 
-from .state import die, effective_base, git, load_task, repo_root
+from rig_workbench import gitroot
+
+from .state import die, effective_base, git, load_task, record_sensor_status, repo_root
 
 SENSOR_CRITERION = "no_secret_leak"
 
@@ -71,21 +82,38 @@ BASE64_ENTROPY_THRESHOLD = 4.5  # bits/char over the base64 charset
 HEX_ENTROPY_THRESHOLD = 3.0     # bits/char over the hex charset
 MIN_TOKEN_LEN = 32
 
+# `=` is in the token charset (it is base64's padding), so an unquoted `.env` line
+# arrives as ONE token: `api_key=<40 hex>` is 48 characters of mixed charset, which
+# fails HEX_RE.fullmatch and is then measured against the base64 threshold it cannot
+# reach — the key's own letters are what drag the entropy down. A 40-hex credential
+# written the way credentials are actually written was the one shape the detector
+# could not see. This splits such a token back into the key and the value it labels.
+#
+# The `:` form needs no branch here: `:` is NOT in the token charset, so `sha256:<hex>`
+# already arrives as a bare value with its key left on the line, which is exactly what
+# the label rules read. Only `=` merges the two.
+_KEY_VALUE_SEPARATOR = "="
+_IDENTIFIER_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
 # Entropy-detector allowlist: lockfile hashes / vendored trees are high-entropy
 # by construction and never secrets. Named patterns are NOT silenced by these.
 #
-# `corpora` covers drill's planted-defect fixtures: a case that measures whether a
-# reviewer spots a leaked credential has to contain something that looks like one.
-# The value is fabricated and the tree is synthetic by construction. Only the
-# entropy heuristic is silenced — a real vendor-formatted key (sk-ant-…, AKIA…)
-# planted there is still reported, so this cannot hide an actual leak.
+# Matched at ANY DEPTH, a rule a directory name earns only by being reserved by the tool
+# that creates it: a `node_modules` is npm's tree wherever it sits, and its contents are
+# not the repository's prose. A name a project might choose for itself does not belong
+# here — see ALLOW_PATH_PREFIXES.
+#
+# `.git` is deliberately NOT here: the walk never reaches it (WALK_SKIP_DIRS) and git never
+# emits a `.git/...` path, so the entry reached only a file named on the command line, which
+# is now scanned like any other (tests/test_secret_scan.py).
 ALLOW_SUFFIXES = (".lock", ".sum")
 ALLOW_BASENAMES = ("package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml")
-ALLOW_DIR_PARTS = ("node_modules", ".git", "corpora")
+ALLOW_DIR_PARTS = ("node_modules",)
 
 # Anchored at the repository root rather than matched at any depth, unlike
-# ALLOW_DIR_PARTS. `evidence` is too ordinary a directory name to silence wherever
-# it appears; this silences the one tree whose whole purpose is to hold hashes.
+# ALLOW_DIR_PARTS. `evidence` and `corpora` are too ordinary a directory name to
+# silence wherever they appear; these silence the exact trees whose whole purpose is
+# to hold hashes and fabricated credentials.
 #
 # A signed evaluation result is hashes almost end to end — one digest per prompt
 # surface (~200 of them), a sha256 for each captured stdout and stderr, the case
@@ -98,7 +126,145 @@ ALLOW_DIR_PARTS = ("node_modules", ".git", "corpora")
 #
 # Only the entropy heuristic is silenced here. A real vendor-formatted credential
 # (sk-ant-…, AKIA…, a PEM header) written into an evidence file is still reported.
-ALLOW_PATH_PREFIXES = (("evals", "evidence"),)
+#
+# `skills/engine/corpora` is drill's planted-defect fixtures: a case that measures
+# whether a reviewer spots a leaked credential has to contain something that looks like
+# one. The value is fabricated and the tree is synthetic by construction. This used to
+# be a bare `corpora` in ALLOW_DIR_PARTS, matched at any depth — so ANY directory
+# anyone named `corpora`, anywhere in any repository rig scans, stopped the entropy
+# heuristic reporting under it, and a real leak parked in `some/project/corpora/`
+# went unseen. The corpora rig ships are at one address (`corpus_root()` and
+# `validation/drill.py` both build `skills/engine/corpora/fixture`), so that is the
+# address the exemption is written at.
+#
+# Only the entropy heuristic is silenced under either prefix. A real vendor-formatted
+# credential (sk-ant-…, AKIA…, a PEM header) written into one is still reported.
+ALLOW_PATH_PREFIXES = (("evals", "evidence"), ("skills", "engine", "corpora"))
+
+#: Files that together say "this checkout is rig itself".
+#:
+#: A NAME IS NOT AN ADDRESS — the same critique this module makes of a bare `corpora`
+#: applies to `evals/evidence` and `skills/engine/corpora` the moment the scanner is
+#: pointed at somebody else's repository. Both entries above are facts about THIS
+#: repository's layout, and nothing stops another project from having a top-level
+#: `evals/evidence/` of its own; there, the entry is not a considered exemption, it is a
+#: coincidence of naming that silences the heuristic over a whole tree.
+#:
+#: So the prefixes apply only inside a rig checkout, identified by two files that have to
+#: be there together: the engine's brick inventory and this scanner's own source. One
+#: marker alone is a file a project could plausibly have; both, at both addresses, is rig.
+#: A nested foreign checkout inside rig (`some/project/` with its own `.git`) is answered
+#: by this too — `invocation_worktree` answers with the INNERMOST repository, so scanning
+#: it resolves the toplevel to `some/project`, and `some/project/evals/evidence/leak.txt`
+#: would arrive as `evals/evidence/leak.txt` and be silenced by a prefix that was never
+#: about that repository. It is not a rig checkout, so no prefix applies and the leak
+#: reports.
+#:
+#: Outside a rig checkout the answer is always "no exemption", never "some other
+#: exemption": over-reporting is the safe direction for a scanner whose findings block an
+#: accept. `node_modules` is unaffected — that name is reserved by the tool that makes
+#: it, in any repository.
+#:
+#: THE MARKER IS COST, NOT PROOF: two empty files with these names make
+#: `is_rig_checkout` true, and anyone who can create them in a scanned tree already has
+#: the commit rights that buy the path shape anyway. It raises the price of the
+#: coincidence — a project does not grow `skills/engine/BRICKS.md` and
+#: `rig_workbench/workbench/secrets.py` by accident — and it is not an authenticity check.
+RIG_CHECKOUT_MARKERS = ("skills/engine/BRICKS.md", "rig_workbench/workbench/secrets.py")
+
+
+def is_rig_checkout(root: pathlib.Path) -> bool:
+    """True when `root` is a checkout of rig itself — see RIG_CHECKOUT_MARKERS."""
+    return all((root / marker).is_file() for marker in RIG_CHECKOUT_MARKERS)
+
+
+# The one entropy exemption that reads content rather than path: a content digest
+# written on a line that already names it as one. `"body_sha256": "<64 hex>"` is an
+# attestation table, not a credential — the value is the output of a hash function
+# over something public, published precisely so anyone can recompute it, and a format
+# that binds a commit to its source cannot avoid carrying it. The entropy heuristic
+# cannot tell it from a key; the key beside it can.
+#
+# A LABEL VOUCHES ONLY FOR ITS OWN VALUE. This started as "a digest word somewhere in
+# the 40 characters before the token", and a security review measured what that let
+# through: `prev_api_key`, `revenue_api_token` and `revoked_key` contain `rev`;
+# `committee_api_key` contains `commit`; `street_service_key` contains `tree`;
+# `blobstore_key` contains `blob`. Six ordinary key names, each vouching for a 40-hex
+# value beside it — and 40 hex is a live credential shape (Datadog application keys,
+# CircleCI tokens, legacy GitHub PATs) that no named pattern covers. So the label is
+# no longer *near* the value: it must BE the value's own key, the identifier directly
+# before the separator, matched whole. A substring of a longer identifier is not a
+# label, and there is no window left for an unrelated word to reach across.
+#
+# Which keys count is a closed list, not a word family. `digest` and `checksum` name a
+# digest; `digest_auth_secret` and `password_hash` do not, and both now report — bare
+# `_hash` is gone entirely, because `secrets.token_hex(32)` produces exactly 64 hex
+# and that is what an AES-256 key, an HMAC key, a session key and a Sentry auth token
+# all look like. A `_`-joined PREFIX is allowed only before sha256/sha1/sha512/digest/
+# checksum (`body_sha256`, `source_excerpt_sha256`), never a suffix after them — a
+# suffix is how `digest_auth_secret` would have got in. And the prefix itself must name
+# no key: `hmac_sha256` is a key, not a digest (_KEYISH_PREFIX_WORDS, below).
+#
+# Pure hex only, and only at digest lengths: 64 and 128 under a digest key, 40 under
+# either class (a sha1 and a git object id are the same 40 hex). A base64 or
+# mixed-charset token is never exempted however it is labelled — `"body_sha256":
+# "<43 chars of base64>"` is exactly what hiding an API key behind a digest label
+# would look like, and base64 of digest length is indistinguishable from base64 of key
+# length. Charset is the part of this test an attacker cannot cheaply satisfy.
+#
+# Named patterns are NOT silenced: sk-ant-…, AKIA…, ghp_… under a `checksum:` key are
+# still reported, because a credential is a leak wherever it is written.
+DIGEST_HEX_LENGTHS = frozenset({64, 128})  # sha256 / sha512, in hex
+SHARED_HEX_LENGTH = 40                     # sha1 — and a git object id, the same shape
+
+# A KEY-SHAPED PREFIX DOES NOT MAKE A DIGEST OF IT. `sha256` names the function, not
+# the input, so `<x>_sha256` reads "the sha256 of <x>" — until `<x>` is itself a key,
+# where the same name reads "that key, keyed-hashed", or simply names the key.
+# `hmac_sha256` is the ordinary spelling of an HMAC-SHA256 key, and an HMAC-SHA256 key
+# is 64 hex: the same shape as the digest it is not. `api_key_sha256`, `secret_digest`,
+# `token_checksum` and `session_key_sha256` are the same bargain with a different word.
+#
+# So these words, as whole `_`-separated words anywhere in the prefix, cost the prefix
+# its vouch. Whole words only: `keystore_sha256`, `authority_digest` and
+# `monkey_checksum` are untouched, because `keystore`, `authority` and `monkey` are not
+# `key`, `auth` and `key`. The rule stays one-directional — still a prefix, never a
+# suffix — so nothing the denylist misses gets in through `digest_auth_secret`.
+_KEYISH_PREFIX_WORDS = r"hmac|key|secret|token|password|passwd|auth"
+
+# The digest keys, whole. `sha3_256` / `blake2b` / `content_hash` stand alone; the
+# five common ones take a `_`-joined prefix, and only a prefix that names no key.
+_DIGEST_KEY = (
+    r"(?:(?!(?:[A-Za-z0-9]+_)*(?:" + _KEYISH_PREFIX_WORDS + r")_)[A-Za-z0-9_]+_)?"
+    r"(?:sha256|sha1|sha512|digest|checksum)"
+    r"|sha3[_-]?\d+"
+    r"|blake2[bs]?"
+    r"|content_hash"
+)
+
+# The git-id keys, whole and exact — no prefix rule at all. `rev` and `sha` are gone:
+# they are too short to be anything but a substring of something else, and they were
+# how `prev_api_key` and `revoked_key` got their exemption.
+_GIT_ID_KEY = (
+    r"source_commit|git_commit|commit"
+    r"|source_git_blob|git_blob|blob"
+    r"|tree|object_id|oid"
+)
+
+# The anchor: `<key>` then the separator that introduces the value, ending exactly
+# where the token begins. Left side must be a non-identifier character, so the key
+# cannot be the tail of a longer one; the separator on the right means it cannot be
+# the head of one either. Three accepted forms, and no fourth:
+#   `"body_sha256": "`  /  `sha256 = "`   a key and its assignment or mapping
+#   `sha256:`                             the colon form digests are quoted in
+#   `sha256 `                             the prose/Markdown form, whole word adjacent
+_LABEL_ANCHOR = r'(?:^|[^A-Za-z0-9_])(?:%s)(?:["\']?[ \t]*[:=][ \t]*["\']?|[ \t]+)$'
+DIGEST_LABEL_RE = re.compile(_LABEL_ANCHOR % _DIGEST_KEY, re.IGNORECASE)
+GIT_ID_LABEL_RE = re.compile(_LABEL_ANCHOR % _GIT_ID_KEY, re.IGNORECASE)
+
+# Every form above ends in one of these, so the character touching the token decides
+# in O(1) whether the anchor can match at all. Purely a cost guard on long lines — it
+# accepts exactly what the patterns accept.
+_SEPARATOR_TAIL = "\"' \t:="
 
 # Tree-walk skips (never worth scanning at all) and binary/size guards.
 WALK_SKIP_DIRS = ("node_modules", ".git", ".rig", "__pycache__")
@@ -126,33 +292,113 @@ def mask(secret: str) -> str:
     return f"{secret[:4]}…{'*' * min(len(secret) - 6, 8)}…{secret[-2:]}"
 
 
-def entropy_allowlisted(rel: str) -> bool:
+def entropy_allowlisted(rel: str, *, rig_checkout: bool = False) -> bool:
     """True when `rel` is a known high-entropy-but-harmless location
-    (lockfiles / checksum files / vendored or VCS trees / signed eval evidence)."""
+    (lockfiles / checksum files / vendored or VCS trees / signed eval evidence).
+
+    `rig_checkout` says whether the repository `rel` is relative to is rig's own. When it
+    is false, ALLOW_PATH_PREFIXES does not apply at all — those two prefixes are facts
+    about this repository, not about repositories in general (RIG_CHECKOUT_MARKERS).
+
+    IT DEFAULTS TO FALSE, and the default is the whole safety property. Knowing which
+    repository a path belongs to takes a filesystem question, so a caller that holds only
+    a string cannot answer it — and the answer it gets by staying silent is the narrow
+    one: more findings, never fewer. A caller that means rig's prefixes has to say so.
+    `scan_paths` (through `scan_root`) and `scan_worktree_diff` are the two that measure
+    it, and they pass what they measured; nobody else can widen an exemption by omission.
+
+    A path that walks upward is refused BEFORE any rule is consulted, not after the last
+    one. Every caller hands in a repository-relative path (git on the diff side,
+    `scan_root` on the tree side) and none can produce a `..` today, but a rule whose
+    correctness depends on being asked in the right order is one edit away from being
+    wrong: `node_modules/../secrets.env` should not be exempt because its first component
+    is in ALLOW_DIR_PARTS. Leading `./` and Windows separators fall out for free.
+    """
     p = pathlib.PurePosixPath(rel.replace("\\", "/"))
-    if p.suffix in ALLOW_SUFFIXES or p.name in ALLOW_BASENAMES:
-        return True
-    if any(part in ALLOW_DIR_PARTS for part in p.parts):
-        return True
-    # Compared as path components, not as a string prefix. Every caller here hands in
-    # a repository-relative path produced by git, which never contains `..` — but a
-    # prefix test would also accept `evals/evidence/../elsewhere/x.json`, and proving
-    # that no caller can ever produce one is more expensive, and more fragile, than
-    # not depending on it. Leading `./` and `\` separators fall out for free.
     parts = tuple(part for part in p.parts if part != ".")
     if ".." in parts:
         return False
+    if p.suffix in ALLOW_SUFFIXES or p.name in ALLOW_BASENAMES:
+        return True
+    if any(part in ALLOW_DIR_PARTS for part in parts):
+        return True
+    if not rig_checkout:
+        return False
+    # Compared as path components, not as a string prefix, so that `evals/evidencex/`
+    # is not `evals/evidence`.
     return any(parts[:len(prefix)] == prefix for prefix in ALLOW_PATH_PREFIXES)
+
+
+def split_key_value(token: str) -> tuple[str, str] | None:
+    """`api_key=<40 hex>` → `("api_key", "<40 hex>")`; None when the token is one value.
+
+    Exactly one separator, so there is never a choice of where to cut; an
+    identifier-shaped left part, so `<base64>=<base64>` is not a key and a value; and a
+    right part still long enough to be a token in its own right.
+
+    The left part must also be SHORTER than a token: a left part of token length is
+    itself a candidate value, and a finding names the value, not the key — so those
+    stay merged and keep the whole blob in the excerpt.
+
+    This function only proposes the cut. Whether the cut may LOWER a verdict is the
+    caller's rule, and the answer there is no: scan_line scores the merged token too.
+    """
+    if token.count(_KEY_VALUE_SEPARATOR) != 1:
+        return None
+    key, _, value = token.partition(_KEY_VALUE_SEPARATOR)
+    if len(key) >= MIN_TOKEN_LEN or len(value) < MIN_TOKEN_LEN:
+        return None
+    if not _IDENTIFIER_RE.fullmatch(key):
+        return None
+    return key, value
+
+
+def _key_before(rx: re.Pattern, line: str, start: int) -> bool:
+    """True when the identifier directly before `start` on this line matches `rx`."""
+    if start == 0 or line[start - 1] not in _SEPARATOR_TAIL:
+        return False
+    return rx.search(line[:start]) is not None
+
+
+def digest_under_label(line: str, token: str, start: int) -> bool:
+    """True when `token` is a hex digest whose own key on this line names it as one.
+
+    Entropy-heuristic exemption only (see DIGEST_LABEL_RE): pure hex at 64/128 — or
+    40, shared with the git-id class — under a whole digest key.
+    """
+    if not HEX_RE.fullmatch(token):
+        return False
+    if len(token) not in DIGEST_HEX_LENGTHS and len(token) != SHARED_HEX_LENGTH:
+        return False
+    return _key_before(DIGEST_LABEL_RE, line, start)
+
+
+def git_id_under_label(line: str, token: str, start: int) -> bool:
+    """True when `token` is a 40-hex value whose own key on this line names it a git id.
+
+    Entropy-heuristic exemption only (see GIT_ID_LABEL_RE): exactly 40 hex — the
+    length git addresses content at — under a whole git-id key.
+    """
+    if len(token) != SHARED_HEX_LENGTH or not HEX_RE.fullmatch(token):
+        return False
+    return _key_before(GIT_ID_LABEL_RE, line, start)
+
+
+def over_entropy_threshold(token: str) -> bool:
+    """True when `token` beats the threshold for its OWN charset (hex, else base64)."""
+    threshold = HEX_ENTROPY_THRESHOLD if HEX_RE.fullmatch(token) else BASE64_ENTROPY_THRESHOLD
+    return shannon_entropy(token) > threshold
 
 
 def _finding(rel: str, lineno: int, kind: str, secret: str) -> dict:
     return {"path": rel, "line": lineno, "kind": kind, "masked_excerpt": mask(secret)}
 
 
-def scan_line(line: str, rel: str, lineno: int, skip_entropy: bool | None = None) -> list[dict]:
+def scan_line(line: str, rel: str, lineno: int, skip_entropy: bool | None = None, *,
+              rig_checkout: bool = False) -> list[dict]:
     """Scan one line of text. Findings carry masked excerpts only."""
     if skip_entropy is None:
-        skip_entropy = entropy_allowlisted(rel)
+        skip_entropy = entropy_allowlisted(rel, rig_checkout=rig_checkout)
     findings: list[dict] = []
     spans: list[tuple[int, int]] = []
     for kind, rx in PATTERNS:
@@ -164,18 +410,40 @@ def scan_line(line: str, rel: str, lineno: int, skip_entropy: bool | None = None
     for m in ENTROPY_TOKEN_RE.finditer(line):
         if any(m.start() < e and s < m.end() for s, e in spans):
             continue  # already reported by a named pattern
-        tok = m.group(0)
-        if HEX_RE.fullmatch(tok):
-            threshold = HEX_ENTROPY_THRESHOLD
-        else:
-            threshold = BASE64_ENTROPY_THRESHOLD
-        if shannon_entropy(tok) > threshold:
+        merged, start = m.group(0), m.start()
+        tok = merged
+        kv = split_key_value(merged)
+        if kv is not None:
+            # An unquoted `key=value`: the value is judged on its own charset, and the
+            # key stays where the label rules already look — directly before it, with
+            # the `=` as its separator. `body_sha256=<hex>` is still a digest under its
+            # own key; `api_key=<hex>` is a 40-hex credential that no longer hides
+            # behind the letters of its own name.
+            start += len(kv[0]) + len(_KEY_VALUE_SEPARATOR)
+            tok = kv[1]
+        if digest_under_label(line, tok, start):
+            continue  # a digest under a digest label is not a credential
+        if git_id_under_label(line, tok, start):
+            continue  # …nor is a git object id under a git-id label
+        # EITHER verdict reports, and the exemptions above are the only thing that
+        # silences both. Entropy per character is not monotone under taking a piece:
+        # a short base64 value can score BELOW its threshold while `api_key=` + that
+        # same value scores above it, because the key's own letters are characters the
+        # value does not repeat. Scoring only the piece would have made the split a
+        # detection regression for exactly the values it was written to catch — so the
+        # merged token keeps the score it had before there was a split at all.
+        if over_entropy_threshold(tok) or (kv is not None and over_entropy_threshold(merged)):
             findings.append(_finding(rel, lineno, "high_entropy", tok))
     return findings
 
 
-def scan_file(path: pathlib.Path, rel: str | None = None) -> list[dict]:
-    """Scan a file. Binary (NUL in the first 8 KiB) and oversized files are skipped."""
+def scan_file(path: pathlib.Path, rel: str | None = None, *,
+              rig_checkout: bool = False) -> list[dict]:
+    """Scan a file. Binary (NUL in the first 8 KiB) and oversized files are skipped.
+
+    `rig_checkout` goes straight through to entropy_allowlisted, and false — the default
+    — means the path prefixes describe another repository's layout and none apply here.
+    """
     rel = rel if rel is not None else str(path)
     try:
         if path.stat().st_size > MAX_FILE_BYTES:
@@ -186,26 +454,113 @@ def scan_file(path: pathlib.Path, rel: str | None = None) -> list[dict]:
     if b"\0" in raw[:8192]:
         return []
     text = raw.decode("utf-8", errors="replace")
-    skip_entropy = entropy_allowlisted(rel)
+    skip_entropy = entropy_allowlisted(rel, rig_checkout=rig_checkout)
     findings: list[dict] = []
     for i, line in enumerate(text.splitlines(), start=1):
         findings.extend(scan_line(line, rel, i, skip_entropy=skip_entropy))
     return findings
 
 
+def scan_root(p: pathlib.Path) -> tuple[str | None, bool]:
+    """Where the scanned root `p` sits, and whether its repository is rig's own.
+
+    Returns `(prefix, rig_checkout)`. `prefix` is `p`'s location inside its repository as
+    a posix path (`""` or `"."` at the root), and **None when `p` is not inside a
+    repository at all** — then there is nothing to be relative to and names stay as the
+    caller addressed them.
+
+    THE ALLOWLIST READS A PATH, so the path it reads cannot depend on how the scan was
+    addressed. `rel` used to be `str(path)`, which is whatever the caller typed: the same
+    tree scanned as `.` produced `evals/evidence/run.json` and scanned as `/home/me/rig`
+    produced `/home/me/rig/evals/evidence/run.json`. Only the first has
+    `("evals", "evidence")` as its leading components — the second begins with `/` — so
+    `ALLOW_PATH_PREFIXES` silently stopped matching and the whole signed-evidence tree
+    reported: 264 findings became 501, the 237 extra all under `evals/evidence/`. An
+    allowlist that holds only when the operator types a relative path is not an allowlist.
+
+    So every scanned file is named repository-relative before any allowlist check, which
+    is also what the diff-scoped callers already hand in (git speaks repo-relative), and
+    the two scan entry points finally agree on one vocabulary.
+
+    The repository is asked of `rig_workbench.gitroot` — `invocation_worktree`, the
+    caller's own working tree, not `main_worktree`: a task worktree's `evals/evidence/` is
+    at *its* root, and naming it relative to the main checkout would put `../` in front of
+    everything. `invocation_worktree` answers with the INNERMOST repository, and that is
+    what makes the second half of this answer necessary: a nested checkout re-roots the
+    prefix, so the prefixes are spent only where they are true (RIG_CHECKOUT_MARKERS).
+
+    WITH NO REPOSITORY THE MARKERS STILL ANSWER. git says where the root is; it does
+    not say whose the tree is, and those are separate questions. A `git archive` extract
+    of this repository, a release tarball, a vendored copy — same bytes, same layout, no
+    `.git` — used to get a hardcoded `False` here and lose the exemption entirely:
+    scanning one produced 574 findings against a checkout's 264, the extra 237 under
+    `evals/evidence/` and 73 under `skills/engine/corpora/`. That is the false-positive
+    pile the prefixes exist to remove, arriving through a second door. So the no-repo
+    branches ask `is_rig_checkout` about the scanned root, which is the one thing still
+    answerable without git.
+
+    The root asked about is the SCANNED ROOT, not the nearest marker-bearing ancestor.
+    Outside a repository there is no toplevel to walk up to, and the alternative — an
+    unbounded climb toward `/` looking for markers — would let a rig checkout somewhere
+    above an unrelated tree lend it the exemption, which is the coincidence
+    RIG_CHECKOUT_MARKERS exists to price out. The cost is an asymmetry, recorded rather
+    than hidden: inside a repository, scanning `<root>/evals` still anchors at the
+    toplevel and is exempt; outside one it is not, because `evals` is then the root and
+    carries no markers. That direction over-reports, which is the direction this scanner
+    errs in.
+
+    Asked once per scanned root rather than once per file: a whole-tree scan walks
+    thousands of files and this is a subprocess.
+    """
+    base = p if p.is_dir() else p.parent
+    top = gitroot.invocation_worktree(base)
+    if top is None:
+        return None, is_rig_checkout(base)
+    top = top.resolve()
+    try:
+        prefix = base.resolve().relative_to(top).as_posix()
+    except ValueError:          # a toplevel the scanned root is somehow not under
+        return None, is_rig_checkout(base)
+    return prefix, is_rig_checkout(top)
+
+
+def _under(prefix: str | None, rel: str) -> str:
+    """`rel` re-rooted under `prefix`; `.`, `""` and None are all an empty prefix."""
+    return rel if prefix in (None, "", ".") else f"{prefix}/{rel}"
+
+
+def _as_addressed(p: pathlib.Path) -> str:
+    """A single file outside any repository, named as the caller named it.
+
+    Not its basename: `scan-secrets deep/nested/conf.json` reports the file the operator
+    asked about, and a finding that says `conf.json` has thrown away the half of the
+    path that says which one.
+    """
+    return p.as_posix().removeprefix("./")
+
+
 def scan_paths(paths: list[pathlib.Path]) -> list[dict]:
-    """Scan files and directory trees (vendored/VCS dirs skipped entirely)."""
+    """Scan files and directory trees (vendored/VCS dirs skipped entirely).
+
+    Findings name files repository-relative, so scanning a tree by its relative and by
+    its absolute path yields identical findings — see scan_root.
+    """
     findings: list[dict] = []
     for p in paths:
         if p.is_file():
-            findings.extend(scan_file(p))
+            prefix, rig = scan_root(p)
+            rel = _under(prefix, p.name) if prefix is not None else _as_addressed(p)
+            findings.extend(scan_file(p, rel, rig_checkout=rig))
         elif p.is_dir():
+            prefix, rig = scan_root(p)
             for f in sorted(p.rglob("*")):
                 if not f.is_file():
                     continue
-                if any(part in WALK_SKIP_DIRS for part in f.relative_to(p).parts):
+                rel = f.relative_to(p)
+                if any(part in WALK_SKIP_DIRS for part in rel.parts):
                     continue
-                findings.extend(scan_file(f))
+                findings.extend(scan_file(f, _under(prefix, rel.as_posix()),
+                                          rig_checkout=rig))
         else:
             die(f"path '{p}' does not exist")
     return findings
@@ -256,14 +611,15 @@ _diff_memo: dict | None = None
 def shared_diff_cache():
     """Within this context, worktree_diff_text/untracked_files results are
     memoized per (worktree, base) so the sensor batch of one gate evaluation
-    shells out once instead of once per sensor. Never nest-sensitive: the memo
-    is dropped on exit."""
+    shells out once instead of once per sensor. Nest-safe: the enclosing memo, if
+    there is one, is restored on exit rather than dropped."""
     global _diff_memo
+    previous = _diff_memo
     _diff_memo = {}
     try:
         yield
     finally:
-        _diff_memo = None
+        _diff_memo = previous
 
 
 def worktree_diff_text(wt: pathlib.Path, base_commit: str) -> str:
@@ -296,29 +652,37 @@ def untracked_files(wt: pathlib.Path) -> list[tuple[pathlib.Path, str]]:
     return out
 
 
-def scan_diff_text(diff_text: str) -> list[dict]:
+def scan_diff_text(diff_text: str, *, rig_checkout: bool = False) -> list[dict]:
     """Scan only the ADDED lines of a unified diff; line numbers refer to the new file."""
     findings: list[dict] = []
     for rel, lineno, text in iter_added_lines(diff_text):
-        findings.extend(scan_line(text, rel, lineno))
+        findings.extend(scan_line(text, rel, lineno, rig_checkout=rig_checkout))
     return findings
 
 
 def scan_worktree_diff(wt: pathlib.Path, base_commit: str) -> list[dict]:
     """Everything the task introduced on top of base: committed + uncommitted
-    changes (`git diff <base>`) plus untracked files (invisible to git diff)."""
-    findings = scan_diff_text(worktree_diff_text(wt, base_commit))
+    changes (`git diff <base>`) plus untracked files (invisible to git diff).
+
+    The worktree is the repository git names these paths relative to, so it is also what
+    decides whether ALLOW_PATH_PREFIXES applies: a task run against somebody else's
+    project gets `node_modules` and the content rules, not rig's two prefixes.
+    """
+    rig = is_rig_checkout(wt)
+    findings = scan_diff_text(worktree_diff_text(wt, base_commit), rig_checkout=rig)
     for f, rel in untracked_files(wt):
-        findings.extend(scan_file(f, rel))
+        findings.extend(scan_file(f, rel, rig_checkout=rig))
     return findings
 
 
 # ── the sensor (called from cmd_gate) ─────────────────────────────────────────
 _SENSOR_DETAIL_PREFIX = "(secret sensor)"
+#: config.WRITER_OPERATOR's counterpart: this sensor as the writer of a status.
+WRITER = "secret-sensor"
 
 
-def apply_secret_sensor(root: pathlib.Path, run_d: pathlib.Path, task: dict, acc: dict,
-                        explicit_set: set[str] | frozenset[str] = frozenset()) -> list[str]:
+def apply_secret_sensor(root: pathlib.Path, run_d: pathlib.Path, task: dict,
+                       acc: dict) -> list[str]:
     """Machine-back `no_secret_leak` with a diff-scoped secret scan.
 
     Mutates `acc` in place (caller persists it) and returns printable notes.
@@ -326,10 +690,9 @@ def apply_secret_sensor(root: pathlib.Path, run_d: pathlib.Path, task: dict, acc
 
     Findings → the check is set to **failed** (fail-grade: a secret in the
     diff must block accept), with the masked findings recorded on the check
-    under "secret_findings". Escape hatch: an explicit
-    `--set no_secret_leak=passed` in the current invocation is respected and
-    recorded as secret_override=True, which keeps later evaluations from
-    re-failing the check while the findings stay visible.
+    under "secret_findings". The scan is the verdict, and it is written over
+    whatever the gate's `--set` put there; `cmd_gate` refuses an invocation
+    whose hand-written status this contradicts rather than recording either one.
     """
     check = next((c for c in acc.get("checks", []) if c["name"] == SENSOR_CRITERION), None)
     if check is None:
@@ -348,10 +711,8 @@ def apply_secret_sensor(root: pathlib.Path, run_d: pathlib.Path, task: dict, acc
     if not findings:
         # Secret gone from the diff: clear our state; un-fail only what WE failed.
         if check.pop("secret_findings", None) is not None:
-            check.pop("secret_override", None)
             if check["status"] == "failed" and str(check.get("detail", "")).startswith(_SENSOR_DETAIL_PREFIX):
-                check["status"] = "pending"
-                check["detail"] = ""
+                record_sensor_status(check, "pending", "", WRITER)
                 return [f"{_SENSOR_DETAIL_PREFIX} previously detected secrets are no longer "
                         f"in the diff → {SENSOR_CRITERION} reset to pending"]
         return []
@@ -360,23 +721,13 @@ def apply_secret_sensor(root: pathlib.Path, run_d: pathlib.Path, task: dict, acc
     check["secret_findings"] = lines
     n = len(findings)
     notes: list[str] = []
-    if SENSOR_CRITERION in explicit_set and check["status"] == "passed":
-        check["secret_override"] = True
-        if str(check.get("detail", "")).startswith(_SENSOR_DETAIL_PREFIX):
-            # replace our stale failure instruction (keep any user-supplied detail)
-            check["detail"] = (f"{_SENSOR_DETAIL_PREFIX} {n} finding(s) manually overridden "
-                               "after review (secret_override)")
-        notes.append(f"{_SENSOR_DETAIL_PREFIX} {n} potential secret(s) still in the diff, but "
-                     f"{SENSOR_CRITERION} was explicitly set to passed — manual override recorded:")
-    elif check.get("secret_override") and check["status"] == "passed":
-        notes.append(f"{_SENSOR_DETAIL_PREFIX} {n} potential secret(s) in the diff — "
-                     "manual override previously recorded, keeping passed:")
-    else:
-        check["status"] = "failed"
-        check["detail"] = (f"{_SENSOR_DETAIL_PREFIX} {n} potential secret(s) detected in the diff — "
-                           f"remove them, or after review override with --set {SENSOR_CRITERION}=passed")
-        notes.append(f"{_SENSOR_DETAIL_PREFIX} {n} potential secret(s) detected in the diff → "
-                     f"{SENSOR_CRITERION} failed:")
+    record_sensor_status(
+        check, "failed",
+        f"{_SENSOR_DETAIL_PREFIX} {n} potential secret(s) detected in the diff — remove them; "
+        f"a reviewed false positive is carried by `accept --force`, which records the bypass",
+        WRITER)
+    notes.append(f"{_SENSOR_DETAIL_PREFIX} {n} potential secret(s) detected in the diff → "
+                 f"{SENSOR_CRITERION} failed:")
     notes.extend(f"  {ln}" for ln in lines)
     return notes
 

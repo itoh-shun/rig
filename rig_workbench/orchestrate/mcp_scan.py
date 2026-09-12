@@ -14,7 +14,38 @@ import pathlib
 import re
 import sys
 
-from .. import repo_paths
+from typing import Protocol
+
+from ..ports import Presenter
+from ..ports.local import CONSOLE
+from .package_surfaces import SCRIPT_LOCATOR
+
+
+class ScriptLocator(Protocol):
+    """What this module needs in order to find `scripts/mcp_server.py`.
+
+    The package is installed without a `scripts/` sibling, so finding one means searching
+    for a checkout — `RIG_HOME`, then the install source, then the current directory and its
+    parents — rather than computing a path relative to this file. Computing it was the bug
+    (#263): a module one level deeper wrote one too few `.parent`s and skipped `RIG_HOME`
+    entirely, so an installed rig reported the MCP server as "not installed" with a checkout
+    sitting right where `RIG_HOME` pointed. That search is `rig_workbench.repo_paths`' rule
+    and there is exactly one copy of it, which is the point.
+
+    Stated as a protocol rather than imported, because the import is what
+    `tests/test_layering_contract.py` forbids: a judgement module may reach the standard
+    library, its own pillar and the six ports, and `rig_workbench.repo_paths` is none of the
+    three. `package_surfaces.SCRIPT_LOCATOR` satisfies this shape and is what every shipped
+    caller passes.
+    """
+
+    def find(self, name: str) -> pathlib.Path | None:
+        """The repository's `scripts/<name>`, or None when no checkout holds one."""
+        ...
+
+    def expected(self, name: str) -> pathlib.Path:
+        """Where `scripts/<name>` would be — the path an error message names."""
+        ...
 
 _SECRET_RE = re.compile(
     r"-----BEGIN (RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----"
@@ -83,7 +114,8 @@ def _is_isolate_get(node: ast.expr, *, argc: int) -> bool:
             and isinstance(node.args[0], ast.Constant) and node.args[0].value == "isolate")
 
 
-def mcp_scan(mcp_server_path: pathlib.Path | None = None) -> dict:
+def mcp_scan(mcp_server_path: pathlib.Path | None = None, *,
+             scripts: ScriptLocator = SCRIPT_LOCATOR) -> dict:
     """Statically analyze scripts/mcp_server.py's tool definitions via three-layer
     adversarial reasoning (attacker/defender/auditor).
 
@@ -96,8 +128,8 @@ def mcp_scan(mcp_server_path: pathlib.Path | None = None) -> dict:
     # path from this file's parents pointed at a site-packages/scripts that never
     # exists, so an installed rig reported #263 as "not installed" even with
     # RIG_HOME pointing at a checkout that has it.
-    path = mcp_server_path or repo_paths.find_script("mcp_server.py") \
-        or repo_paths.script_path("mcp_server.py")
+    path = mcp_server_path or scripts.find("mcp_server.py") \
+        or scripts.expected("mcp_server.py")
     if not path.exists():
         return {"available": False, "reason": f"{path} not found (#263 not installed)", "tools": []}
     source = path.read_text(encoding="utf-8")
@@ -190,24 +222,24 @@ def mcp_scan(mcp_server_path: pathlib.Path | None = None) -> dict:
             "tool_findings": tool_findings, "overall_severity": overall}
 
 
-def cmd_mcp_scan(args):
+def cmd_mcp_scan(args, *, out: Presenter = CONSOLE):
     result = mcp_scan()
     if "--json" in args:
-        print(json.dumps(result, ensure_ascii=False, indent=2))
+        out.out(json.dumps(result, ensure_ascii=False, indent=2))
         return
     if not result["available"]:
-        print(f"[mcp-scan] {result['reason']}")
+        out.out(f"[mcp-scan] {result['reason']}")
         sys.exit(0)  # #263 not installed means "nothing to scan", not a CI failure
-    print(f"## rig mcp-scan — static threat analysis of {result['path']} (three-layer adversarial reasoning, #303)\n")
-    print("### Module-level (subprocess/secret path shared by every tool)\n")
+    out.out(f"## rig mcp-scan — static threat analysis of {result['path']} (three-layer adversarial reasoning, #303)\n")
+    out.out("### Module-level (subprocess/secret path shared by every tool)\n")
     for f in result["module_findings"]:
-        print(f"- **{f['axis']}**")
-        print(f"  - attacker's view: {f['attacker']}")
-        print(f"  - defender's view: {f['defender']}")
-        print(f"  - auditor's verdict: {f['auditor']}")
-    print(f"\n### Tool-level ({len(result['tool_findings'])} tools)\n")
+        out.out(f"- **{f['axis']}**")
+        out.out(f"  - attacker's view: {f['attacker']}")
+        out.out(f"  - defender's view: {f['defender']}")
+        out.out(f"  - auditor's verdict: {f['auditor']}")
+    out.out(f"\n### Tool-level ({len(result['tool_findings'])} tools)\n")
     for f in result["tool_findings"]:
-        print(f"- `{f['tool']}` [{f['kind']}] — {f['auditor_verdict']}")
+        out.out(f"- `{f['tool']}` [{f['kind']}] — {f['auditor_verdict']}")
     label = {"high": "needs action (CI fails)", "medium": "needs review (CI passes, flagged)", "low": "CI passes"}
-    print(f"\nOverall verdict: {result['overall_severity'].upper()} ({label[result['overall_severity']]})")
+    out.out(f"\nOverall verdict: {result['overall_severity'].upper()} ({label[result['overall_severity']]})")
     sys.exit(1 if result["overall_severity"] == "high" else 0)

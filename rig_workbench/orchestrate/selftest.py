@@ -3,8 +3,9 @@
 import sys
 import json
 import pathlib
-import subprocess
 
+from ..ports import Presenter
+from ..ports.local import CONSOLE, SUBPROCESS
 from . import config
 from . import queueing
 from .config import DEFAULT_K
@@ -38,7 +39,7 @@ def _drive(steps, script):
             st["verdicts"].append({"by": payload[0], "ok": payload[1], "note": ""})
     return trace, state
 
-def cmd_selftest(_args):
+def cmd_selftest(_args, *, out: Presenter = CONSOLE):
     # Divert telemetry to a temp file (selftest must not pollute the caller cwd's .rig/runs.jsonl)
     _orig_runs = config.RUNS_PATH
     import tempfile
@@ -162,9 +163,9 @@ def cmd_selftest(_args):
         nonlocal ok
         good = (got == exp)
         ok = ok and good
-        print(f"  [{'OK ' if good else 'NG '}] {name}: {got}{'' if good else f'  != {exp}'} {det}")
+        out.out(f"  [{'OK ' if good else 'NG '}] {name}: {got}{'' if good else f'  != {exp}'} {det}")
 
-    print("## orchestrate selftest (proof of determinism)")
+    out.out("## orchestrate selftest (proof of determinism)")
     report("A happy-path transition trace", tA1, expectA)
     report("A repeat run is identical (determinism)", tA2, tA1, "same input → same transitions")
     # `run_id` is excluded, and its difference is asserted on the next line rather than
@@ -406,6 +407,12 @@ def cmd_selftest(_args):
                                 "steps_passed": 0 if esc else 1, "retries": 2 if esc else 0,
                                 "escalated_at": esc, "steps": steps}) + "\n")
     buf = io.StringIO()
+    # `out=` is deliberately not forwarded here or at the `cmd_resume` call in AA below.
+    # Those two scenarios exist to read what the sub-command *said*, and they read it by
+    # capturing stdout; handing them this command's presenter would send the captured
+    # report to whoever called `selftest` instead, and the assertions below would be
+    # looking at an empty buffer. Giving them a recording `Presenter` rather than a
+    # redirect is a better instrument and a separate change.
     with contextlib.redirect_stdout(buf):
         cmd_runs([])
     t_out = buf.getvalue()
@@ -423,8 +430,7 @@ def cmd_selftest(_args):
     _orig_cwd = config.INVOCATION_CWD
     xroot = pathlib.Path(_tmp.mkdtemp(prefix="rig-selftest-iso-"))
     def _g(*a, cwd=None):
-        return subprocess.run(["git", "-C", str(cwd or xroot)] + list(a),
-                              capture_output=True, text=True)
+        return SUBPROCESS.run(["git", "-C", str(cwd or xroot)] + list(a))
     _g("init", "-q", "-b", "main")
     _g("config", "user.email", "selftest@rig")
     _g("config", "user.name", "rig-selftest")
@@ -613,5 +619,5 @@ def cmd_selftest(_args):
            classify_failure(stFM_kx), "verification:incorrect-implementation")
     report("FM classify: successful run has no failure mode", classify_failure(stFM_ok), None)
 
-    print("\n" + ("PASS: the deterministic orchestrator is healthy" if ok else "FAIL: selftest mismatch"))
+    out.out("\n" + ("PASS: the deterministic orchestrator is healthy" if ok else "FAIL: selftest mismatch"))
     sys.exit(0 if ok else 1)

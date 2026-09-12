@@ -128,6 +128,12 @@ test の両方を更新してください。
 - **近似ルールは warning** です。textlint の preset はすべて error ですが、品詞を持たない
   近似を gate に繋ぐと、偽陽性を消すために本文が歪みます。warning は報告に残り、
   reviewer が読みます。`--strict` で error に昇格できます。
+- **閉じていない `<!-- textlint-disable -->` は報告に残ります。** 本家と同じく末尾まで抑制
+  しますが、黙って効かせません。報告はその file と行を名指しし、件数が
+  `summary.unclosed_disable` に残ります。`--strict` はこれを exit 1 に数えます。昇格するのは
+  warning だけではありません。
+- **コードスパンとコードブロックの中のマーカーは読みません。** 書き方を説明しただけの行が、
+  そこから下の検査を止めてしまうためです。指示として数えるのは本物の HTML コメントだけです。
 - **`ja-space-around-code` の既定も `auto`** です。理由は上と同じで、本家の `never` は
   rig 自身の docs に 782 件出ます。
 - **`no-mix-dearu-desumasu` は多数派に合わせます。** 本家の既定は「本文はですます、箇条書きは
@@ -188,7 +194,7 @@ gate にし、`scripts/prose_rhythm.py` のような機械の点数は gate に�
 
 | 経路 | 機械 gate（ja-lint の error） | AI 臭の gate |
 |---|---|---|
-| `/rig:go` の acceptance gate | diff が日本語の散文を足したとき `ja_lint_clean` が現れ、追加行の error で `failed`。センサーが書く。`--set ja_lint_clean=passed` は記録される逃がし方 | 同じ条件で `ja_prose_ai_smell_reviewed` が現れ、`ai-smell-reviewer` の verdict を写す。verdict が無ければ `pending` のまま accept できない |
+| `/rig:go` の acceptance gate | diff が日本語の散文を足したとき `ja_lint_clean` が現れ、追加行の error で `failed`。センサーが毎回書き直すので `--set ja_lint_clean=passed` は次の評価で消える。残るのはセンサーより厳しい `--set ja_lint_clean=failed` だけ | 同じ条件で `ja_prose_ai_smell_reviewed` が現れ、`ai-smell-reviewer` の verdict を写す。verdict が無ければ `pending` のまま accept できない |
 | review fan-out（`parallel-review`） | `rig-wb wb scan-ja-prose <task_id>` を reviewer の入力に添える | diff が日本語の散文を足したとき `ai-smell-reviewer` レーンを必ず加える |
 | `git commit`（`rig-wb githooks install`） | `pre-commit` が `rig-wb ja-lint --staged`、`commit-msg` が message を `--preset commit` で検査。error で止まる | — |
 | `japanese-writing` / `japanese-writing-revision` | reviewer が完成稿を stdin で通し、error が残れば `REVISE` | 既存の `japanese-ai-smell-jp` 判定 |

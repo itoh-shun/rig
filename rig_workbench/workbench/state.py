@@ -19,6 +19,7 @@ except ImportError:
     fcntl = None  # type: ignore[assignment]  # Windows fallback (locking disabled)
 
 from rig_workbench import gitroot
+from rig_workbench.exitcodes import ERROR, REJECTED
 
 from .config import GATE_PRESETS, TASK_TYPES
 
@@ -27,9 +28,41 @@ def now_iso() -> str:
     return datetime.datetime.now().astimezone().isoformat(timespec="seconds")
 
 
+# `die` and `reject` are the two ways a workbench command stops early, and they are two
+# functions rather than one because the caller reading `$?` cannot ask a follow-up
+# question. `exitcodes.REJECTED` (1) is "rig judged this and the answer is no" — a verdict
+# to act on. `exitcodes.ERROR` (2) is "rig could not produce an answer" — bad usage, state
+# that is not there, a git command that failed. `die` used to end in a bare `sys.exit(1)`,
+# which reported every plumbing failure as a verdict, so a script branching on 1 could not
+# tell a failed gate from a task id with a typo in it.
+#
+# Neither takes a code, and there is no default to inherit: a call site chooses by which
+# function it calls, so "is this a judgement?" is answered where the answer is known.
+
+
 def die(msg: str) -> "NoReturn":  # noqa: F821
+    """rig could not produce an answer. Exits `exitcodes.ERROR` (2).
+
+    The overwhelming majority of stops: a task that is not there, an unreadable file, a
+    flag that does not parse, a git command that failed. Nothing was judged — and where
+    something was, it is not what this reports: `cmd_gate` ends here when a `--set`
+    contradicts the sensor backing that criterion, after the gate has been evaluated and
+    written. What is refused there is the operator's declaration, never the work, which
+    is exactly why it must not come back as `reject`'s 1.
+    """
     print(f"[ERROR] {msg}", file=sys.stderr)
-    sys.exit(1)
+    sys.exit(ERROR)
+
+
+def reject(msg: str) -> "NoReturn":  # noqa: F821
+    """rig judged the work and the answer is no. Exits `exitcodes.REJECTED` (1).
+
+    Only for a verdict rig actually reached — an unmet acceptance gate, a governance
+    policy that blocks, an actor who is not permitted to accept. A caller acts on this
+    and does not retry it, which is exactly what makes it wrong for a missing file.
+    """
+    print(f"[REJECTED] {msg}", file=sys.stderr)
+    sys.exit(REJECTED)
 
 
 def warn(msg: str) -> None:
@@ -152,25 +185,152 @@ def audit_append(root: pathlib.Path, event: dict) -> None:
     The file keeps its v1 shape — `workbench audit`, `digest` and every existing
     reader depend on it. Under a policy the same event is *also* chained into
     `.rig/ledger.jsonl`, where deleting it is detectable (govern.ledger).
+
+    **Repeats of one event are bounded, and each file bounds itself.** This file has no
+    chain to protect it and had no cap of its own, so a caller that can make the same event
+    happen repeatedly grew it a line at a time for as long as it liked. The rule
+    `govern.ledger` applies to the chain applies here — every field but the time of day
+    compared, plus the date, `REPEAT_CAP` lines written and one more carrying `collapsed`,
+    and the rest of that day not written.
+
+    **The cap decides this file's write and nothing else.** It used to return before the
+    ledger mirror, which handed an unsigned, hand-writable file authority over what the
+    chain records: four look-alike lines pasted into `.rig/audit.jsonl` suppressed a real
+    `accept_force` from the chain (measured, audit 4 → 4 and ledger 0 → 0), and the chain's
+    own run was judged against this file's tail rather than its own (measured, a
+    `policy.init` in between broke the ledger's run and the next repeat still wrote
+    nothing). The mirror is now unconditional and `ledger.append` applies its own cap
+    against its own tail — which is why the mirrored payload drops `ts` and `collapsed`:
+    those are this file's bookkeeping, and leaving them in made every mirror unique so the
+    chain could never recognise a repeat of its own.
+
+    Line shape is unchanged, which is why `cmd_audit` and the rest keep reading it; the two
+    readers that must not mistake a collapsed line for a single event say so themselves
+    (`govern.ledger.collapsed_note`, `audit_event_weights`).
     """
+    # INSIDE the swallow, and defaulting to "append anyway". The historic write was an
+    # append with no read; the cap gave this function a read, and a read can fail where an
+    # append cannot — a `.rig/audit.jsonl` holding a single 0xff byte raised
+    # `UnicodeDecodeError` out of `_load_audit`, straight through `audit_append` and out of
+    # `accept`, which by then has already squashed and written `status: accepted`. A forced
+    # bypass then applied with no record in either file. A corrupt or unreadable audit log
+    # must cost at most the cap, never the record.
     try:
-        p = audit_path(root)
-        p.parent.mkdir(parents=True, exist_ok=True)
-        with p.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n")
+        suppressed = _audit_repeat_suppressed(root, event)
     except Exception:
-        pass
+        suppressed = False
+    if not suppressed:
+        try:
+            p = audit_path(root)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            with p.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n")
+        except Exception:
+            pass
     try:
         from ..govern import ledger
         from ..govern.identity import current_actor, load_org_binding
 
         binding = load_org_binding(root)
         if binding.bound:
+            mirrored = {k: v for k, v in event.items() if k not in ("ts", "collapsed")}
             ledger.append(root, f"audit.{event.get('action', 'event')}",
                           actor=current_actor(root), subject=str(event.get("task_id") or ""),
-                          org=binding.org, team=binding.team, data=event)
+                          org=binding.org, team=binding.team, data=mirrored)
     except Exception:
         pass
+
+
+def _audit_repeat_suppressed(root: pathlib.Path, event: dict) -> bool:
+    """Whether this event repeats the tail of `.rig/audit.jsonl` often enough to stop.
+
+    Mutates `event` to carry `collapsed` — that day's line count for it — on the entry that
+    closes the cap; returns True for the repeats after it. Reading the file to write one
+    line is the cost of the bound, and it is the same cost `govern.ledger.append` has always
+    paid to find `prev`. Every failure here is "not suppressed": the caller swallows what
+    escapes anyway, and both layers answer the same way, because a log this cannot read is a
+    reason to write more rather than less.
+    """
+    from ..govern import ledger          # function-local, as the mirror below already is
+
+    try:
+        existing = _load_audit(root)
+    except Exception:
+        return False
+    on_record = _audit_event_total(existing, event)
+    if on_record > ledger.REPEAT_CAP:
+        return True
+    if on_record == ledger.REPEAT_CAP:
+        event["collapsed"] = on_record + 1
+    return False
+
+
+def _audit_event_total(existing: list[dict], event: dict) -> int:
+    """How many lines this event already has on today's record in `.rig/audit.jsonl`.
+
+    The same walk `govern.ledger._event_total` does over the chain, over this file's own
+    shape: every occurrence anywhere, not only a consecutive run, so that alternating two
+    events does not escape the cap; a `collapsed` entry sets the running count rather than
+    adding to it, because it already accounts for every line before it.
+    """
+    key = _audit_repeat_key(event)
+    total = 0
+    for previous in existing:
+        if _audit_repeat_key(previous) != key:
+            continue
+        carried = previous.get("collapsed")
+        total = carried if isinstance(carried, int) and carried > 0 else total + 1
+    return total
+
+
+def audit_event_weights(events: list[dict]) -> list[tuple[dict, int]]:
+    """Each audit event with the number of lines it accounts for.
+
+    One, except on an entry the cap closed: that one carries that day's line count for the
+    event, and what it adds is that count minus what is already counted for the same event.
+    Over a whole file this is 1 everywhere and the sum is the line count — the weighting is
+    for a *window*, a `--last 7d` that begins after the plain lines and holds only the capped
+    one, where counting it as a single event would report less than the file already shows.
+    It does not recover the run: how many there were is not recorded anywhere, and
+    `REPEAT_CAP` says why.
+
+    Counted per event and not per consecutive run, because that is how the cap counts
+    (`govern.ledger._event_total`); the key is `_audit_repeat_key`, the same one the write
+    uses, so the two can never disagree about what "the same event" means.
+
+    **And clamped, because `collapsed` arrives from an unsigned file.** `.rig/audit.jsonl`
+    is plain JSON anyone with the checkout can edit — the premise the whole reconciliation
+    rests on — so a single hand-written line saying `"collapsed": 1000000` would otherwise
+    report a million forced accepts to `stats`, `digest` and `cockpit`. The clamp is not
+    charity toward whoever wrote the line — the premise here is that they may be the forger
+    — it is the ceiling of what the code that writes this file could have produced: the cap
+    never writes more than `REPEAT_CAP + 1` for one event on one day, so a larger number is
+    not evidence of more events, only of an edit.
+    """
+    from ..govern import ledger
+
+    out: list[tuple[dict, int]] = []
+    counted: dict[str, int] = {}
+    for event in events:
+        key = _audit_repeat_key(event)
+        so_far = counted.get(key, 0)
+        carried = event.get("collapsed")
+        weight = (min(max(carried - so_far, 1), ledger.REPEAT_CAP + 1)
+                  if isinstance(carried, int) and carried > 0 else 1)
+        counted[key] = so_far + weight
+        out.append((event, weight))
+    return out
+
+
+def _audit_repeat_key(event: dict) -> str:
+    """What makes two audit events the same one: every field but the time of day, plus the
+    date, and never `collapsed` (the capping line has to read as one more of the event it
+    caps). The date is in it for the reason `govern.ledger.REPEAT_CAP` gives — the cap is per
+    event per day, so it never silences an event that recurs next week, and a campaign that
+    runs for days stays visible as days."""
+    body = {k: v for k, v in event.items() if k not in ("ts", "collapsed")}
+    body["_day"] = str(event.get("ts") or "")[:10]
+    return json.dumps(body, sort_keys=True, ensure_ascii=False, default=str)
 
 
 def _load_audit(root: pathlib.Path) -> list[dict]:
@@ -485,8 +645,45 @@ def build_acceptance(task_id: str, task_type: str, root: pathlib.Path | None = N
             "status": "pending", "checks": checks, "checked_at": None}
 
 
+def record_sensor_status(check: dict, status: str, detail: str, writer: str) -> None:
+    """A sensor taking a criterion's status. It owns `status`, `detail` and `by`; it never
+    touches `note`, except to drop one the status it is replacing has taken with it.
+
+    The two fields exist because a sentence and a verdict are different things. `detail`
+    explains the status underneath it, so whoever writes the status writes the detail —
+    words that explain a different verdict explain this one wrongly, which is how a
+    refused `--set no_secret_leak=passed:"false positive"` came to sit over a failure.
+    `note` is the operator's own, written only by `cmd_gate` from the `:DETAIL` half of a
+    `--set`, and it is the durable half: an operator who records
+    `--set no_gate_tampering=warning:"the test moved to tests/test_new.py"` is saying why
+    about the very finding the sensor then grades `warning`, and that sentence has to
+    outlive any number of later evaluations. It does, for exactly as long as the status
+    it was attached to does: a sensor changing the status takes the note with it, because
+    a claim about a status that is gone is a claim about nothing.
+    """
+    # Only the status decides. A note survives a re-evaluation that finds MORE under the
+    # same status — two test-weakening patterns becoming four — on purpose: the operator
+    # wrote it about the status they declared, which still stands, and what changed is
+    # already in `detail` and in the findings list beside it. Dropping it there would
+    # delete a standing reason every time a sensor counted again.
+    if check.get("status") != status:
+        check.pop("note", None)
+    check["status"], check["detail"], check["by"] = status, detail, writer
+
+
 def gate_status(acc: dict) -> str:
-    """Evaluate with priority: failed > pending > (skipped if all skipped) > warning > passed."""
+    """Evaluate with priority: failed > pending > (skipped if all skipped) > warning-or-skip > passed.
+
+    A SKIPPED CRITERION NEVER REACHES `passed`. `skipped` means "not judged", and a gate
+    that reports `passed` with one of them in it says the whole set was judged and cleared,
+    which is the one thing it is not. `accept` refuses an all-skipped gate, but that only
+    ever covered the whole-gate case: one criterion declared `passed` and the other fourteen
+    `skipped` scored `passed` outright and bought an accept nothing recorded as unusual.
+    Declining to judge is now a warning-grade fact instead — `passed_with_warnings`, which
+    `accept` still lets through without `--force` (a warning has never blocked accept) but
+    which carries the skipped names into the gate's summary, into accept's own output and
+    into the signed provenance record, where a reader of the record sees them.
+    """
     statuses = [c["status"] for c in acc["checks"]]
     if not statuses:
         return "skipped"
@@ -496,12 +693,47 @@ def gate_status(acc: dict) -> str:
         return "pending"
     if all(s == "skipped" for s in statuses):
         return "skipped"
-    if any(s == "warning" for s in statuses):
+    if any(s in ("warning", "skipped") for s in statuses):
         return "passed_with_warnings"
     return "passed"
 
 
 # ── worktree ─────────────────────────────────────────────────────────────────
+def task_head(root: pathlib.Path, task: dict) -> str | None:
+    """The commit this task's work currently sits on: the worktree's HEAD, or the main
+    tree's when the task has none (`--no-worktree`).
+
+    Two callers, and they are two halves of one fact. `cmd_gate` records the answer into
+    acceptance.json as `evaluated_head` — the commits the verdict was measured against —
+    and `accept` asks again before squashing, so a gate that judged an older tip cannot be
+    spent on a newer one. `None` (git could not answer) is not a head and never compares
+    equal to one: the caller treats it as unknown rather than as a match.
+    """
+    wt = task.get("worktree_path")
+    cwd = pathlib.Path(wt) if wt and pathlib.Path(wt).is_dir() else root
+    proc = git(["rev-parse", "HEAD"], cwd=cwd, check=False)
+    return proc.stdout.strip() or None if proc.returncode == 0 else None
+
+
+def task_branch_tip(root: pathlib.Path, task: dict) -> str | None:
+    """The commit `accept` will actually squash: the tip of the task's own branch.
+
+    Resolved in the MAIN tree, not in the worktree, because that is where
+    `git merge --squash <branch>` runs and what it resolves. The distinction is the whole
+    point of the function: a worktree can be detached at one commit while the branch it was
+    cut for points at another, and a check that asked the worktree what it was sitting on
+    would answer about a commit nothing is going to merge.
+
+    `None` when the task records no branch (a `--no-worktree` run has none) or when the
+    name no longer resolves — both "unknown", never a match.
+    """
+    branch = task.get("branch")
+    if not branch:
+        return None
+    proc = git(["rev-parse", "--verify", f"{branch}^{{commit}}"], cwd=root, check=False)
+    return proc.stdout.strip() or None if proc.returncode == 0 else None
+
+
 def default_worktree_path(root: pathlib.Path, task_id: str) -> pathlib.Path:
     import os
     wt_root = os.environ.get("RIG_WORKTREE_ROOT")

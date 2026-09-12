@@ -28,6 +28,12 @@ steps:
       - "検査を通すために本文が削られていない"
       - "許容誤差が広げられておらず、検査が外されていない"
       - "検査が走らなかった場合は合格ではなく未検査として報告されている"
+    acceptance_binding:
+      - unobserved
+      - unobserved
+      - unobserved
+      - unobserved
+      - unobserved
     personas: [layout-gate-reviewer]
     policies: [layout-fit-rules, independent-verification]
     output_contract: layout-gate-verdict

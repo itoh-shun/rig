@@ -2,17 +2,67 @@
 
 import pathlib
 import re
-
-from rig_workbench.orchestrate.gates import is_runtime_gate, validate_executable_recipe
-from rig_workbench.workbench.config import GATE_PRESETS
+from collections.abc import Mapping, Sequence
+from typing import Protocol, runtime_checkable
 
 from .config import AGENTS, FACETS, PATTERNS, RECIPES, ROOT
+from .rig_surfaces import (
+    GATE_PRESETS,
+    HUMAN_GATE_PARSER,
+    RECIPE_GATE,
+    ROUTE_PRODUCERS,
+    TASK_TYPES,
+)
 from .state import _emit, parse_frontmatter
+
+
+@runtime_checkable
+class RecipeGate(Protocol):
+    """Whether a recipe's steps are ones the orchestrator would agree to run.
+
+    The same declaration `packs/validation.py` makes about the same collaborator, for the
+    same reason and with one question more. What is executable, and which `gate:` strings
+    the runner actually runs, is the orchestrator's rule rather than the validator's. A
+    copy of it here would be a second answer to "may this step run" that only the CI check
+    consults — free to drift from the one that runs the step, and wrong in the direction of
+    passing a recipe the runner would refuse, which is the direction a validator must never
+    be wrong in.
+    """
+
+    def is_runtime_gate(self, gate: object) -> bool:
+        ...
+
+    def executable(self, recipe: object) -> dict:
+        ...
+
+
+@runtime_checkable
+class HumanGateParser(Protocol):
+    """`human_gate:` read by whatever will enforce it, answering a rule or a refusal.
+
+    Shape only is checked here — whether the roles a gate names exist is a property of the
+    org policy the recipe runs under, and a shipped recipe has none — but *what the shape
+    is* belongs to `govern`, which halts the run on it. Two parsers would mean a recipe
+    this file accepts and the stage refuses, or worse the reverse.
+
+    The refusal arrives as a message rather than an exception because a class named in an
+    `except` clause is a cross-pillar edge exactly as much as a function named in a call,
+    and `govern.stage.StageConfigError` was the class this module used to name. So the
+    protocol answers `(rule, error)` and neither half is borrowed vocabulary.
+    """
+
+    def __call__(self, value: object, *, where: str) -> tuple[dict | None, str | None]:
+        ...
 
 #: Every criterion id any preset can put on a task's gate. Derived from `GATE_PRESETS`, never
 #: re-typed here: a second copy of the vocabulary is a copy that drifts (and the one in
 #: `facets/instructions/acceptance-check.md` already had, by eleven criteria, before it was
 #: replaced with an instruction to read the task's gate).
+#:
+#: `GATE_PRESETS` arrives from `rig_surfaces` as *the workbench's own mapping*, not a copy
+#: of it. That is the whole point of injecting it as data rather than transcribing it: this
+#: check exists to catch a shipped document drifting from the presets, and a checker holding
+#: its own copy of the presets would drift with the document and report nothing.
 PRESET_CRITERION_IDS = frozenset(
     criterion for preset in GATE_PRESETS.values() for criterion in preset
 )
@@ -24,7 +74,8 @@ PRESET_CRITERION_IDS = frozenset(
 _ACCEPTANCE_ID_FORM = re.compile(r"^\s*([a-z][a-z0-9_]*)\s+\u2014\s")  # \u2014 is the em dash of the ` — ` separator
 
 
-def _check_acceptance_forms(step: dict, step_ctx: str) -> None:
+def _check_acceptance_forms(step: dict, step_ctx: str, *,
+                            criterion_ids: frozenset[str] = PRESET_CRITERION_IDS) -> None:
     """A step's `acceptance[]` is entirely id-form or entirely prose-form (#497 C3).
 
     The list is a WORK LIST — the criteria this flow's own steps produce evidence for —
@@ -52,7 +103,7 @@ def _check_acceptance_forms(step: dict, step_ctx: str) -> None:
             continue
         forms.append("id")
         criterion_id = match.group(1)
-        if criterion_id not in PRESET_CRITERION_IDS:
+        if criterion_id not in criterion_ids:
             _emit(
                 "FAIL",
                 f"{step_ctx} — acceptance[{index}] declares criterion id"
@@ -71,6 +122,174 @@ def _check_acceptance_forms(step: dict, step_ctx: str) -> None:
             " other — the form decides whether the entries are checked against the gate"
             " vocabulary, and a mixed list is checked as neither.",
         )
+
+
+#: The `acceptance_binding[]` entry for a line no criterion observes. Not a criterion id —
+#: `_check_acceptance_binding` refuses to read it as one if a preset ever defines it — and
+#: the point of spelling it out is that an unjudged line then *looks* unjudged in the
+#: recipe, instead of looking like a criterion because it sits under a key called
+#: `acceptance`.
+ACCEPTANCE_UNOBSERVED = "unobserved"
+
+
+def _routed_gate_criteria(
+    *,
+    route_producers: Sequence[Mapping[str, object]] = ROUTE_PRODUCERS,
+    task_types: Mapping[str, Sequence[str]] = TASK_TYPES,
+    gate_presets: Mapping[str, Sequence[str]] = GATE_PRESETS,
+) -> dict[str, frozenset[str]]:
+    """recipe name → every criterion some route to it can put on a task's gate.
+
+    The union across the recipe's routes, not the intersection, and the difference is not a
+    preference. `ROUTE_PRODUCERS` routes `bugfix` from three task types — bugfix, performance
+    and test — and `TASK_TYPES["test"]` is `standard + feature`, so the intersection of
+    `bugfix.md`'s three gates is the ten standard criteria alone. Requiring every route would
+    therefore reject `bug_cause_identified` on the bugfix recipe, which is exactly right for a
+    bugfix task and merely absent for a test one. A recipe serving several task types getting
+    different gates is the design; a binding no route can ever record is the defect.
+
+    A recipe no route reaches is absent from this mapping, and the binding check falls back to
+    the full preset vocabulary for it — an honest limit rather than a guessed task type. That
+    is most of the catalogue: the pack and language recipes are launched by name, and nothing
+    in the workbench says which task type they run under.
+    """
+    reachable: dict[str, set[str]] = {}
+    for route in route_producers:
+        if not isinstance(route, Mapping):
+            continue
+        recipe, task_type = route.get("recipe"), route.get("task_type")
+        if not isinstance(recipe, str) or task_type not in task_types:
+            continue
+        reachable.setdefault(recipe, set()).update(
+            criterion for preset in task_types[task_type] for criterion in gate_presets[preset]
+        )
+    return {recipe: frozenset(criteria) for recipe, criteria in reachable.items()}
+
+
+#: Built once from the same three mappings `routes.check_route_producers` judges declarations
+#: against, so a binding and a route producer cannot disagree about what a task's gate holds.
+ROUTED_GATE_CRITERIA = _routed_gate_criteria()
+
+
+def _check_acceptance_binding(step: dict, step_ctx: str, *,
+                              criterion_ids: frozenset[str] = PRESET_CRITERION_IDS,
+                              reachable: frozenset[str] | None = None) -> None:
+    """`acceptance_binding[]` — which gate criterion observes each `acceptance[]` line (§3.5).
+
+    `build_acceptance()` builds a task's criteria from `GATE_PRESETS` and never reads a
+    recipe, which `workbench/lifecycle.py` prints at every gate. The consequence nothing
+    stated until this key existed: a recipe's `acceptance:` line can say anything at all
+    and no code will ever look at it. Twenty-six shipped recipes did exactly that, in
+    prose.
+
+    So each line names the criterion that observes it, positionally, or says `unobserved`.
+    Both halves are checkable and the second is the load-bearing one — "no criterion judges
+    this" is a fact about the catalogue that was previously unwritable, and writing it is
+    what keeps a prose line from being mistaken for a gate condition.
+
+    `reachable`, when given, narrows the vocabulary a second time: a binding must name a
+    criterion some route to this recipe can actually put on a task's gate. `findings_are_concrete`
+    is a real criterion and `design.md` bound a line to it, but every route to `design` carries
+    task_type `design`, whose gate is `standard` alone — so the binding was a label with no gate
+    behind it, accepted by a union check and unrecordable by `wb gate --set`.
+
+    The check lives beside `_check_acceptance_forms` rather than in a validator of its own,
+    for the reason the pillar gives everywhere else it borrows instead of copying: a second
+    answer to "is this recipe well-formed" is free to disagree with this one. `criterion_ids`
+    is the same injected vocabulary the form check takes, from the `GATE_PRESETS` the
+    workbench actually gates with.
+    """
+    entries = step.get("acceptance")
+    binding = step.get("acceptance_binding")
+    if entries is not None and not isinstance(entries, list):
+        # `_check_acceptance_forms` has already reported the malformed acceptance[]. The
+        # guard is *above* the first `len(entries)` rather than beside the others because
+        # `acceptance: 5` is truthy and unmeasurable: reaching the message below would raise
+        # TypeError out of check_recipe, and `validation/cli.py` turns that into a FAIL with
+        # a traceback and absolute paths, skipping the rest of that recipe's steps.
+        return
+    if binding is None:
+        if entries:
+            _emit(
+                "FAIL",
+                f"{step_ctx} — acceptance[] has {len(entries)} line(s) and no"
+                " acceptance_binding[]. Each line needs the gate criterion that observes"
+                f" it (an id from `rig-wb wb gates`), or `{ACCEPTANCE_UNOBSERVED}` when no"
+                " criterion honestly does — the gate is built from GATE_PRESETS and never"
+                " reads this list, so an unbound line is judged by nothing.",
+            )
+        return
+    if not entries:
+        _emit("FAIL", f"{step_ctx} — acceptance_binding[] is declared with no acceptance[]"
+                      f" to bind ({binding!r})")
+        return
+    if not isinstance(binding, list):
+        _emit("FAIL", f"{step_ctx} — acceptance_binding value is not a list ({binding!r})."
+                      " Specify it as an array parallel to acceptance[]")
+        return
+    if len(binding) != len(entries):
+        _emit(
+            "FAIL",
+            f"{step_ctx} — acceptance_binding[] has {len(binding)} entries for"
+            f" {len(entries)} acceptance[] line(s). The lists are positional — entry i"
+            " binds line i — so a length mismatch silently rebinds every line after the"
+            " first difference.",
+        )
+        return
+    for index, bound in enumerate(binding):
+        entry = entries[index]
+        head = _ACCEPTANCE_ID_FORM.match(entry) if isinstance(entry, str) else None
+        if bound == ACCEPTANCE_UNOBSERVED:
+            if bound in criterion_ids:  # pragma: no cover - guards a future preset rename
+                _emit(
+                    "FAIL",
+                    f"{step_ctx} — a gate preset now defines `{ACCEPTANCE_UNOBSERVED}`,"
+                    " which is also the sentinel for a line no criterion observes. Rename"
+                    " the criterion: every unbound line in the catalogue would otherwise"
+                    " start reading as a bound one.",
+                )
+            if head is not None and head.group(1) in criterion_ids:
+                # The contradiction below, in the other direction. An id-form line already
+                # claims a criterion, so calling it unobserved is the same disagreement —
+                # and the cheaper one to reach, because it reads as modesty.
+                _emit(
+                    "FAIL",
+                    f"{step_ctx} — acceptance[{index}] names `{head.group(1)}` in id-form"
+                    f" but acceptance_binding[{index}] says `{ACCEPTANCE_UNOBSERVED}`. The"
+                    " line claims a criterion the gate defines; mark it unobserved only by"
+                    " rewriting the line as prose.",
+                )
+            continue
+        if not isinstance(bound, str) or not bound.strip():
+            _emit("FAIL", f"{step_ctx} — acceptance_binding[{index}] is not a criterion id"
+                          f" ({bound!r})")
+            continue
+        if bound not in criterion_ids:
+            _emit(
+                "FAIL",
+                f"{step_ctx} — acceptance_binding[{index}] names `{bound}`, which no gate"
+                " preset defines. `wb gate --set` rejects any name not already on the"
+                " task's gate, so nothing could ever record it. Use an id from"
+                f" `rig-wb wb gates`, or `{ACCEPTANCE_UNOBSERVED}`.",
+            )
+            continue
+        if reachable is not None and bound not in reachable:
+            _emit(
+                "FAIL",
+                f"{step_ctx} — acceptance_binding[{index}] names `{bound}`, which no route"
+                " to this recipe puts on a task's gate. `build_acceptance()` builds the gate"
+                " from the task type's presets, and `wb gate --set` refuses a name that is"
+                " not already on it, so this binding can never be recorded. Bind a criterion"
+                f" the recipe's own gate carries, or `{ACCEPTANCE_UNOBSERVED}`.",
+            )
+            continue
+        if head is not None and head.group(1) != bound:
+            _emit(
+                "FAIL",
+                f"{step_ctx} — acceptance[{index}] names `{head.group(1)}` in id-form but"
+                f" acceptance_binding[{index}] says `{bound}`. One line cannot claim two"
+                " criteria; the recipe would tell two readers two different things.",
+            )
 
 
 # ── reference resolution helpers ─────────────────────────────────────────────
@@ -211,7 +430,8 @@ def _check_auto_route(value: object, ctx: str) -> None:
 _ROLE_RE = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
 
 
-def _check_stage_governance(step: dict, ctx: str) -> None:
+def _check_stage_governance(step: dict, ctx: str, *,
+                            human_gate: HumanGateParser = HUMAN_GATE_PARSER) -> None:
     """`actor` (an org role owning the stage) and `human_gate` (halt for a person).
 
     Shape only — whether the named role exists is a property of whichever org
@@ -219,16 +439,13 @@ def _check_stage_governance(step: dict, ctx: str) -> None:
     here would make a portable recipe unvalidatable; `orchestrate` checks it at
     run time, against the policy actually in effect.
     """
-    from rig_workbench.govern.stage import StageConfigError, parse_human_gate
-
     actor = step.get("actor")
     if actor is not None:
         if not isinstance(actor, str) or not _ROLE_RE.match(actor):
             _emit("FAIL", f"{ctx} — actor must be a role name (^[a-z][a-z0-9-]*$), got {actor!r}")
-    try:
-        rule = parse_human_gate(step.get("human_gate"), where=ctx)
-    except StageConfigError as e:
-        _emit("FAIL", str(e))
+    rule, refused = human_gate(step.get("human_gate"), where=ctx)
+    if refused is not None:
+        _emit("FAIL", refused)
         return
     if rule is not None and not rule["roles"] and not actor:
         _emit("WARN",
@@ -242,7 +459,7 @@ def _check_stage_governance(step: dict, ctx: str) -> None:
               "ownership is documentation only (nothing asks that role to sign off)")
 
 
-def _check_max_retries(step: dict, ctx: str) -> None:
+def _check_max_retries(step: dict, ctx: str, *, gates: RecipeGate = RECIPE_GATE) -> None:
     """`max_retries` — the retry budget K the runner spends before escalating (§3.5).
 
     K is read on the *generic* failure path of `runstate.compute_next`, not inside
@@ -268,7 +485,7 @@ def _check_max_retries(step: dict, ctx: str) -> None:
         return
     if not isinstance(max_retries, int) or max_retries < 1:
         _emit("FAIL", f"{ctx} — max_retries must be an integer ≥1 (value: {max_retries!r})")
-    if not is_runtime_gate(step.get("gate")) and not step.get("checks"):
+    if not gates.is_runtime_gate(step.get("gate")) and not step.get("checks"):
         _emit(
             "WARN",
             f"{ctx} — max_retries has no effect on this step: it declares neither a runtime"
@@ -278,7 +495,19 @@ def _check_max_retries(step: dict, ctx: str) -> None:
         )
 
 
-def check_recipe(path: pathlib.Path) -> None:
+def check_recipe(path: pathlib.Path, *, gates: RecipeGate = RECIPE_GATE,
+                 human_gate: HumanGateParser = HUMAN_GATE_PARSER,
+                 gate_presets: Mapping[str, Sequence[str]] = GATE_PRESETS) -> None:
+    """One shipped recipe against the schema, and against the code that would run it.
+
+    The three collaborators are parameters for the reason the pillar's other signatures
+    take ports as parameters: the default is the real thing, and a caller that wants the
+    check driven against a different vocabulary — a test, an embedding harness — hands one
+    in instead of monkeypatching a module global.
+    """
+    criterion_ids = frozenset(
+        criterion for preset in gate_presets.values() for criterion in preset
+    )
     ctx = f"recipe {path.stem}"
     fm, raw = parse_frontmatter(path)
 
@@ -395,7 +624,7 @@ def check_recipe(path: pathlib.Path) -> None:
         _emit("FAIL", f"{ctx} — steps[] is empty or invalid")
         _emit("PASS", f"{ctx}: reference checks skipped (invalid steps)")
         return
-    execution = validate_executable_recipe(fm)
+    execution = gates.executable(fm)
     for error in execution["errors"]:
         _emit("FAIL", f"{ctx} — {error}")
 
@@ -474,13 +703,17 @@ def check_recipe(path: pathlib.Path) -> None:
         _check_condition(step.get("condition"), step_ctx, "condition")
 
         # actor / human_gate — the v2.1 stage-governance fields (§3.5)
-        _check_stage_governance(step, step_ctx)
+        _check_stage_governance(step, step_ctx, human_gate=human_gate)
 
         # max_retries type / value range / effective context (§3.5)
-        _check_max_retries(step, step_ctx)
+        _check_max_retries(step, step_ctx, gates=gates)
 
         # acceptance[] form/vocabulary (#497 C3)
-        _check_acceptance_forms(step, step_ctx)
+        _check_acceptance_forms(step, step_ctx, criterion_ids=criterion_ids)
+
+        # acceptance_binding[] — the gate criterion that observes each acceptance[] line (§3.5)
+        _check_acceptance_binding(step, step_ctx, criterion_ids=criterion_ids,
+                                  reachable=ROUTED_GATE_CRITERIA.get(path.stem))
 
         # acceptance-gate + acceptance[] presence recommended.
         # The old wording was "(the gate may always pass)". That stopped being true with

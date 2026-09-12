@@ -25,6 +25,14 @@ steps:
       - "入力中の秘密情報を繰り返し・引用・変換・再表示せず、[REDACTED] と非秘密の最小診断情報だけを使っている"
       - "障害連絡またはサポート返信では、該当する安全策を満たしている"
       - "最終判定は生成者と異なるモデルまたは provider の japanese-writing-reviewer が行っている"
+    acceptance_binding:
+      - unobserved
+      - unobserved
+      - unobserved
+      - unobserved
+      - no_secret_leak
+      - unobserved
+      - unobserved
     personas: [japanese-writing-reviewer]
     policies: [independent-verification, secure-provider-execution, japanese-writing-rules-v2, japanese-writing-modes]
     output_contract: japanese-writing-verdict

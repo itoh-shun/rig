@@ -11,6 +11,8 @@ import secrets
 import stat
 import tempfile
 
+from ..ports import Env
+from ..ports.local import OS_ENV
 from .cases import EvalCaseError, canonical_json
 
 # A configured key must have the shape of machine-generated material, not merely
@@ -25,8 +27,8 @@ from .cases import EvalCaseError, canonical_json
 _CONFIGURED_KEY = re.compile(r"[0-9a-fA-F]{64}")
 
 
-def _key_path() -> pathlib.Path:
-    state = os.environ.get("XDG_STATE_HOME")
+def _key_path(*, env: Env = OS_ENV) -> pathlib.Path:
+    state = env.get("XDG_STATE_HOME")
     base = pathlib.Path(state) if state else pathlib.Path.home() / ".local" / "state"
     return base / "rig" / "eval-attestation.key"
 
@@ -101,8 +103,8 @@ def _read_file_key(path: pathlib.Path, *, create: bool) -> bytes:
     return key
 
 
-def _trusted_key(*, create: bool) -> bytes:
-    configured = os.environ.get("RIG_EVAL_ATTESTATION_KEY")
+def _trusted_key(*, create: bool, env: Env = OS_ENV) -> bytes:
+    configured = env.get("RIG_EVAL_ATTESTATION_KEY")
     if configured is not None:
         if not _CONFIGURED_KEY.fullmatch(configured):
             raise EvalCaseError(
@@ -115,11 +117,11 @@ def _trusted_key(*, create: bool) -> bytes:
         # they spell; one notation decoded and another not is exactly how the two
         # ends stopped agreeing on `key_id`.
         return _key_material(configured.encode("ascii"))
-    return _read_file_key(_key_path(), create=create)
+    return _read_file_key(_key_path(env=env), create=create)
 
 
-def sign_result_attestation(result: dict) -> dict:
-    key = _trusted_key(create=True)
+def sign_result_attestation(result: dict, *, env: Env = OS_ENV) -> dict:
+    key = _trusted_key(create=True, env=env)
     payload = canonical_json(result).encode("utf-8")
     return {
         "algorithm": "HMAC-SHA256",
@@ -128,7 +130,7 @@ def sign_result_attestation(result: dict) -> dict:
     }
 
 
-def verify_result_attestation(result: dict) -> bool:
+def verify_result_attestation(result: dict, *, env: Env = OS_ENV) -> bool:
     attestation = result.get("attestation")
     if not isinstance(attestation, dict) or set(attestation) != {
         "algorithm", "key_id", "signature"
@@ -136,7 +138,7 @@ def verify_result_attestation(result: dict) -> bool:
         return False
     if attestation["algorithm"] != "HMAC-SHA256":
         return False
-    key = _trusted_key(create=False)
+    key = _trusted_key(create=False, env=env)
     if attestation["key_id"] != hashlib.sha256(key).hexdigest()[:16]:
         return False
     payload = dict(result)

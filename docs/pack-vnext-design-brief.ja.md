@@ -11,6 +11,15 @@
 > 5 つ（`sales` `document-review` `video-storytelling` `decision-humor` `pack-author`）に変わった。
 > 以下の §1 の棚卸しと移行順は、当時の状態の記録として読むこと。
 
+> **署名の記述は 3.0.0 で無効になった（史料として残す）。** 3.0.0 は publisher 署名の仕組みを
+> まるごと削除した——`pack sign` / `pack keygen`、署名検証、trust root（`trust-roots.json`）、
+> 鍵生成、失効、`cryptography` 依存、install 時の署名必須とその逃げ道 `--allow-unverified` の
+> すべてである。決定と移行手順は **README.md「Upgrading to 3.0.0」/ README.ja.md「3.0.0 への移行」**
+> にある。本文書は「こうしうるのではないか」を書いた設計ブリーフであって出荷された挙動の記録では
+> ないため、書かれなかったことへ黙って書き換えるのではなく、**当時の文面のまま残し、影響を受けた
+> 行に 〔3.0.0 で削除〕 を添える**方針を採る。印の付いた記述は現在の rig には存在しない。
+> 印の無い記述（manifest 契約・整合性ハッシュ・tier 解決・source contract）は引き続き現行である。
+
 ---
 
 ## 0. この文書が主張しないこと
@@ -26,15 +35,16 @@ Pack vNext は「Pack 基盤を作る」話ではない。**基盤の大半は�
 |---|---|---|
 | manifest | `rig_workbench/packs/manifest.py` | `pack_schema_version` / `id` / `version` / `kind` / `engine` / `dependencies` / `capabilities` / `entrypoints` / `references` / `resources` / `assets` を検証 |
 | lock | `rig_workbench/packs/lock.py` | `pack.lock.json` schema v2。`tree_hash` / `asset_hashes` / `engine_version` / `installed_at` / `dependencies` を保持 |
-| 信頼 | `trust.py` ＋ `trust-roots.json`、`sign` / `keygen` | 署名検証と `--allow-unverified` の明示承認 |
+| 信頼 〔3.0.0 で削除〕 | `trust.py` ＋ `trust-roots.json`、`sign` / `keygen` | 署名検証と `--allow-unverified` の明示承認。**3.0.0 で `trust-roots.json`・`sign`・`keygen`・`--allow-unverified` は存在しない。**残っているのは `trust.py` の trust-on-first-use（tier ごと・資産ごとの内容ハッシュ承認）だけである |
 | install | `installer.py` | ローカル dir / zip / tar / 同梱エイリアス（`domain:` `official:`）。**URL は明示的に拒否** |
 | 解決 | `resolver.py` | tier 順 project > user > org > official > core のローカル探索 |
 | 検査 | `validation.py` / `doctor.py` / `tester.py` | 依存の循環検査を含む |
-| 配布 | `publisher.py` / `remover.py` / `catalog.py` / `evidence.py` | |
-| CLI | `packs/cli.py` | `init` `validate` `doctor` `install` `test` `import-results` `sign` `keygen` `remove` `invoke` |
+| 配布 | ~~`publisher.py`~~ / `remover.py` / `catalog.py` / `evidence.py` | 〔3.0.0 で削除〕`publisher.py` と `signature.py` は無い。`rig_workbench/packs/` に残る信頼関連は `trust.py` だけである |
+| CLI | `packs/cli.py` | `init` `validate` `doctor` `install` `test` `import-results` ~~`sign`~~ ~~`keygen`~~ `remove` `invoke`（〔3.0.0 で削除〕＝取り消し線の2つ。呼ぶと exit 2 の `invalid choice`） |
 | 同梱 Pack | `packs/domain/{japanese-writing,sales,video-storytelling,decision-humor}` の4つ。`packs/official/` は `__init__.py` のみで実体が無い | |
 
 つまり **manifest 契約・整合性ハッシュ・署名・ライフサイクル CLI・tier 解決は稼働済み**である。
+〔3.0.0 で削除〕 このうち**署名**だけが現在は無い。他の4つは現行である。
 
 ---
 
@@ -82,7 +92,7 @@ Issue の「Northwind のナレッジを追加しただけなのに任意コー�
 | `workflow` | **`skill` と同一**（差は宣言された意図であって権限ではない） | provider 呼び出しのみ |
 | `policy` | `facets/policies/**` | 不可 |
 | `reviewer` | `facets/personas/**` `facets/output-contracts/**` | 不可 |
-| `tool` | ＋ 実行可能 entrypoint | **可**。署名必須＋明示承認 |
+| `tool` | ＋ 実行可能 entrypoint | **可**。署名必須＋明示承認 〔3.0.0 で削除〕＝署名必須の側が無くなり、残るのは明示承認（trust-on-first-use）だけ |
 
 **〔S1 実装時の訂正〕** この文書は当初「validate 時のみの検査は manifest を手で書き換えれば
 抜けられるので install 側にも重複させる」と書いていた。実装して分かったのは、**重複は要らないし、
@@ -138,6 +148,7 @@ digest-mismatch        revision は取れたが tree digest が lock と違う
 capability-refused     type が持てない asset を宣言している
 engine-incompatible    engine 制約を満たさない
 unverified-signature   署名が無い / 検証できない（--allow-unverified で明示承認可）
+                       ↑〔3.0.0 で削除〕このコードも --allow-unverified も存在しない
 ```
 
 `auth-failed` と `source-unreachable` を混ぜないことには実務上の意味がある——前者は人が
@@ -211,6 +222,11 @@ pack は他に `video-storytelling` がある。
   manifest 検証・digest 照合・capability 検査・secret scan を通す。
 - **digest 束縛は供給元の乗っ取りを防がない。** 同じ digest が再現することしか言えない。
   乗っ取りに対して効くのは署名（既存の trust roots）であって digest ではない。
+  〔3.0.0 で削除〕 **この一文が指す対抗手段は現在の rig には無い。** 署名が消えた結果、
+  最初の入手時にバイトを著者へ結びつけるものは残っていない。現在そこを担うのは
+  trust-on-first-use（読める素材に対する人間の同意）であり、ハッシュ鎖が言えるのは
+  「install のあと変わっていない」までである。この段落は、その穴を当時どう埋める想定で
+  あったかの記録として読むこと。
 
 ---
 

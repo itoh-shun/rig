@@ -6,6 +6,7 @@ import argparse
 import json
 import sys
 
+from rig_workbench.exitcodes import ERROR
 from rig_workbench.packs.model import PackError
 
 from .capabilities import resolve_task_route
@@ -47,7 +48,12 @@ def cmd_route(args: argparse.Namespace) -> None:
             print(json.dumps({"status": "error", "error": str(exc)}, sort_keys=True))
         else:
             print(f"[ERROR] {exc}", file=sys.stderr)
-        raise SystemExit(1) from None
+        # Resolution failed: the recipe is not on disk in any tier, or a pack will not
+        # load. Nothing was routed and nothing was judged, so this is `ERROR` (2) — the
+        # same code `state.die` uses for every other "rig could not answer". It used to
+        # be 1, which read as a verdict and left `stopped`/`trust_required` — the softer
+        # outcome, with a route record to show for it — reported under the higher code.
+        raise SystemExit(ERROR) from None
     if args.json:
         print(json.dumps(route, ensure_ascii=False, indent=2, sort_keys=True))
     else:
@@ -55,7 +61,9 @@ def cmd_route(args: argparse.Namespace) -> None:
         if route["hint"]:
             print(f"hint: {route['hint']}")
     if route["status"] in {"stopped", "trust_required"}:
-        raise SystemExit(2)
+        # Also 2, and for the same reason: rig resolved a winner and then declined to act
+        # on it, so no work was routed and no verdict on any work was reached.
+        raise SystemExit(ERROR)
 
 
 def parser(*, prog: str = "rig-wb wb route") -> argparse.ArgumentParser:

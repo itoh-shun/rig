@@ -12,10 +12,10 @@ import sys
 
 import pytest
 
-from rig_workbench.workbench import intent, intent_wiring
-from rig_workbench.workbench.intent_wiring import (floor_from, projection, target_from,
+from rig_workbench.assurance import intent, intent_wiring
+from rig_workbench.assurance.intent_wiring import (floor_from, projection, target_from,
                                                    unaskable, unmatched)
-from rig_workbench.workbench.synthesis import OPERATOR_REQUESTED, POLICY_REQUIRED
+from rig_workbench.assurance.synthesis import OPERATOR_REQUESTED, POLICY_REQUIRED
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 WORKBENCH = REPO_ROOT / "scripts" / "workbench.py"
@@ -94,7 +94,7 @@ def test_two_declarations_agreeing_about_a_step_are_one_floor_entry():
 def test_the_floor_it_builds_is_one_synthesise_would_accept():
     """Built through `check_floor` rather than beside it: a floor this module assembled and
     `synthesise` then refused would be a second set of rules about the same object."""
-    from rig_workbench.workbench import synthesis
+    from rig_workbench.assurance import synthesis
 
     floor = floor_from(_loaded(), CATALOG)
     assert synthesis.check_floor(floor, CATALOG) == floor
@@ -157,13 +157,13 @@ def test_it_never_fills_in_an_axis_no_requirement_could_speak_to():
 def test_the_axes_it_never_speaks_to_are_named_rather_than_left_implied():
     """A reader of a two-key target may reasonably wonder whether the others were considered
     and dropped, or never in scope."""
-    from rig_workbench.workbench.assurance_target import AXES
+    from rig_workbench.assurance.assurance_target import AXES
 
     assert set(unaskable(_loaded())) == set(AXES) - {"gate"}
 
 
 def test_the_target_it_builds_is_one_assurance_target_would_accept():
-    from rig_workbench.workbench import assurance_target
+    from rig_workbench.assurance import assurance_target
 
     target = target_from(_loaded(_requirement(evidence=("tests_pass_or_explained",))), CRITERIA)
     assert assurance_target.validate(target) == []
@@ -173,7 +173,7 @@ def test_a_contract_asking_for_nothing_produces_no_document_rather_than_an_empty
     """`assurance_target.validate` refuses an empty target: one that requires nothing is met
     by everything, which is a way of saying the run was unconstrained while looking like it
     was constrained."""
-    from rig_workbench.workbench import assurance_target
+    from rig_workbench.assurance import assurance_target
 
     assert target_from(_loaded(_requirement(evidence=("test_login",))), CRITERIA) is None
     assert assurance_target.validate({"schema": assurance_target.SCHEMA, "axes": {}}) != []
@@ -275,7 +275,7 @@ def test_the_floor_json_is_what_synthesise_takes(tmp_path):
     assert floor == {"review-diff": {"source": POLICY_REQUIRED,
                                      "reason": "reviewed by somebody else"}}
 
-    from rig_workbench.workbench import synthesis
+    from rig_workbench.assurance import synthesis
 
     entries = tuple(synthesis._floor_entry(step, value) for step, value in floor.items())
     assert synthesis.check_floor(entries, CATALOG) == entries
@@ -356,11 +356,20 @@ def test_the_module_neither_runs_a_process_nor_calls_a_model():
     it would leave nothing a gate could check and nothing a mutation could falsify."""
     import ast
 
-    tree = ast.parse((REPO_ROOT / "rig_workbench" / "workbench"
+    tree = ast.parse((REPO_ROOT / "rig_workbench" / "assurance"
                       / "intent_wiring.py").read_text(encoding="utf-8"))
     reaching = {"subprocess", "socket", "http", "urllib", "requests", "os", "open"}
     judging = {"floor_from", "unmatched", "resting_on", "target_from", "unaskable",
                "projection"}
+    # An `ast.walk` loop that matches nothing passes, so an empty or mis-pathed file would
+    # read as a clean module. Assert the functions being judged are in the file first.
+    found = {node.name for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)}
+    assert judging <= found, (
+        "the module this test reads does not define the functions it is about: "
+        f"{sorted(judging - found)}. The loop below judges whatever it finds, "
+        "so a file that lost these names — or a path that stopped resolving to this "
+        "module — would walk zero functions and pass."
+    )
     for node in ast.walk(tree):
         if not (isinstance(node, ast.FunctionDef) and node.name in judging):
             continue
@@ -445,7 +454,7 @@ def test_the_receipt_reads_the_contract_with_the_same_refusals_the_command_does(
     """JSON allows a key twice and `json.loads` keeps the last one silently, so a duplicated
     `origin` would turn an inferred requirement into a declared one — and the receipt would
     present that parser choice as what the contract recorded."""
-    from rig_workbench.workbench import assurance
+    from rig_workbench.assurance import assurance
 
     text = ('{"schema": "%s", "goal": "g", "requirements": [{"text": "t", '
             '"origin": "inferred", "origin": "explicit-user", "source": "s", '
@@ -463,7 +472,7 @@ def test_a_contract_that_is_there_and_unreadable_is_not_a_contract_that_is_absen
                                                                                   text, why):
     """The file is there — its digest is in `sources` — and nobody can read it, which is a
     different situation with a different next step."""
-    from rig_workbench.workbench import assurance
+    from rig_workbench.assurance import assurance
 
     run = _run_dir(tmp_path, text)
     assert assurance._read_contract(run / "intent.json") is assurance.UNREADABLE, why
@@ -474,7 +483,7 @@ def test_a_contract_that_is_there_and_unreadable_is_not_a_contract_that_is_absen
 
 
 def test_an_absent_contract_reads_as_absent(tmp_path):
-    from rig_workbench.workbench import assurance
+    from rig_workbench.assurance import assurance
 
     run = tmp_path / ".rig" / "runs" / "a-task"
     run.mkdir(parents=True)
@@ -483,7 +492,7 @@ def test_an_absent_contract_reads_as_absent(tmp_path):
 
 
 def test_a_readable_contract_reads_as_itself(tmp_path):
-    from rig_workbench.workbench import assurance
+    from rig_workbench.assurance import assurance
 
     run = _run_dir(tmp_path, json.dumps(_contract()))
     assert assurance._read_contract(run / "intent.json") == _contract()
@@ -561,7 +570,7 @@ def test_every_entry_point_that_reads_a_contract_reads_it_the_same_way(tmp_path)
     """Three read contracts from disk — `intent`, `intent-derive`, and the receipt — and each
     was written with its own parser until one of them reported a duplicated `origin` as a
     valid declaration. A rule each caller has to remember is a rule one of them will not."""
-    from rig_workbench.workbench import assurance
+    from rig_workbench.assurance import assurance
 
     path = tmp_path / "contract.json"
     path.write_text(DUPLICATED, encoding="utf-8")
@@ -751,12 +760,18 @@ def test_a_criterion_recorded_twice_is_not_a_verdict():
 # the sixth-place failure applied to the mechanism meant to end it. These re-run each module's
 # real source with a field it has never been told about, so what is under test is the guard
 # in the position it actually occupies.
-def _reexec(path, source, package="rig_workbench.workbench"):
+def _reexec(path, source, package="rig_workbench.assurance"):
     """Run a module's source as that module, from a fresh namespace.
 
     Not an AST walk looking for the call. This repository has already paid for approximating
     Python's own rules with a parser once; running the code is the only reading of "does this
     fire at import" that cannot be off by a language feature nobody thought of.
+
+    `package` is what the source's own relative imports resolve against, so it has to be the
+    package the module actually lives in. It was `rig_workbench.workbench` until §11 T11 moved
+    these modules; left there, `from . import assurance_target` inside the re-executed source
+    would resolve to the re-export shim at the old path instead of the module — the probe
+    would still pass, against something that is not the code under test.
     """
     import types
 
@@ -799,7 +814,7 @@ def test_the_page_check_fires_at_import_too():
 
     import pytest
 
-    from rig_workbench.workbench import assurance
+    from rig_workbench.assurance import assurance
 
     path = pathlib.Path(assurance.__file__)
     source = path.read_text(encoding="utf-8")
@@ -824,7 +839,7 @@ def test_the_page_check_fires_at_import_too():
 def test_a_field_cannot_be_both_rendered_and_withheld():
     """The shape this check takes when somebody silences it: withhold what is still printed
     and every field is accounted for by nothing."""
-    from rig_workbench.workbench import assurance
+    from rig_workbench.assurance import assurance
 
     gap = assurance._unrendered({"goal"}, {"goal"}, {"goal": "a stated reason"})
     assert gap is not None and "both rendered and withheld" in gap

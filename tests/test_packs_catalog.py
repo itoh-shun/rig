@@ -12,6 +12,7 @@ with a pair it must accept, and the last test measures the shipped files as they
 import pytest
 
 from rig_workbench.validation.catalog import (
+    CATALOG_FILE,
     CATALOG_SECTION,
     PACK_TABLE_HEADER,
     PACKS_TABLE_HEADER,
@@ -116,7 +117,7 @@ def test_it_goes_blind_rather_than_reporting_an_empty_drift(skill_md, packs_md, 
 def test_the_shipped_documents_are_readable_by_this_check():
     """Whatever the drift is today, the check must be able to locate both tables in the
     files this repository ships; otherwise `--validate` FAILs on every run."""
-    skill_md = (SKILLS / "SKILL.md").read_text(encoding="utf-8")
+    skill_md = (SKILLS / CATALOG_FILE).read_text(encoding="utf-8")
     packs_md = (SKILLS / "PACKS.md").read_text(encoding="utf-8")
     _, _, blind = packs_catalog_drift(skill_md, packs_md)
     assert blind == []

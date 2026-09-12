@@ -1,14 +1,16 @@
 from __future__ import annotations
 
-import os
 import pathlib
 from collections.abc import Iterable
 
-from .model import ASSET_DIRS, PackError, ResolvedAsset, ResolvedPack
+from rig_workbench.ports import Env
+from rig_workbench.ports.local import OS_ENV
+
+from .model import ASSET_DIRS, PROMPT_KINDS, PackError, ResolvedAsset, ResolvedPack
 
 
-def _rig_home() -> pathlib.Path:
-    configured = os.environ.get("RIG_HOME")
+def _rig_home(*, env: Env = OS_ENV) -> pathlib.Path:
+    configured = env.get("RIG_HOME")
     return pathlib.Path(configured).expanduser().resolve() if configured else pathlib.Path(__file__).resolve().parents[2]
 
 
@@ -16,14 +18,21 @@ def _project_root(project: pathlib.Path | str | None) -> pathlib.Path:
     return pathlib.Path(project or pathlib.Path.cwd()).resolve()
 
 
-def pack_roots(project: pathlib.Path | str | None = None) -> list[tuple[str, pathlib.Path]]:
+def pack_roots(project: pathlib.Path | str | None = None, *,
+               env: Env = OS_ENV) -> list[tuple[str, pathlib.Path]]:
     root = _project_root(project)
-    home = pathlib.Path(os.environ.get("RIG_USER_HOME", pathlib.Path.home())).expanduser()
-    org = os.environ.get("RIG_ORG_HOME")
+    # `Env.get` answers `str | None`, so the fallback is chosen on `is None` rather than
+    # handed to `get` as a default: `os.environ.get(name, Path.home())` returned a `Path`
+    # for the unset case and the empty string for `RIG_USER_HOME=`, and those are two
+    # different answers. Keeping the `is None` test keeps both of them as they were.
+    configured = env.get("RIG_USER_HOME")
+    home = pathlib.Path(
+        pathlib.Path.home() if configured is None else configured).expanduser()
+    org = env.get("RIG_ORG_HOME")
     result = [("project", root / ".rig" / "packs"), ("user", home / ".rig" / "packs")]
     if org:
         result.append(("org", pathlib.Path(org).expanduser() / "packs"))
-    rig = _rig_home()
+    rig = _rig_home(env=env)
     result.extend((("official", rig / "packs" / "official"), ("core", rig / "packs" / "core")))
     return result
 
@@ -38,7 +47,12 @@ def _pack_entries_with_trust(
         if not root.is_dir():
             continue
         expected = tier if tier in {"project", "user", "org"} else None
-        for locked in validate_lock_root(root, expected_scope=expected):
+        # Fail-closed, and every caller depends on that: a lock this refuses takes the
+        # whole tier down rather than resolving part of it. The status reported here is
+        # read straight from the lock, which is now the only place it exists — there is no
+        # signature to re-check it against.
+        for locked in validate_lock_root(root, core_ids=core_reference_ids(),
+                                         expected_scope=expected):
             trust[(tier, locked["id"])] = locked["verification_status"]
         entries.extend(
             (tier, item) for item in sorted(root.iterdir())
@@ -66,7 +80,7 @@ def resolved_collection(
     # Installed packs are repository state, not per-working-tree state; see `resolve_all`.
     project_root = _project_root(project if shared is None else shared)
     entries, trust = _pack_entries_with_trust(project_root)
-    records = validate_tiered_collection(entries)
+    records = validate_tiered_collection(entries, core_ids=core_reference_ids())
     return [
         ResolvedPack(
             tier=tier,
@@ -135,11 +149,35 @@ def _legacy_assets(project: pathlib.Path,
                                     tier, f"legacy:{directory}", None)
 
 
-def _core_assets() -> Iterable[ResolvedAsset]:
-    # The engine skill's directory name is resolved (not hardcoded) so a pre-rename
-    # `skills/rig/` install still resolves — same rule as orchestrate.config.
-    from rig_workbench.orchestrate.config import _skill_root
+#: The engine skill's directory name, most-current first. `rig` is the pre-rename layout,
+#: kept so a plugin directory installed before the rename still resolves — the pip package
+#: and the plugin can be at different versions. The same two names `orchestrate.config`
+#: keeps, and deliberately a second statement of them rather than a shared one: see
+#: `_skill_root` below for why this pillar states its own.
+SKILL_DIR_NAMES = ("engine", "rig")
 
+
+def _skill_root(base: pathlib.Path) -> pathlib.Path | None:
+    """The engine skill's directory inside `base`, or None if `base` is not a rig home.
+
+    Moved here rather than inverted, which is the opposite call from the rest of this
+    pillar's stage-3 work — and the reason is what it was reaching for. `packs/resolver.py`
+    imported `orchestrate.config._skill_root`, inside a function: a *private* name in
+    another pillar. An inversion would have had this module declare a protocol and an
+    adapter hold the import, which is three new pieces of machinery to keep borrowing three
+    lines and an underscore. A protocol is worth declaring when the collaborator is
+    something the other pillar owns and this one only consumes; a two-name existence check
+    on a directory is not that. So it is stated here, and `orchestrate.config` keeps its
+    own — two copies of a two-element tuple, which is cheaper to keep true than an adapter
+    is, and honest about the fact that neither pillar owns the layout.
+    """
+    for name in SKILL_DIR_NAMES:
+        if (base / "skills" / name / "SKILL.md").exists():
+            return base / "skills" / name
+    return None
+
+
+def _core_assets() -> Iterable[ResolvedAsset]:
     rig = _rig_home()
     skills = _skill_root(rig) or rig / "skills" / "engine"
     facets = skills / "facets"
@@ -159,6 +197,22 @@ def _core_assets() -> Iterable[ResolvedAsset]:
                 for path in sorted(directory.rglob(suffix)):
                     yield ResolvedAsset(kind, str(path.relative_to(directory).with_suffix("")), path,
                                         "core", f"core:{directory}", "rig-core")
+
+
+def core_reference_ids() -> frozenset[tuple[str, str]]:
+    """The shipped core prompt IDs an extension pack is allowed to reference.
+
+    A projection of `_core_assets`, and public because `packs.validation` now asks for this
+    set instead of reaching in for it (`validation.CoreReferenceIds`). It sits here because
+    this is where the enumeration already lives — nothing is moved, only named — and because
+    the answer is a fact about the *installed engine*, which is this module's subject.
+
+    Every module outside {`validation`, `catalog`, `lock`} may call this directly; those
+    three take the set as an argument instead, because importing this module from any of
+    them is the cycle the argument exists to remove.
+    """
+    return frozenset((asset.kind, asset.name) for asset in _core_assets()
+                     if asset.kind in PROMPT_KINDS)
 
 
 def resolve_all(kind: str, name: str, *, project: pathlib.Path | str | None = None,
@@ -217,7 +271,8 @@ def resolve_owned_asset(
     if not matches and pack_id != "rig-core":
         from .catalog import discover_builtin_packs
         prefix = pathlib.PurePosixPath(ASSET_DIRS[kind])
-        for (namespace, candidate_id), (pack, manifest) in discover_builtin_packs().items():
+        for (namespace, candidate_id), (pack, manifest) in discover_builtin_packs(
+                core_ids=core_reference_ids()).items():
             if candidate_id != pack_id:
                 continue
             for relative in manifest["assets"][kind]:
@@ -265,12 +320,14 @@ def resolve_bound_asset(
     builtin_source = source_path.is_relative_to(builtin_root)
     if not installed_source and not builtin_source:
         return None
-    records = validate_tiered_collection(entries) if installed_source else []
+    records = (validate_tiered_collection(entries, core_ids=core_reference_ids())
+               if installed_source else [])
     if builtin_source:
         known_paths = {path.resolve() for _tier, path, _manifest in records}
         records.extend(
             (namespace, path, manifest)
-            for (namespace, _pack_id), (path, manifest) in discover_builtin_packs().items()
+            for (namespace, _pack_id), (path, manifest) in discover_builtin_packs(
+                core_ids=core_reference_ids()).items()
             if path.resolve() not in known_paths
         )
     for _tier, pack, manifest in records:
@@ -315,7 +372,8 @@ def resolve_resource(pack_id: str, name: str, *, project: pathlib.Path | str | N
     from .validation import validate_tiered_collection
 
     project_root = _project_root(project)
-    for tier, pack, manifest in validate_tiered_collection(_pack_entries(project_root)):
+    for tier, pack, manifest in validate_tiered_collection(
+            _pack_entries(project_root), core_ids=core_reference_ids()):
         if manifest["id"] != pack_id:
             continue
         prefix = pathlib.PurePosixPath(ASSET_DIRS["resource"])

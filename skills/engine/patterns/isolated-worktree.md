@@ -6,8 +6,8 @@
 
 1. **task 登録** — `scripts/workbench.py new "<input>" --type <task_type> --slug <slug>` が task-id を発行し、`.rig/runs/<task-id>/` に run state を初期化、worktree と作業 branch を作成する。
 2. **隔離実行** — implement / verify 等の全 step を worktree の中で実行する（subagent への dispatch 時に worktree path を作業ディレクトリとして明示する）。メイン作業ツリーには一切書かない。
-3. **ゲート判定** — `workbench.py gate <task-id> --set <criterion>=<passed|failed|warning|skipped>` で基準ごとの合否を記録する。gate 全体は `passed`/`passed_with_warnings`/`failed`/`pending`/`skipped` に集約される。**failed か pending が1つでもあれば accept はコードが拒否する**（散文の自制ではなくランナーが強制）。
-4. **accept 前提の確認** — `accept` はまず `worktree_exists`/`base_branch_recorded`/`diff_summary_generated`/`acceptance_gate_not_failed`/`no_unrelated_diff` の accept_requirements チェックリストを表示する。最初の3つは**構造的な前提**であり `--force` でも上書きできない（特に `diff_summary_generated`＝`diff.md` の存在は accept の必須条件）。
+3. **ゲート判定** — 基準ごとの合否は `workbench.py gate <task-id> --set <criterion>=<status>` で記録する。`status` は `passed`/`failed`/`warning`/`skipped` である。gate 全体は `passed`/`passed_with_warnings`/`failed`/`pending`/`skipped` に集約される。**`failed`・`pending`・`skipped`（全件 skip）のいずれかなら accept はコードが拒否する。**散文の自制ではなくランナーが強制する。step 4 の `acceptance_gate_not_failed` がこの3つを落とす項目である。
+4. **accept 前提の確認** — `accept` はまず accept_requirements チェックリストを表示する。**構造的な前提**は `worktree_exists`・`base_branch_recorded`・`diff_summary_generated` の3件で、`--force` でも上書きできない。特に `diff_summary_generated`＝`diff.md` の存在は accept の必須条件である。判断が伴うのは `acceptance_gate_not_failed`・`no_unrelated_diff`・`gate_judged_this_head` の3件になる。
 5. **反映 or 破棄** — `accept` は branch をメイン作業ツリーへ **squash merge（staged・コミットなし）**する＝最終確定は必ず人（またはユーザーが明示した commit 操作）に残す。`discard` は worktree / branch を削除し、run log だけを残す。
 
 ## task-id と配置
@@ -26,7 +26,10 @@
   task.json        # task_id / input / task_type / recipe(+選択理由) / base_branch / base_commit /
                    # branch / worktree_path / status / created_at（スクリプトが管理）
   steps.json       # 実行 step の進行状態（workbench.py step --set <step>=<status>）
-  acceptance.json  # {task_id, task_type, presets, status, checks:[{name,status,detail}]}（workbench.py gate）
+  acceptance.json  # {task_id, task_type, presets, status, checks:[{name,status,detail,by,note?}]}（workbench.py gate）
+                   # `by` はその status を最後に書いた者（`gate --set` なら `operator`、測ったセンサーならその名前）。
+                   # status が一度書かれてから現れる（作りたての gate には無い）。
+                   # `note` は `--set C=STATUS:DETAIL` で操作者が書いた一文で、センサーは触らない
   review.json      # review 系タスクの persona 別 verdict（workbench.py review・stats のゴム印検知に使用・任意）
   plan.md          # 実装計画（モデルが書く）
   diff.md          # 差分の散文要約: `## Summary`/`## Risk`/`## Tests`/`## Unrelated diff` 見出し（モデルが書く。
@@ -51,7 +54,7 @@
 
 ## 複数タスクの並行実行との関係
 
-隔離が task ごとに完結しているため、**複数の task を同時に走らせても互いに干渉しない**（別 worktree・別 branch）。`/rig:queue go --provider rig --max-parallel N` は各 queue item を `/rig:rig "<task>"` 経由で dispatch し、この隔離を使って**別プロセスの並列実行を安全にする**（headless プロセス同士が同じ作業ディレクトリを取り合うことがない）。並行タスクの全体像は `scripts/workbench.py board` が単一のダッシュボードとして提供する——`/rig:rig` を直接叩いた task も `/rig:queue` 経由の task も `.rig/runs/` に集約されるため、ターミナルを増やさずに1コマンドで状況を把握できる。
+隔離が task ごとに完結しているため、**複数の task を同時に走らせても互いに干渉しない**。別 worktree・別 branch だからだ。`/rig:queue go --provider rig --max-parallel N` は各 queue item を `/rig:go "<task>"` として dispatch し、この隔離で**別プロセスの並列実行を安全にする**。headless プロセス同士が同じ作業ディレクトリを取り合うことがない。並行タスクの全体像は `scripts/workbench.py board` が単一のダッシュボードとして提供する。`/rig:go` を直接叩いた task も `/rig:queue` 経由の task も `.rig/runs/` に集約されるため、ターミナルを増やさずに1コマンドで状況を把握できる。
 
 ## 既存ブリックとの関係
 

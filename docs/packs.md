@@ -67,8 +67,8 @@ worth saying. Only the first is an error.
 
 `pack.yaml` declares every asset by path and by sha256, and `pack validate` byte-compares the
 file against its canonical form — sorted keys, no separators, one trailing newline. That form
-is what makes a manifest hashable and signable, and it is deliberately the JSON subset so a
-manifest cannot execute a YAML tag.
+is what makes a manifest hashable, and it is deliberately the JSON subset so a manifest
+cannot execute a YAML tag.
 
 It is therefore not a file to edit by hand. Write the asset, then let the tool declare it:
 
@@ -83,10 +83,12 @@ Sync mirrors the directory: a deleted file leaves the manifest too, so a stale d
 never sends you looking for something you removed. It rewrites `assets` and `hashes` and
 nothing else — version, description, capabilities and entrypoints are yours.
 
-It refuses in two cases rather than proceeding quietly. A file sitting outside every asset
-directory is named, because declaring nothing about it would leave a file inside the pack that
-no hash covers. And a signed pack is refused outright, because rewriting the manifest
-invalidates `pack.sig.json`; remove the signature, sync, then re-sign with your key.
+It refuses rather than proceeding quietly when a file sits outside every asset directory:
+declaring nothing about it would leave a file inside the pack that no hash covers. That is
+the only refusal. `pack.sig.json` used to be a second one — rig once verified publisher
+signatures and a sync would have invalidated one — but nothing in rig signs or verifies a
+pack now, so a file by that name is a stray at the pack root like any other, and the rule
+above names it.
 
 A resource file needs a third derived field — `{media_type, size, sha256}` under
 `resources` — and sync writes that too, deriving the media type from the extension rather
@@ -160,8 +162,8 @@ next:
 ```
 
 The pack is validated first — an archive built from a pack that does not validate can only
-produce the same failure, one machine away from whoever could fix it. A signature travels
-with the pack it signs.
+produce the same failure, one machine away from whoever could fix it. The archive holds the
+manifest pair and every declared asset, and nothing else.
 
 The bytes are reproducible: entries are sorted, dated to the zip epoch, and given fixed
 permissions. That matters because `install` records the archive's sha256 and `pack.lock.json`
@@ -255,7 +257,6 @@ Failures arrive apart, because they want opposite responses:
 | `digest-mismatch` | the pin no longer resolves to the recorded commit |
 | `capability-refused` | the pack declares something its type may not carry or run |
 | `engine-incompatible` | the pack's engine range excludes this engine |
-| `unverified-signature` | no publisher signature verifies against a trust root |
 
 `list`, `info`, and `explain` answer from the lock and the installed manifest, so they are
 always cheap. `outdated` makes one network round trip per pinned pack, and reports a source
@@ -490,11 +491,18 @@ dependencies, install time, and verification status. Resolver and doctor fail cl
 lock drift. Lock replacement is atomic; install rolls the pack directory back when the lock
 cannot be committed.
 
-Prompt-bearing packs require approved evaluation cases. A normal install additionally
-requires fresh HMAC-attested, non-mock, current green results owned by the pack. Only a
-project-scope install may use `--allow-unverified`; it prints a warning and records
-`verification_status: unverified` in the lock. User and organization scopes cannot bypass
-quality verification, and mock results never count as quality evidence.
+Prompt-bearing packs require approved evaluation cases. Install measures what a pack's own
+evidence supports and records it: a pack whose attested, non-mock, current green results are
+owned by it is `verified-local`, and anything else — including a pack whose evidence is mock
+— is `unverified`. That goes into the lock as `verification_status`, so `pack list` and
+`pack info` answer the question rather than install refusing on your behalf.
+
+A lock written by an older rig may carry a third value, `verified-publisher`, from the
+publisher-signing mechanism that rig no longer has. Such a lock is still read, and the label
+is still reported as recorded; nothing writes it and nothing can now confirm it. The
+`publisher_key_id` and `signed_digest` columns are kept for the same reason — a lock entry's
+key set is compared exactly, and a lock missing either column would be refused outright by
+the resolve path that every run goes through.
 
 `pack test` without a provider performs structural validation and reports
 `structural_only` (successful validation, but not quality evidence). Provider runs reuse the

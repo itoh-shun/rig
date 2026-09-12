@@ -15,10 +15,12 @@ import http.server
 
 import pytest
 
-from rig_workbench.orchestrate import commands, config, otel, providers
+from rig_workbench.orchestrate import commands, otel, providers
 from rig_workbench.orchestrate.recipes import (load_steps, parse_frontmatter,
                                                resolve_recipe)
 from rig_workbench.orchestrate.runstate import new_state
+
+from conftest import pin_runs_path
 
 #: A record shaped like a real one, with something sensitive in every field a careless
 #: projection would copy: an absolute path inside a model-written anchor, the goal, a prompt,
@@ -185,7 +187,7 @@ def test_a_failing_export_returns_its_error_instead_of_raising(endpoint):
 
 
 def test_a_failing_export_does_not_change_the_command_s_exit(tmp_path, monkeypatch, capsys):
-    monkeypatch.setattr(config, "RUNS_PATH", tmp_path / "runs.jsonl")
+    pin_runs_path(monkeypatch, tmp_path / "runs.jsonl")
     (tmp_path / "runs.jsonl").write_text(json.dumps(POISONED) + "\n", encoding="utf-8")
     monkeypatch.setattr(commands, "load_manifest", lambda *a, **k: {})
     commands.cmd_otel(["--endpoint", "http://127.0.0.1:1", "--recipe", "bugfix"])
@@ -193,7 +195,7 @@ def test_a_failing_export_does_not_change_the_command_s_exit(tmp_path, monkeypat
 
 
 def test_without_configuration_the_command_sends_nothing(tmp_path, monkeypatch, capsys):
-    monkeypatch.setattr(config, "RUNS_PATH", tmp_path / "runs.jsonl")
+    pin_runs_path(monkeypatch, tmp_path / "runs.jsonl")
     (tmp_path / "runs.jsonl").write_text(json.dumps(POISONED) + "\n", encoding="utf-8")
     monkeypatch.setattr(commands, "load_manifest", lambda *a, **k: {})
     with pytest.raises(SystemExit) as exit_:
@@ -220,7 +222,7 @@ class _Collector(http.server.BaseHTTPRequestHandler):
 def test_a_real_run_reaches_a_collector_as_a_trace_and_metrics(tmp_path, monkeypatch):
     """The whole path, on a run the orchestrator actually performed: phases measured by #502
     become child spans with the times that were measured, not times laid out to look tidy."""
-    monkeypatch.setattr(config, "RUNS_PATH", tmp_path / "runs.jsonl")
+    pin_runs_path(monkeypatch, tmp_path / "runs.jsonl")
     monkeypatch.setattr(commands, "load_manifest", lambda *a, **k: {})
     steps = load_steps(parse_frontmatter(resolve_recipe("bugfix")))
     workspace = pathlib.Path(tempfile.mkdtemp())
