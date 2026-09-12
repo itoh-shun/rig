@@ -195,6 +195,28 @@ accept 成功後（squash merge → **staged**・コミットはしない）:
 
 **スコープの誠実な明示**：これは非対称鍵（Ed25519/SLSA）による第三者公開検証ではない——鍵を持つ**同一環境内での事後改ざん検知**にとどまる（stdlib-onlyのworkbench.py依存原則を保つための意図的な選択）。SLSA相当の公開検証が要る場合は別途の仕組みが必要と案内する。
 
+#### 鍵として使えないファイルの扱い
+
+HMAC は鍵が空でも署名できてしまう。そのため16バイト未満のファイルは鍵として拒否する。空ファイル、`echo >` が残す改行1バイト、切り詰められたコピーなどが該当する。rig 自身が生成する鍵は常に32バイトなので、この下限で拒否されることはない。
+
+署名する側（`accept`）は、使えないファイルを退避してから新しい鍵を生成する。退避先は `.rig/provenance.key.unusable` で、既にあれば `.unusable-2`, `.unusable-3` と続く。番号は既存の最大値の次を使うため、途中を削除しても名前は再利用されない。上書きはしないので旧バイト列は消えない。シンボリックリンクの先にも書き込まない（リンク自体を退避する）。
+
+鍵の取得は squash の**前**に行う。退避や生成は失敗しうる操作なので、何も適用されていない位置で止める。退避そのものができないときも拒否する。いずれも exit 2 で、`--force` 時は `accept_refused`（reason: `provenance_key_unavailable`）として記録する。
+
+退避したときに出る警告は 2 種類あり、どちらが出たかが後の判断を決める。パスは実際には絶対パスで出る。
+
+```
+[WARN] /path/to/repo/.rig/provenance.key held 8 byte(s) when this process read it, below the 16 a signing key must have. It has been moved to provenance.key.unusable and a new key generated; anything signed with the moved file no longer verifies
+[WARN] /path/to/repo/.rig/provenance.key could not be read as a key by this process (it may not be a regular file, or the permissions may not allow it). It has been moved to provenance.key.unusable and a new key generated; anything signed with the moved file no longer verifies
+```
+
+どちらの行も `anything signed with the moved file no longer verifies` で終わる。この節が当てはまるのは `held N byte(s)` の側だけである。`could not be read` の側は長さを測れていないので、この節にも根拠がない。退避したファイルを消してよいかも、2 種のどちらが出たかで決まる。
+
+- `held N byte(s)` の側：消してよい。16 バイト未満であり、`verify-provenance` も `govern audit verify` も同じ規則で拒む。そのファイルで署名済みのレコードは、以後検証できないままになる。
+- `could not be read` の側：消してはいけない。この行は長さを測れなかったと言っているだけで、中身が本物の鍵でないとは言っていない。権限やファイル種別だけが問題で、バイト列は無傷という場合がある。本物の鍵であれば、そのファイルで署名済みのレコードを検証できるのはそのファイルだけである。まず中身と権限を確認するよう案内する。権限を直して `.rig/provenance.key` に戻せば、そのファイルで署名済みのレコードは再び検証できる。その代わり、新しい鍵で署名したレコードの側が検証できなくなる。
+
+検証する側（`verify-provenance`）は鍵を**読むだけ**で、生成も置換もしない。鍵が無い場合も、鍵として使えない場合も、`verify-provenance` はどちらも「検証できない」として扱う。出力は `signature: ✗ INVALID (record or key may have changed)` で exit 1 である。つまりレコードに一切触れていなくても、鍵が入れ替わっていれば INVALID になる。この点をユーザーに伝えると、原因の切り分けが早い。`govern audit verify` と共有しているのは、何を鍵と見なすかの規則（16 バイトの下限）である。読めないファイルを鍵として扱わない点も一致するが、こちらは共通の定義ではなく、両者が同じように書かれているだけである。`govern audit verify` の側は、鍵が存在するのに読めない・短すぎる場合に、署名検査が落ちたことを問題として報告する。鍵が無い場合は、署名付きのエントリがあるときにだけ問題として報告する。
+
 ### Assurance Receipt（`receipt`・#428）
 
 ```
@@ -393,7 +415,7 @@ python3 scripts/workbench.py gc [--older-than 14d] [--dry-run]
 python3 scripts/workbench.py audit [--limit 10] [--action accept_force] [--since 2026-07-01]
 ```
 
-`accept --force` の恒久記録（`.rig/audit.jsonl`）の一覧。action は 2 種あり、持つ欄が違う。`accept_force` は squash が適用された force である。欄は ts・action・task_id・bypassed 基準・gate 状態・failed checks。`accept_refused` は accept が拒んだ force である。経路は 7 本あり、`reason` の値で区別する。`branch_unresolvable`（task の branch が解決しない）・`governance`（定足数・権限・waiver）・`worktree_missing`・`worktree_dirty` の 4 本。残りは `branch_empty`（base の上に commit が無い）・`main_tree_dirty`・`squash_failed` の 3 本。`squash_failed` は衝突、または git が merge 自体を拒んだ場合である。欄は bypassed 基準も gate 状態も無く、代わりに reason・detail・実行者（actor）を持つ。`workbench.py audit` は 2 行目をこの 2 種で書き分ける。出力はそのまま提示する——整形の追加は不要。**ただし件数は上限つきである。** 同じ事象は 1 日あたり 4 行までしか書かれない。4 行目は `collapsed` を持つ。一覧では `(+3 more like it that day; further repeats that day were not recorded)` と出る。この行がある日の件数は「4 件」ではなく「4 件以上」である。実測では、拒まれた force を 50 回起こしても 4 行しか残らない。件数を答えるときはこの但し書きを付ける。絞り込みは `--limit`（最新 N 件）・`--action`（例 `accept_force`。拒まれた側は `accept_refused`）・`--since`（YYYY-MM-DD 以降）。
+`accept --force` の恒久記録（`.rig/audit.jsonl`）の一覧。action は 2 種あり、持つ欄が違う。`accept_force` は squash が適用された force である。欄は ts・action・task_id・bypassed 基準・gate 状態・failed checks。`accept_refused` は accept が拒んだ force である。経路は 8 本あり、`reason` の値で区別する。`branch_unresolvable` は task の branch が解決しない場合である。`governance` は定足数・権限・waiver による拒否である。`worktree_missing` は worktree が無い場合、`worktree_dirty` は worktree が汚れている場合である。`branch_empty` は base の上に commit が無い場合である。`main_tree_dirty` は main tree が汚れている場合である。`provenance_key_unavailable` は署名鍵を用意できなかった場合である。`squash_failed` は衝突、または git が merge 自体を拒んだ場合である。**8 本のいずれでも、作業ツリーには何も残らない。** 前の 7 本は squash の前に拒む。`squash_failed` は失敗した squash を `git reset --hard HEAD` で巻き戻す。欄は bypassed 基準も gate 状態も無く、代わりに reason・detail・実行者（actor）を持つ。`workbench.py audit` は 2 行目をこの 2 種で書き分ける。出力はそのまま提示する——整形の追加は不要。**ただし件数は上限つきである。** 同じ事象は 1 日あたり 4 行までしか書かれない。4 行目は `collapsed` を持つ。一覧では `(+3 more like it that day; further repeats that day were not recorded)` と出る。この行がある日の件数は「4 件」ではなく「4 件以上」である。実測では、拒まれた force を 50 回起こしても 4 行しか残らない。件数を答えるときはこの但し書きを付ける。絞り込みは `--limit`（最新 N 件）・`--action`（例 `accept_force`。拒まれた側は `accept_refused`）・`--since`（YYYY-MM-DD 以降）。
 
 ``No records (entries are appended by `accept --force`).`` の場合は「force-bypass の履歴が無い＝gate を押し切った accept が一度も無い」ことを意味するので、その旨をそのまま伝える。ユーザーが「force で通した履歴を見たい」「gate を無視した accept が無いか確認したい」と言ったらこのコマンドを提案する（**読み取り専用**——記録の追記は `workbench.py accept --force` 側が自動で行い、ここからは書き込まない）。
 

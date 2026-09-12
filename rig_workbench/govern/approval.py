@@ -29,10 +29,53 @@ import pathlib
 from ..ports import Clock, FileStore
 from ..ports.local import LOCAL_FILES, SYSTEM_CLOCK
 from . import ledger
+from .identity import SELF_ASSERTED
 from .policy import EffectivePolicy
 from .rbac import roles_of
 
 VALID_DECISIONS = ("approve", "deny")
+
+#: The one line a reader needs under a report that names approvers.
+#:
+#: Printed once per report rather than once per decision: the sentence is about how this
+#: repository resolves a name, not about the person who typed it.
+SELF_ASSERTED_NOTE = (
+    "  note: every approver name above was typed by whoever ran the command "
+    "(--actor, RIG_ACTOR, RIG_USER or git config user.name) and is not authenticated by "
+    "anything — read them as claims, not identities")
+
+
+def actor_label(decision: dict) -> str:
+    """The approver as a report prints them: the name, and the mark that says what it is
+    worth. **The mark is unconditional, and the record has no say in it.**
+
+    The first shape of this read `actor_assertion` back out of the decision and marked the
+    name only where that field said "self-asserted". `approvals.json` is an unsigned file
+    in a tree the task's own author can write, so that made the caveat removable by the one
+    person it exists to caveat: measured on a real grant, editing `"actor_assertion"` to
+    `"authenticated"` printed `✓ bob (reviewer)` with the note gone — a *worse* state than
+    before the mark existed, because an unmarked name among marked ones reads as a checked
+    one. It is the same defect class this file has now seen three times: `audit_event_weights`
+    trusting `collapsed` out of the unsigned audit log, and the repeat cap letting that log
+    decide what the chain recorded. A field that arrives from a file the adversary writes
+    cannot be what decides how the record is presented.
+
+    So the mark is decided here, in code, for every decision: no path in this repository
+    authenticates anybody, which is not a per-record fact and must not be answered by
+    per-record data. **Deriving it from the attesting chain entry was the other option
+    offered and is refused**: in a keyless repository the chain is equally writable — the
+    forgery `Attestations` documents needs no secret — so the mark would be removable in
+    exactly the repositories where it matters, and it would also vanish for an honest
+    decision whose entry predates the field. Unconditional is both stronger and simpler,
+    and it stays that way until something here actually authenticates an approver; on that
+    day the answer comes from the authenticator at the point of resolution
+    (`identity.resolve_actor`), not from re-reading this file.
+
+    The *name* is untouched — `decision["actor"]` is what `upsert` de-duplicates on and what
+    `Attestations._matches` compares against the chain, and a display that changed it would
+    be a second bug rather than a fix for this one.
+    """
+    return f"{decision.get('actor') or '?'} [{SELF_ASSERTED}]"
 
 
 class _UnknownHead:
@@ -84,6 +127,7 @@ def save_approvals(root: pathlib.Path, task_id: str, data: dict, *,
 
 def make_decision(*, actor: str, decision: str, roles: list[str],
                   head: str | None = None, branch_tip: str | None = None, note: str = "",
+                  assertion: str = SELF_ASSERTED, actor_source: str | None = None,
                   clock: Clock = SYSTEM_CLOCK) -> dict:
     """One decision record. Pure — the caller decides where it is stored, which is
     what lets a workbench task and an orchestrator stage share this arithmetic.
@@ -95,11 +139,32 @@ def make_decision(*, actor: str, decision: str, roles: list[str],
     it is `None` for a decision that has no branch to resolve (an orchestrator stage gate)
     and absent from every record written before this field existed. `_bound_to` below is
     the one place that decides which of the two an approval is held to.
+
+    **What the name on it is worth, recorded beside it and never inside it.** `actor` keeps
+    holding exactly the name it always held: it is the field `upsert` de-duplicates on, the
+    field `evaluate` matches against the task's author for separation of duties, and the
+    field `Attestations._matches` compares against the ledger — folding "self-asserted" into
+    it would make every decision written before this commit fail to attest, which is the
+    lock-out this must not cause. So the assertion is a sibling field. It defaults to
+    `SELF_ASSERTED` rather than to nothing, because a caller that does not say what a name
+    is worth has not authenticated it either, and the default that costs nothing to be wrong
+    about is the honest one.
+
+    **Written, and read back by nothing — deliberately.** `actor_assertion` and
+    `actor_source` are what rig knew when it wrote the record; no reader consults them, no
+    display depends on them and no judgement turns on them (`actor_label` says why). Editing
+    `"self-asserted"` to `"authenticated"` in `approvals.json` therefore changes nothing a
+    reader is shown. They are kept rather than dropped because the record itself should say
+    what it knows, and because the copy that matters is the one in the `approval.grant`
+    entry: that one is inside the hash chain, and under the HMAC wherever the repository has
+    a key, so there the statement is tamper-evident rather than merely present.
     """
     if decision not in VALID_DECISIONS:
         raise ValueError(f"decision must be one of {', '.join(VALID_DECISIONS)}")
     return {
         "actor": actor,
+        "actor_assertion": assertion,
+        "actor_source": actor_source,
         "decision": decision,
         "roles": list(roles),
         "head": head,
@@ -118,11 +183,13 @@ def upsert(decisions: list[dict], entry: dict) -> list[dict]:
 
 def record_decision(root: pathlib.Path, task_id: str, *, actor: str, decision: str,
                     roles: list[str], head: str | None = None, branch_tip: str | None = None,
-                    note: str = "", clock: Clock = SYSTEM_CLOCK,
+                    note: str = "", assertion: str = SELF_ASSERTED,
+                    actor_source: str | None = None, clock: Clock = SYSTEM_CLOCK,
                     files: FileStore = LOCAL_FILES) -> dict:
     """Append one decision to a workbench task's approval file."""
     entry = make_decision(actor=actor, decision=decision, roles=roles, head=head,
-                          branch_tip=branch_tip, note=note, clock=clock)
+                          branch_tip=branch_tip, note=note, assertion=assertion,
+                          actor_source=actor_source, clock=clock)
     data = load_approvals(root, task_id, files=files)
     data["decisions"] = upsert(data["decisions"], entry)
     save_approvals(root, task_id, data, files=files)
@@ -153,11 +220,16 @@ class ApprovalStatus:
         if rule_bits:
             out.append(f"  rule: {' · '.join(rule_bits)}")
         for d in self.counting:
-            out.append(f"  ✓ {d['actor']} ({', '.join(d.get('roles') or []) or 'no role'}) {d['ts']}")
+            out.append(f"  ✓ {actor_label(d)} ({', '.join(d.get('roles') or []) or 'no role'}) {d['ts']}")
         for d, why in self.ignored:
-            out.append(f"  · {d['actor']} — not counted: {why}")
+            out.append(f"  · {actor_label(d)} — not counted: {why}")
         for d in self.denials:
-            out.append(f"  ✗ {d['actor']} denied: {d.get('note') or '(no note)'}")
+            out.append(f"  ✗ {actor_label(d)} denied: {d.get('note') or '(no note)'}")
+        # Last, and whenever this report named anybody: the mark is the signal, this is what
+        # it means, and a report with no decisions on it has nobody to explain. Not
+        # conditional on anything read back out of the decisions — see `actor_label`.
+        if self.counting or self.denials or self.ignored:
+            out.append(SELF_ASSERTED_NOTE)
         return out
 
 
@@ -302,6 +374,11 @@ def _same_actor(left, right) -> bool:
     twice, not a forgery. Compared with surrounding space removed and case folded, which is
     the same latitude the identity is granted everywhere it is entered — and a loosening
     only in the sense that it stops refusing a match nobody disputes.
+
+    The name and only the name. What the record says that name is worth
+    (`actor_assertion`) takes no part in this match, which is why a decision written before
+    that field existed — every decision on disk today — attests against the chain exactly
+    as it did before.
     """
     return (left or "").strip().casefold() == (right or "").strip().casefold()
 

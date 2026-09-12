@@ -12,6 +12,7 @@ import re
 import secrets
 import subprocess
 import sys
+import tempfile
 
 try:
     import fcntl  # POSIX: mutual exclusion for concurrent task operations (task_lock)
@@ -542,36 +543,255 @@ def _provenance_key_path(root: pathlib.Path) -> pathlib.Path:
     return root / ".rig" / "provenance.key"
 
 
-def load_or_create_provenance_key(root: pathlib.Path) -> bytes:
-    """The HMAC-SHA256 signing key (#299). Lives under `.rig/` (gitignored), so it never
-    enters the repo. Deliberately HMAC rather than asymmetric signing (Ed25519/SLSA) to
-    keep workbench.py stdlib-only. This gives same-machine tamper-evidence — proof a
-    provenance record hasn't been edited after the fact on a machine holding the key —
-    not third-party public verification the way SLSA/Ed25519 provide."""
+def provenance_key(root: pathlib.Path) -> bytes | None:
+    """The signing key as it is, or `None`. **Reads. Never creates, never replaces.**
+
+    The half `verify_provenance` needs, and the reason there are two functions instead of a
+    flag: verification used to call the creating loader, so checking a record on a
+    repository whose key was unusable *replaced that key* — 32 fresh bytes over the file,
+    every existing record permanently unverifiable, and tamper and rotation left
+    indistinguishable. A read path that can destroy what it is reading is not a read path,
+    and `wb.verify-provenance` is declared `effect_class="read-only"` in the capability
+    registry, which that made false.
+
+    `None` means this repository has no key to check against — absent, or present and not a
+    key (`govern.ledger.usable_key` is the one rule, shared with the ledger). A caller that
+    cannot verify says so; it does not go and make one.
+    """
+    from ..govern.ledger import usable_key
+
     p = _provenance_key_path(root)
-    if p.is_file():
-        return p.read_bytes()
-    key = secrets.token_bytes(32)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_bytes(key)
     try:
-        p.chmod(0o600)
-    except Exception:
-        pass
-    return key
+        return usable_key(p.read_bytes() if p.is_file() else None)
+    except OSError:
+        return None
+
+
+def _set_unusable_key_aside(p: pathlib.Path) -> pathlib.Path | None:
+    """Rename whatever is at the key path out of the way, and say where it went.
+
+    **Moved, not overwritten, and never followed.** The first shape of this wrote the new
+    key straight over the old file, which is a destructive answer to a diagnosis: an
+    8-byte key is a 64-bit secret nobody brute-forces, and replacing it in place made every
+    record it signed unverifiable with no copy left to restore. Worse, `Path.is_file()`
+    follows symlinks, so `.rig/provenance.key` pointing at a file outside the repository had
+    *that* file overwritten with 32 random bytes. `rename` acts on the link itself, so a
+    symlink is moved aside and its target is never touched — the same refusal
+    `eval/attestation.py` makes, taken here as "do not write through it" rather than as an
+    error, because this path has to leave the repository able to sign.
+
+    **This function does not decide that the file is unusable, and it says nothing about
+    it.** Its caller read the file and found it short; by the time the rename runs another
+    process may have replaced it with a perfectly good key, and the caller checks for that
+    after the fact rather than asserting anything here.
+    """
+    # The next number after the highest one present, not the first free one: reusing
+    # `.unusable` after an operator deletes it gives the newest file the oldest name, and
+    # then only mtime says which is which. `isdecimal` and not `isdigit`, which is True for
+    # a superscript and then raises out of `int()` — in a directory somebody else names.
+    used: set[int] = set()
+    for sibling in p.parent.glob(f"{p.name}.unusable*"):
+        suffix = sibling.name[len(p.name) + len(".unusable"):]
+        used.add(int(suffix[1:]) if suffix.startswith("-") and suffix[1:].isdecimal() else 1)
+    n = max(used, default=0) + 1
+    aside = p.with_name(f"{p.name}.unusable" if n == 1 else f"{p.name}.unusable-{n}")
+    # No "if it exists, try the next one" loop after this: every existing sibling is in
+    # `used`, so max-plus-one is free by construction and the loop that used to be here
+    # could not run. What it never protected against is the case it looked like it covered
+    # — two processes allocating the same name between the glob and the rename, where a
+    # check before the rename is the same race one line earlier. That collision is the
+    # unlocked-concurrency residual the changelog records, not something this loop closed.
+    try:
+        p.rename(aside)
+    except FileNotFoundError:
+        # It is already gone: a sibling process moved or replaced it between this process
+        # reading it and getting here. Nothing to set aside and nothing to report — the
+        # caller re-reads and takes whatever is there now.
+        return None
+    except OSError as e:
+        # The caller decides what to do; what this function will not do is fall through to
+        # overwriting the file it just refused to use. `accept` acquires the key *before*
+        # the squash precisely so this can be a refusal rather than a crash after the point
+        # of no return — see `cmd_accept`'s "(2)-c".
+        raise OSError(f"{p} could not be moved aside ({e}), and it will not be overwritten. "
+                      "Re-run; if it persists, move or delete the file yourself") from e
+    return aside
+
+
+def _create_key_if_absent(p: pathlib.Path, key: bytes) -> None:
+    """Put `key` at `p` if and only if nothing is there — atomically, for other processes.
+
+    **Why a temporary file and `os.link`, and not `write_bytes` or `O_EXCL` alone.** Two
+    accepts in one repository share no lock, and this path is what they collide on. Measured
+    on the previous shape, four concurrent creators per repository: with no key at all the
+    processes ended up holding different keys in 3 of 40 races, so a record signed by one
+    was verified against another's key; and with a short key on disk, 7 good keys were moved
+    aside across 60 races, because one process read "too short", a sibling wrote a real key,
+    and the first renamed *that* away. `O_EXCL` alone fixes only half of it: the file exists
+    from the moment it is created and is empty until the write lands, so a sibling reading in
+    that window sees zero bytes and — by this module's own rule — calls it unusable. The
+    bytes are therefore written into a temporary file first and linked into place complete,
+    which is exactly what `eval/attestation.py` does with its own key, and the loser of the
+    race takes the winner's key rather than clobbering it.
+    """
+    p.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(prefix=".provenance-key.", dir=p.parent)
+    temporary = pathlib.Path(temporary_name)
+    try:
+        os.fchmod(descriptor, 0o600)
+        os.write(descriptor, key)
+        os.fsync(descriptor)
+        os.close(descriptor)
+        descriptor = -1
+        os.link(temporary, p)
+    except FileExistsError:
+        pass                      # a sibling got there first; its key is the repository's
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        temporary.unlink(missing_ok=True)
+
+
+#: How many passes `load_or_create_provenance_key` makes before it refuses.
+#:
+#: A pass is a read plus at most one action, not a retry: each one either returns a key or
+#: changes the directory (a file set aside, a key linked in). **The ordinary cases are not
+#: free of them** — a repository that already has a key spends one, and a fresh one spends
+#: two (the first creates, the second reads back what is there) — so four leaves two spare
+#: for contention rather than four. The bound is here so that a pathological loop refuses
+#: rather than spins, and it refuses *before* the squash, where refusing is free.
+_KEY_SETTLE_PASSES = 4
+
+
+def load_or_create_provenance_key(root: pathlib.Path) -> bytes:
+    """The HMAC-SHA256 signing key (#299), created if this repository has none. Lives under
+    `.rig/` (gitignored), so it never enters the repo. Deliberately HMAC rather than
+    asymmetric signing (Ed25519/SLSA) to keep workbench.py stdlib-only. This gives
+    same-machine tamper-evidence — proof a provenance record hasn't been edited after the
+    fact on a machine holding the key — not third-party public verification the way
+    SLSA/Ed25519 provide.
+
+    **The creating half, and only callers that must sign may use it.** `sign_provenance`
+    does; `verify_provenance` must not, and `provenance_key` above is what it reads.
+
+    What counts as a key is `govern.ledger.usable_key`, the same rule the ledger applies to
+    the same file: `p.read_bytes()` used to be returned whatever it held, so a zero-byte
+    `.rig/provenance.key` signed provenance records with an empty secret — measured,
+    `sign_provenance` produced a signature, `verify_provenance` returned True, and a record
+    rewritten to a different `accepted_by` and re-signed under the same nothing verified as
+    well, so `workbench.py verify-provenance` printed valid and untampered over it.
+
+    A file that is present and not a key is **set aside, not replaced**: signing has to go
+    on working, the old bytes are kept where an operator can find them, and the warning says
+    which file is which. What it cannot do is repair records already signed with the old
+    file — those stay unverifiable, which is the cost of a key that was never a key.
+
+    **Everything here is written for a sibling process doing the same thing.** Two accepts in
+    one repository share no lock. So: the key is created atomically (`_create_key_if_absent`),
+    a file is only set aside when *this* process read it and found it short, and after the
+    rename the moved file is read back — if it turns out to be a usable key, a sibling wrote
+    it in the interval and it is put back into service rather than being called unusable.
+    That last check is what keeps the warning from stating something false about somebody
+    else's good key, which is the one thing this function must never do.
+    """
+    from ..govern.ledger import MIN_KEY_BYTES
+
+    p = _provenance_key_path(root)
+    for _ in range(_KEY_SETTLE_PASSES):
+        existing = provenance_key(root)
+        if existing is not None:
+            return existing
+        if p.is_symlink() or p.exists():
+            observed = _read_key_bytes(p)
+            aside = _set_unusable_key_aside(p)
+            if aside is None:
+                continue
+            rescued = _usable(_read_key_bytes(aside))
+            if rescued is not None:
+                # We moved a key that WAS a key: between this process reading the file and
+                # renaming it, a sibling replaced it. Saying "not a usable signing key" over
+                # those bytes would be false, and this whole change is about records that
+                # claim more than they know. Put it back into service instead.
+                _create_key_if_absent(p, rescued)
+                # …and do not leave the copy behind. Until this line, the rescue left
+                # `provenance.key.unusable` byte-identical to the live key: a second copy of
+                # the active secret under a name asserting it is dead. Mode 0600 means
+                # nothing is newly exposed, but the name is false about the bytes, and a
+                # spare copy of a signing key is not something to keep by accident. Removed
+                # only once the live file holds those same bytes, so nothing is discarded
+                # that is not already in place.
+                kept = _read_key_bytes(p) == rescued
+                if kept:
+                    aside.unlink(missing_ok=True)
+                warn(f"{p} was replaced with a usable key while this process was setting the "
+                     "previous one aside; that key is what the repository now uses"
+                     + (". The copy this process had set aside has been removed"
+                        if kept else f". The copy is at {aside.name}")
+                     + ". No key has been discarded")
+                continue
+            # What this process saw, and it distinguishes the two ways a file fails to be a
+            # key. `_read_key_bytes` answers `None` for "could not be read" as well as for
+            # "not a regular file" — a FIFO at the key path, a mode this process may not
+            # open — and rendering either as "held 0 byte(s)" states something false about a
+            # file whose length nobody here knows.
+            observed_note = (f"held {len(observed)} byte(s) when this process read it, below "
+                             f"the {MIN_KEY_BYTES} a signing key must have"
+                             if observed is not None else
+                             "could not be read as a key by this process (it may not be a "
+                             "regular file, or the permissions may not allow it)")
+            warn(f"{p} {observed_note}. It has been moved to {aside.name} and a new key "
+                 "generated; anything signed with the moved file no longer verifies")
+        _create_key_if_absent(p, secrets.token_bytes(32))
+    raise OSError(f"{p} could not be settled into a usable signing key after "
+                  f"{_KEY_SETTLE_PASSES} attempts (another process may be creating it). "
+                  "Re-run")
+
+
+def _read_key_bytes(p: pathlib.Path) -> bytes | None:
+    try:
+        return p.read_bytes() if p.is_file() else None
+    except OSError:
+        return None
+
+
+def _usable(raw: bytes | None) -> bytes | None:
+    from ..govern.ledger import usable_key
+
+    return usable_key(raw)
 
 
 def _provenance_payload(record: dict) -> bytes:
     return json.dumps(record, sort_keys=True, ensure_ascii=False).encode("utf-8")
 
 
-def sign_provenance(root: pathlib.Path, record: dict) -> str:
-    key = load_or_create_provenance_key(root)
+def sign_provenance(root: pathlib.Path, record: dict, *, key: bytes | None = None) -> str:
+    """Sign one record. `key` is the bytes the caller already holds, if it holds them.
+
+    **Why the parameter exists, and it is the whole point of it.** This is called from
+    `accept` *after* the squash has been applied and the ledger written, and resolving the
+    key there means touching the filesystem after the point of no return: measured, an
+    immutable `.rig/` raised `PermissionError` out of here, and four concurrent accepts
+    renaming an unusable key from under each other raised `FileNotFoundError` in one trial
+    of twenty-five — each one a landed accept with no provenance record and no explanation,
+    which is the shape `audit_append`'s swallow-all was written to stop. `accept` now
+    acquires the key before the squash, where a failure is a refusal that costs nothing,
+    and hands the bytes here; with them, this function does no I/O at all.
+    """
+    if key is None:
+        key = load_or_create_provenance_key(root)
     return hmac.new(key, _provenance_payload(record), hashlib.sha256).hexdigest()
 
 
 def verify_provenance(root: pathlib.Path, record: dict, signature: str) -> bool:
-    key = load_or_create_provenance_key(root)
+    """Whether this record still matches its signature. Reads the key; writes nothing.
+
+    No key — absent, or present and not a key — is `False`: unverifiable is not verified,
+    and the alternative this replaced was worse than wrong, because making a key here meant
+    the check destroyed the evidence it was called to check.
+    """
+    key = provenance_key(root)
+    if key is None:
+        return False
     expected = hmac.new(key, _provenance_payload(record), hashlib.sha256).hexdigest()
     return hmac.compare_digest(expected, signature)
 

@@ -20,7 +20,8 @@ from .config import CHECK_ICON, RECOMMENDATION
 from .state import (_diff_lines, audit_append, build_acceptance,
                     current_identity, die, drift_lines, effective_base,
                     gate_status, git, load_access_control,
-                    load_json, load_task, now_iso, parse_diff_md, reject, repo_root,
+                    load_json, load_or_create_provenance_key, load_task, now_iso,
+                    parse_diff_md, reject, repo_root,
                     resolve_task_id, runs_dir, save_json, save_task, sign_provenance,
                     task_branch_tip, task_head, task_lock, verify_provenance, warn,
                     worktree_dirty)
@@ -157,11 +158,16 @@ def _audit_force_refused(root: pathlib.Path, task_id: str, task: dict,
     Measured before this existed: every way a force can end without applying wrote nothing
     at all — not `.rig/audit.jsonl`, not the chained ledger, not task.json — so somebody
     probing a governance boundary once a day left exactly as much trace as somebody who
-    never tried. There are seven, and `reason` is which one: `branch_unresolvable`,
+    never tried. There are eight, and `reason` is which one: `branch_unresolvable`,
     `governance` (quorum, the `accept.force` permission, a missing waiver),
     `worktree_missing`, `worktree_dirty`, `branch_empty`, `main_tree_dirty`,
-    `squash_failed`. The line is `accept_refused`, alongside the `accept_force` one that
-    says a force went through.
+    `provenance_key_unavailable` (the signing key could not be prepared, so the accept
+    could not have been recorded — refused before the squash, where nothing has been
+    applied), `squash_failed`. The line is `accept_refused`, alongside the `accept_force`
+    one that says a force went through.
+
+    This list is the authority the changelog and the design brief point at, so it is
+    updated in the commit that adds a reason, not after it.
 
     **Only under `--force`.** The ordinary gate loop refuses far more often than it
     accepts — that is what a gate is for — and every one of those refusals is already
@@ -625,6 +631,27 @@ def _cmd_accept_locked(args: argparse.Namespace, root: pathlib.Path, task_id: st
             + _dirty_root_advice(blocking)
         )
 
+    # (2)-c The signing key, acquired BEFORE the point of no return.
+    #
+    # The provenance record is signed after the squash, and resolving the key there meant
+    # touching the filesystem after the accept had landed. Measured: an immutable `.rig/`
+    # raised `PermissionError` out of `sign_provenance`, and four concurrent accepts
+    # renaming an unusable key from under one another raised `FileNotFoundError` in one
+    # trial of twenty-five — each one a merged tree, a written ledger entry, and no
+    # provenance record or explanation at all. That is the shape `audit_append`'s
+    # swallow-all exists to stop, and the same lesson as the `accept_force` line above: a
+    # step that can fail belongs on the side of the squash where failing is free.
+    #
+    # Acquiring it here makes the failure a refusal (nothing has been applied) and makes
+    # the signing below pure arithmetic over bytes already in hand.
+    try:
+        provenance_key_bytes = load_or_create_provenance_key(root)
+    except OSError as e:
+        if soft_fail:
+            _audit_force_refused(root, task_id, task, "provenance_key_unavailable", str(e))
+        die(f"the provenance signing key could not be prepared, so this accept could not be "
+            f"recorded: {e}. Nothing has been applied")
+
     # (3) Squash merge into the main working tree (no commit = the final decision is an explicit human/model action)
     proc = git(["merge", "--squash", squash_ref], cwd=root, check=False)
     if proc.returncode != 0:
@@ -781,7 +808,9 @@ def _cmd_accept_locked(args: argparse.Namespace, root: pathlib.Path, task_id: st
         # the field a conformance check or a later audit can read by name.
         "skipped_criteria": skipped_criteria,
     }
-    signature = sign_provenance(root, provenance_record)
+    # The bytes acquired at "(2)-c", so nothing here reads the filesystem: see
+    # `sign_provenance`'s `key` parameter for what that is worth after the squash.
+    signature = sign_provenance(root, provenance_record, key=provenance_key_bytes)
     save_json(d / "provenance.json", {"record": provenance_record, "signature": signature, "algo": "HMAC-SHA256"})
 
     # After the governance ledger and the signed provenance, never before them. Those

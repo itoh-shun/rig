@@ -76,7 +76,8 @@ from . import conformance as conf
 from . import ledger, waiver
 from .approval import (UNKNOWN_HEAD, evaluate, ledger_attestations, load_approvals,
                        record_decision)
-from .identity import ORG_SCHEMA, current_actor, load_org_binding, org_binding_path
+from .identity import (ORG_SCHEMA, current_actor, load_org_binding, org_binding_path,
+                       resolve_actor)
 # `PERMISSIONS` left with it: the only thing this module used it for was the
 # `govern can` help line ("one of: …"), and that argument's help now comes from the
 # capability table like every other. `rbac.can` still validates the name it is given.
@@ -523,7 +524,16 @@ def cmd_approve(args: argparse.Namespace, out: Presenter, clock: Clock) -> Verdi
     task_id, task = loaded
 
     if args.action in ("grant", "deny"):
-        actor = args.actor or current_actor(root)
+        # WHOSE NAME THIS IS, AND HOW MUCH OF IT IS KNOWN. `--actor`, `RIG_ACTOR`,
+        # `RIG_USER` and `git config user.name` are four ways of typing a name and no ways
+        # of proving one, so the decision this writes records the name *and* that nothing
+        # authenticated it (`identity.SELF_ASSERTED`). This adds no authentication — there
+        # is no provider here to add — it stops the record claiming an identity it never
+        # had, which is what let `--actor "Chief Security Officer"` read back, in
+        # `approvals.json`, in the chain and in every listing, as though a chief security
+        # officer had approved.
+        claim = resolve_actor(root, args.actor)
+        actor = claim.name
         if eff.active:
             decision = can(eff, actor, "approve")
             if not decision.allowed:
@@ -537,7 +547,8 @@ def cmd_approve(args: argparse.Namespace, out: Presenter, clock: Clock) -> Verdi
         tree_head, tip = _head(root, task), _branch_tip(root, task)
         record_decision(root, task_id, actor=actor, decision=verdict_word,
                         roles=roles_of(eff, actor), head=tree_head, branch_tip=tip,
-                        note=args.note or "", clock=clock)
+                        note=args.note or "", assertion=claim.assertion,
+                        actor_source=claim.source, clock=clock)
         # WHICH COMMIT WAS APPROVED, INSIDE THE HASH CHAIN. `approvals.json` is plain
         # unsigned JSON in a tree the task's own author can write, so a decision that was
         # never granted — any actor, any pair of shas — reads back as a real one and meets
@@ -549,7 +560,9 @@ def cmd_approve(args: argparse.Namespace, out: Presenter, clock: Clock) -> Verdi
         ledger.append(root, f"approval.{args.action}", actor=actor, subject=task_id,
                       org=eff.org, team=eff.team,
                       data={"task_type": task.get("task_type"), "note": args.note or "",
-                            "decision": verdict_word, "head": tree_head, "branch_tip": tip},
+                            "decision": verdict_word, "head": tree_head, "branch_tip": tip,
+                            "actor_assertion": claim.assertion,
+                            "actor_source": claim.source},
                       clock=clock)
 
     # Reported against the same sha `accept` will compare against, and with the same reading
@@ -691,7 +704,8 @@ def cmd_audit(args: argparse.Namespace, out: Presenter, clock: Clock) -> Verdict
         out.out("## rig govern audit\n\nNo ledger entries.")
         return Verdict.OK
     shown = entries[-args.limit:] if args.limit else entries
-    out.out(f"## rig govern audit (latest {len(shown)} / {len(entries)})\n")
+    out.out(f"## rig govern audit (latest {len(shown)} / {len(entries)})\n\n"
+            f"{ledger.actor_note(ledger.LEDGER_ACTOR_SOURCES)}\n")
     for e in shown:
         out.out(f"  #{e.get('seq'):<4} {e.get('ts')}  {e.get('action'):<16} "
                 f"{e.get('actor')}  {e.get('subject')}{ledger.collapsed_note(e)}")

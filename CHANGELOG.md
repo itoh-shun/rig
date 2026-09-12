@@ -568,7 +568,7 @@ real CLI before it was closed.**
   durable answer, and it is the knob an org that wants this closed sets.
 - **Both ledgers cap a repeated event at four lines a day.** `.rig/ledger.jsonl` and
   `.rig/audit.jsonl` grew one line per event with no bound, and a caller who is being refused can
-  loop — most of all through the `accept_refused` line the entry above adds on seven refusal paths.
+  loop — most of all through the `accept_refused` line the entry above adds on its refusal paths.
   Measured at 66bd4fe, 1000 identical appends wrote 369,890 bytes over 1000 lines in 2.5s, and the
   time is quadratic because every append re-reads the file to find `prev`; the same 1000 now write
   1,392 bytes over 4 lines in 0.10s, and the plain audit log 484 bytes over 4. Three lines are
@@ -606,6 +606,164 @@ real CLI before it was closed.**
   which is quadratic on the path the cap exists to bound. It is the shape `ledger.append` has
   always paid for `prev`, and the cap shortens it by holding the line count down rather than by
   avoiding it.
+
+**Two governance-integrity defects the entry above recorded as debt rather than closing, each
+reproduced through the real CLI before it was touched.**
+
+- **An approver's name is printed as the claim it is, and nothing in a writable file can say
+  otherwise.** `govern approve grant` takes whoever the caller names — `--actor`, then
+  `RIG_ACTOR`, then `RIG_USER`, then `git config user.name` — and checks none of them against
+  anything. Measured on a governed scratch task:
+  `govern approve grant <task> --actor "Chief Security Officer"` wrote
+  `"actor": "Chief Security Officer"` into `approvals.json` and into the `approval.grant` chain
+  entry, and `govern approve status` printed `approvals: 1/1  ✓ satisfied` with
+  `✓ Chief Security Officer (reviewer)` under it — a string typed at a shell, displayed exactly
+  as a name somebody had proved. **No authentication is added and none is available**: there is
+  no identity provider here, and all four resolutions are a name typed by whoever ran the command
+  (`git config user.name` included — it is a file the same person writes), so every actor in this
+  repository is a claim, and the surfaces say so rather than inventing a ranking between four
+  things that are equally unchecked. `govern approve status`, the accept preview and `accept`'s
+  governance block print `✓ bob [self-asserted] (reviewer)` with one line under the block saying
+  what the mark means; `govern audit log` heads its listing with `actor names are self-asserted —
+  nothing here authenticates them (--actor, RIG_ACTOR, RIG_USER or git config user.name)` and `wb
+  audit` with the same sentence naming `RIG_USER or git config user.name`, which are the only two
+  that reach `.rig/audit.jsonl` (`accept` writes it through `state.current_identity`); and
+  conformance's `approvals` check adds `all 1 counted approval(s) are on self-asserted names
+  (nothing authenticates an approver)` to the line that is quoted upward, on the passing and
+  the failing branch alike. **The mark is decided in code and is not read back out of the record.**
+  The first shape of this stored `actor_assertion` on the decision and marked the name only where
+  that field said so — which put the caveat in the gift of the one person it exists to caveat:
+  measured on a real grant, editing `"actor_assertion"` to `"authenticated"` in `approvals.json`
+  printed `✓ bob (reviewer)` and dropped the explanatory note with it, and `"SELF-ASSERTED"` or a
+  trailing space did the same, because the string was compared exactly. Three fixes were
+  weighed. Deriving the mark from the attesting chain entry is refused: in a keyless repository
+  the chain is equally writable — the forgery `Attestations` documents needs no secret — so the
+  mark would come off in exactly the repositories where it matters, and it would also vanish for
+  an honest decision whose entry predates the field. Inverting the predicate to a whitelist of
+  known authenticated markers is refused too: the whitelist would be empty, and a toggle with no
+  reachable "on" position is a shape that invites someone to add one without adding an
+  authenticator. So the mark is unconditional — no path here authenticates anybody, which is not
+  a per-record fact and must not be answered by per-record data. `actor_assertion` and
+  `actor_source` are still *written*, in the decision and in the chain entry's `data`, because
+  the record should say what it knew; no reader consults them, so editing them changes nothing a
+  reader is shown, and the copy inside the chain is covered by the hash and, where the repository
+  has a key, by the HMAC. Two tests hold that shape rather than the field values: one scans
+  the package for any expression that reads either field back and requires the list to be
+  empty, and one drives a decision whose fields claim the name was authenticated and asserts
+  it reads and counts exactly like an honest one.
+  **`actor` itself is untouched, and that is the load-bearing half.** It is the field `approval.Attestations` matches against the chain, so folding the mark into it
+  would have refused every decision written before this commit — the lock-out G3 had to back out
+  once. One regression test pins that from both sides — an old-shape decision against an
+  old-shape entry, and a new-shape decision against an old-shape entry, both still attest and
+  count — and an end-to-end test strips the new fields back out of a real grant and reads
+  `approvals: 1/1` on it through both `approve status` and `accept`. `--actor`'s own help line
+  stops calling a typed name an identity on the two verbs whose help said that (`approve` and
+  `waiver`; `whoami` and `can` already said "ask about somebody else").
+- **Neither reader of `.rig/provenance.key` signs with a key that is not one, and the
+  reader that verifies does not touch it.** HMAC accepts an empty secret, so a zero-byte key
+  file signed everything with a secret anybody reproduces with `touch`. Measured on the
+  ledger before the fix: `_key` returned `b""`, the appended entry carried a `sig`, `verify`
+  answered `ok=True`, `ledger intact — 1 entries, 1 signed`, and that signature recomputed
+  byte-for-byte under `hmac.new(b"", entry["hash"], sha256)`. Measured on the provenance
+  signer, which reads the same file: `state.load_or_create_provenance_key` returned `b""`,
+  and a record rewritten to `accepted_by: "Chief Security Officer"` and signed under the
+  same nothing verified as valid, so `workbench.py verify-provenance` printed valid and
+  untampered over it. Both readers now ask one function, `ledger.usable_key`, so a third
+  cannot quietly disagree: a key must be at least `MIN_KEY_BYTES` = 16 bytes (128 bits, the
+  conventional floor for an HMAC secret). That refuses nothing rig has written — there is
+  one writer of this file, `state.load_or_create_provenance_key`, the only
+  `secrets.token_bytes` call in the tree, and it generates 32 — and it does refuse the empty
+  file and the single newline `echo > .rig/provenance.key` leaves, a key brute-forced in
+  five guesses. In the ledger an unusable key reads as no key, which is what an unreadable
+  one already returned, so it is reported through the problem that already exists rather
+  than a second shape of its own — and the floor itself is pinned as the number 16, not as a
+  reference to the constant, so lowering it is a decision somebody has to come and make:
+  `ledger BROKEN — 1 problem(s) over 1 entries`,
+  `.rig/provenance.key exists but could not be read as a key (it is unreadable, or shorter
+  than the 16 bytes a signing key must have)`, and the entry is appended unsigned. The
+  neighbouring problem no longer calls such a file absent — present and unusable is a
+  different event. **Reading and creating are two functions, and only signing may create.**
+  `verify_provenance` reads `state.provenance_key`, which resolves the key and writes
+  nothing, so `wb verify-provenance` — declared `read-only` in the capability registry — is
+  read-only again; no key, or one below the floor, is an unverifiable record and therefore
+  `False`. `load_or_create_provenance_key`, whose only caller is `sign_provenance` and whose
+  only caller in turn is `accept`, is the one path that may make a key, and where it finds a
+  file that is not one it **moves it aside** to `.rig/provenance.key.unusable`
+  (`.unusable-2`, `.unusable-3`, … after that, numbered past the highest already there so
+  deleting one never hands its name to a newer file) and generates a new one, announcing
+  both: the old bytes are kept where an operator can find them, and `rename` acts on a
+  symlink rather than through it, so a key path pointing at a file outside the repository
+  leaves that file untouched. **And the key is acquired before the squash, not during the
+  signing.** Signing happens after the accept has landed and the ledger is written, so a
+  key step that can fail there is an error past the point of no return — measured by
+  review as `PermissionError` on an immutable `.rig/`, and as `FileNotFoundError` in one
+  trial of twenty-five with four concurrent accepts renaming the key from under each
+  other, each leaving a merged tree with no provenance record and no explanation, which is
+  the shape `audit_append`'s swallow-all exists to stop. `accept` now prepares the key as
+  its last precondition and hands the bytes to `sign_provenance`, which then does no I/O
+  at all: a key that cannot be prepared is exit 2 with nothing applied (and, under
+  `--force`, an eighth `accept_refused` reason, `provenance_key_unavailable` — the list in
+  `accept._audit_force_refused`, which this entry and the design brief both point at as the
+  authority, is updated with it, as is the `wb audit` row in the workbench-ops facet that
+  tells an agent what each reason means), and a file
+  that cannot be moved aside is never written over. **Concurrent accepts, measured rather than
+  scoped by guess.** Two accepts in one repository share no lock, and the first shape of the
+  set-aside was worse than the residual it was described with. Measured with four concurrent
+  creators per repository: with no key at all, siblings ended up holding different keys in 3
+  of 40 races, so a record signed by one verified against another's; and with a short key on
+  disk, 7 usable keys across 60 races were renamed to `provenance.key.unusable` under a
+  warning that called them unusable signing keys — a false statement about a good key,
+  written by the new path. Both are closed. The key is created the way
+  `eval/attestation.py` creates its own — the bytes written to a temporary file, `chmod`ed,
+  and `os.link`ed into place — so a creator that loses the race takes the winner's key
+  instead of clobbering it; `O_EXCL` alone would not do, because the file exists and is
+  empty between create and write, and a sibling reading in that window would call it
+  unusable by this module's own floor. A file is set aside only when *this* process read it
+  and found it short, the moved file is read back, and a key that turns out to be usable is
+  put back into service under a warning that says what happened instead of calling it
+  unusable — and the copy that was set aside is then removed, because until that line the
+  rescue left a byte-identical copy of the live secret under a name asserting it was dead.
+  A file this process could not read at all (a FIFO at the key path, a mode it may not open)
+  is reported as unread rather than as "held 0 byte(s)", which is a length nobody measured.
+
+  The same harness was run after, and **every figure below is one sample of a race, not a
+  bound**: a second party re-ran it over 360 runs and got different numbers from the same
+  code (1 of 60 where this measured 0, 3 of 60 where this measured 1). They are reported
+  because a fix for a race should be measured rather than asserted, and qualified because a
+  bare zero would invite the reading that the case cannot happen. Three different things are
+  counted below and they are named apart, since one number reused for three meanings is its
+  own small lie:
+
+  * *different-keys* — counted by comparing what the concurrent creators returned: a race is
+    counted when they did not all come away with the same key. With no key present: 0 of 60
+    at four creators, 0 of 60 at eight. With a short key on disk: 1 of 60 at four, 0 of 60 at
+    eight. Before the fix, 3 of 40 at four with no key present.
+  * *usable-key-moved* — counted by looking for `provenance.key.unusable*` files of 16 bytes
+    or more left in `.rig/` after the run, i.e. a key that was a real key got renamed aside.
+    After: 4 of 60 at four creators, 2 of 60 at eight — every one put straight back, under a
+    warning saying a key was replaced and none discarded. Before: 7 of 60 at four, each under
+    a warning calling that key unusable, which is the sentence this had to stop. That
+    counting method no longer applies to the rescue path, because the copy is now removed
+    once the live key holds the same bytes; after this change the event is visible in the
+    warning rather than on disk.
+  * *stale-key-held* — a process coming away with a key the repository no longer holds, so a
+    record it signs will not verify. Not counted directly by the harness: it is what the
+    *different-keys* races above mean for the loser, plus one eight-creator sample where 2 of
+    60 ended that way.
+
+  The qualitative results are what the fix actually guarantees, and they held in every run
+  on both sides: no warning ever called a usable key unusable, a rescued key is always put
+  back, and no run was refused. *stale-key-held* is the open residual: the key is read once
+  before the squash and used after it, and closing it needs a repository-wide lock around
+  key creation — `task_lock` is per task — which is a larger change with its own failure
+  modes and is not taken here. A key rotated by hand between the preflight and the signing
+  has the same effect and the same answer. **What none of this repairs:**
+  records and entries written while the key was unusable stay unverifiable and unsigned for
+  good — a key that was never a key protected nothing, and nothing here can retro-sign them.
+  `signs_here` still answers from the path and not the bytes, so a repository with an
+  unusable key is still one whose chain `approval.ledger_attestations` holds to attest
+  decisions — answering "no key" there would loosen the reconciliation exactly where the
+  stricter reading is called for.
 
 **Three acceptance-gate integrity holes, each measured on a scratch `feature` task before it
 was closed.**
@@ -774,14 +932,17 @@ audit` sanitises the fields it prints: `actor` comes from `RIG_USER` and a refus
 `detail` quotes git, so a caller the command refused could put `ESC` and a newline into
 the listing and forge a line that is in no file. The entry keeps the claim verbatim; the
 listing strips C0 controls and caps each cell. `actor` is what a caller asserted and is
-not authenticated — the docstring now says so, and nothing decides on it.
+not authenticated — the docstring says so, and nothing decides on it. *The record says so too
+as of the entry above: the decision, the chain entry and every surface that prints them now
+mark such a name self-asserted.*
 
 **Recorded and not fixed here.** `.rig/audit.jsonl` and `.rig/ledger.jsonl` have no bound
 and nothing prunes them, and a refused force is now a line somebody else can cause to be
 written — repeated refusals grow both files. *Closed by `410092c`: a repeated event is written three
 times, then once more carrying `collapsed`, and not again that day; 50 refused forces
-through the CLI leave 4 lines in each file and the chain still verifies.* `ledger._key` accepts a zero-byte key and
-signs with it (pre-existing). `state.audit_append` swallows every exception, so a write
+through the CLI leave 4 lines in each file and the chain still verifies.* *`ledger._key` accepted a zero-byte key and signed with it
+(pre-existing): closed by the entry above, which reads an empty key as no key and reports it
+the way an unreadable one is reported.* `state.audit_append` swallows every exception, so a write
 that fails is a gap rather than an error; `verify` reports the gap, and nothing reports the
 failure. Moving the force line after the squash leaves a window of its own: a signal
 between the merge and the append loses the `accept_force` for an accept that did apply —

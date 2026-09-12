@@ -662,7 +662,12 @@ def test_a_hand_written_approval_no_ledger_entry_attests_is_not_counted(repo):
     result = run_cli(["accept", task_id], repo)
     assert result.returncode != 0
     assert "approvals: 0/1" in result.stdout
-    assert "· bob — not counted: no ledger entry attests this decision" in result.stdout
+    # `bob [self-asserted]` and not `bob`: the name on a decision is a claim — nothing in
+    # this repository authenticates an approver — and the report now says so beside every
+    # decision it prints. The reason this line exists to pin, and the rest of the line, are
+    # unchanged; only the rendering of the name moved.
+    assert ("· bob [self-asserted] — not counted: no ledger entry attests this decision"
+            in result.stdout)
     assert "approval requirement not met (0/1)" in out(result)
 
 
@@ -770,3 +775,132 @@ def test_a_grant_made_before_the_key_existed_still_counts_after_it(repo):
     assert "approvals: 1/1" in shown.stdout
     assert "not counted" not in shown.stdout
     assert "not counted" not in run_cli(["accept", task_id], repo).stdout
+
+
+# ── the name on an approval is a claim, and the record says so ──────────────
+def test_an_approval_records_that_nothing_authenticated_the_name_on_it(repo):
+    """The reproduction. `--actor` takes whatever is typed, and before this the record kept
+    only the name: `approvals.json`, the `approval.grant` entry and `approve status` all
+    printed "Chief Security Officer" the way they print a name somebody proved.
+
+    Nothing here authenticates anybody and this does not pretend to — it stops the record
+    claiming more than it knows, so a reader sees a claim as a claim.
+    """
+    keyed(repo)
+    govern(repo, approvals={"feature": {"quorum": 1, "roles": ["reviewer"]}},
+           members={"alice": ["dev"], "*": ["reviewer"]})
+    task_id = new_task(repo)
+    make_acceptable(repo, task_id)
+
+    granted = run_govern(["approve", "grant", task_id, "--actor", "Chief Security Officer",
+                          "--note", "did not read a line"], repo)
+    assert granted.returncode == 0, out(granted)
+
+    stored = json.loads((repo / ".rig" / "runs" / task_id / "approvals.json")
+                        .read_text(encoding="utf-8"))["decisions"][0]
+    assert stored["actor"] == "Chief Security Officer"     # the name is untouched
+    assert stored["actor_assertion"] == "self-asserted"
+    assert stored["actor_source"] == "--actor"
+
+    entry = next(json.loads(line) for line
+                 in (repo / ".rig" / "ledger.jsonl").read_text(encoding="utf-8").splitlines()
+                 if json.loads(line)["action"] == "approval.grant")
+    assert entry["data"]["actor_assertion"] == "self-asserted"
+    assert entry["data"]["actor_source"] == "--actor"
+
+    # …and the surfaces that print it say so rather than leaving the reader to assume.
+    assert "✓ Chief Security Officer [self-asserted]" in granted.stdout
+    assert "read them as claims, not identities" in granted.stdout
+    shown = run_govern(["approve", "status", task_id], repo)
+    assert "✓ Chief Security Officer [self-asserted]" in shown.stdout
+    listed = run_govern(["audit", "log"], repo)
+    assert "actor names are self-asserted" in listed.stdout
+
+
+def test_an_approval_written_before_the_record_said_this_still_counts(repo):
+    """The lock-out this must not cause, end to end.
+
+    `Attestations` matches `approvals.json` against the chain on the approver's NAME, so
+    the assertion had to be recorded beside the name and never inside it. Here the decision
+    is stripped back to the exact shape the previous release wrote — no `actor_assertion`,
+    no `actor_source` — against the chain entry that attests it, and it still counts and
+    still accepts. A team upgrading into this commit keeps its own approvals.
+    """
+    keyed(repo)
+    govern(repo, approvals={"feature": {"quorum": 1, "roles": ["reviewer"]}})
+    task_id = new_task(repo)
+    make_acceptable(repo, task_id)
+    granted = run_govern(["approve", "grant", task_id, "--note", "read every line"], repo,
+                         env={"RIG_ACTOR": "bob"})
+    assert granted.returncode == 0, out(granted)
+
+    path = repo / ".rig" / "runs" / task_id / "approvals.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    for d in data["decisions"]:
+        d.pop("actor_assertion", None)
+        d.pop("actor_source", None)
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+    shown = run_govern(["approve", "status", task_id], repo)
+    assert "approvals: 1/1" in shown.stdout and "satisfied" in shown.stdout
+    # Read as the claim it is, because nothing authenticated it then either.
+    assert "✓ bob [self-asserted]" in shown.stdout
+    # And the gate reads it the same way the preview does. (Asserted on the governance
+    # block, not on the exit status: this fixture's untracked `.rig/` stops `accept` after
+    # governance has already been decided, exactly as the attested-decision test above.)
+    result = run_cli(["accept", task_id], repo)
+    assert "approvals: 1/1" in result.stdout
+    assert "not counted" not in result.stdout
+
+
+def test_editing_the_stored_assertion_does_not_talk_the_mark_off_the_name(repo):
+    """End to end, the way the security lane reproduced it: a real grant, then the one
+    person who can write `approvals.json` edits `actor_assertion` to `"authenticated"`.
+
+    Measured when the mark was read back out of the record: `govern approve status` printed
+    `✓ bob (reviewer)` and dropped the explanatory note with it. Both surfaces now mark the
+    name regardless of what the file says, because no file the approver can write decides
+    how the record is presented.
+    """
+    keyed(repo)
+    govern(repo, approvals={"feature": {"quorum": 1, "roles": ["reviewer"]}})
+    task_id = new_task(repo)
+    make_acceptable(repo, task_id)
+    assert run_govern(["approve", "grant", task_id], repo,
+                      env={"RIG_ACTOR": "bob"}).returncode == 0
+
+    path = repo / ".rig" / "runs" / task_id / "approvals.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["decisions"][0]["actor_assertion"] = "authenticated"
+    data["decisions"][0]["actor_source"] = "corporate sso"
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+    shown = run_govern(["approve", "status", task_id], repo)
+    assert "✓ bob [self-asserted] (reviewer)" in shown.stdout
+    assert "not authenticated by anything" in shown.stdout
+    accepted = run_cli(["accept", task_id], repo)
+    assert "✓ bob [self-asserted] (reviewer)" in accepted.stdout
+
+
+def test_the_audit_listing_says_its_actor_column_is_self_asserted(repo):
+    """`wb audit` prints `by: <actor>` for a refusal and nothing said where that name came
+    from. Measured against a mutant with the note removed: every inventory, CLI-surface and
+    layering suite still passed, because no test read this listing's output at all.
+
+    The sources it names are the ones that feed THIS file: `.rig/audit.jsonl` is written by
+    `accept`, whose actor is `state.current_identity` — `RIG_USER`, then `git config
+    user.name`. `--actor` and `RIG_ACTOR` reach the chain, not this log, and naming them here
+    would be a caveat about the wrong thing.
+    """
+    (repo / ".rig").mkdir(parents=True, exist_ok=True)
+    (repo / ".rig" / "audit.jsonl").write_text(json.dumps(
+        {"ts": "2026-09-12T10:00:00+00:00", "action": "accept_refused", "task_id": "t1",
+         "reason": "governance", "detail": "no", "actor": "Chief Security Officer"}) + "\n",
+        encoding="utf-8")
+
+    listed = run_cli(["audit"], repo)
+    assert listed.returncode == 0, out(listed)
+    assert "by: Chief Security Officer" in listed.stdout
+    assert ("actor names are self-asserted — nothing here authenticates them "
+            "(RIG_USER or git config user.name)") in listed.stdout
+    assert "--actor" not in listed.stdout and "RIG_ACTOR" not in listed.stdout

@@ -7,6 +7,8 @@ to show up in `verify`.
 """
 
 import datetime
+import hashlib
+import hmac
 import json
 from collections import Counter
 
@@ -655,3 +657,190 @@ def test_a_hand_written_collapsed_count_cannot_inflate_the_force_rate(tmp_path):
     counted, by_bypass = force_bypass_counter(_load_audit(tmp_path))
     assert counted == ledger.REPEAT_CAP + 1
     assert by_bypass["no_unrelated_diff"] == ledger.REPEAT_CAP + 1
+
+
+# ── a key that is not a key ──────────────────────────────────────────────────
+def test_a_zero_byte_key_is_refused_rather_than_signed_with(tmp_path):
+    """HMAC accepts an empty secret, so `.rig/provenance.key` at zero bytes used to sign.
+
+    Measured before the fix, on a repository whose key file was empty: `_key` returned
+    `b""`, the appended entry carried a `sig`, `verify` answered `ok=True`, "ledger intact —
+    1 entries, 1 signed", and that signature recomputed byte-for-byte under
+    `hmac.new(b"", entry["hash"].encode("ascii"), sha256)` — a secret anybody can create
+    with `touch`, reported as a signature.
+    """
+    (tmp_path / ".rig").mkdir(parents=True, exist_ok=True)
+    ledger.key_path(tmp_path).write_bytes(b"")
+    entry = ledger.append(tmp_path, "accept", actor="alice", subject="task-0")
+
+    assert ledger._key(tmp_path) is None
+    assert "sig" not in entry
+    forged = hmac.new(b"", entry["hash"].encode("ascii"), hashlib.sha256).hexdigest()
+    assert forged not in ledger.ledger_path(tmp_path).read_text(encoding="utf-8")
+
+    result = ledger.verify(tmp_path)
+    assert not result.ok and result.signed == 0
+    # The same problem the unreadable key is reported with, and one problem, not two.
+    assert [p for p in result.problems if "could not be read" in p] == result.problems
+    assert "BROKEN" in result.summary()
+
+
+def test_a_key_too_short_to_be_a_key_is_refused_the_same_way(tmp_path):
+    """`key or None` was a length test of one: it passed anything non-empty, so
+    `echo > .rig/provenance.key` — one newline — signed, `verify` answered `ok=True, signed=1`,
+    and the security lane brute-forced that key in five guesses. `MIN_KEY_BYTES` is 128 bits,
+    the conventional floor for an HMAC secret, and it refuses nothing rig writes: both
+    writers generate `secrets.token_bytes(32)`.
+    """
+    (tmp_path / ".rig").mkdir(parents=True, exist_ok=True)
+    ledger.key_path(tmp_path).write_bytes(b"\n")
+    entry = ledger.append(tmp_path, "accept", actor="alice", subject="task-0")
+    assert ledger._key(tmp_path) is None and "sig" not in entry
+    result = ledger.verify(tmp_path)
+    assert not result.ok and result.signed == 0
+    assert [p for p in result.problems if "could not be read" in p] == result.problems
+
+    # THE FLOOR ITSELF, AS A NUMBER AND NOT AS A REFERENCE TO ITSELF. Written relative to
+    # the constant, these assertions moved with it: the test lane set `MIN_KEY_BYTES` to 15
+    # and then to 2 and every suite still passed, so what was pinned was "not zero and not
+    # one byte" and the 128-bit argument in the docstring was unverifiable from the tests.
+    # Lowering the floor is a decision somebody has to come here and make.
+    assert ledger.MIN_KEY_BYTES == 16          # 128 bits; see the constant for why
+    assert ledger.usable_key(b"k" * 15) is None
+    assert ledger.usable_key(b"k" * 16) == b"k" * 16
+
+
+def test_an_empty_key_is_still_a_repository_that_signs(tmp_path):
+    """`signs_here` asks about the path, not the bytes, and it must go on doing so: it is
+    what `approval.ledger_attestations` reads to decide whether the chain is held to
+    attest decisions. Answering "no key" for an empty one would hand that decision back to
+    the looser reading exactly where the stricter one is called for."""
+    (tmp_path / ".rig").mkdir(parents=True, exist_ok=True)
+    ledger.key_path(tmp_path).write_bytes(b"")
+    assert ledger.signs_here(tmp_path) is True
+
+
+def test_a_real_key_still_signs_and_verifies(tmp_path):
+    """The other half: refusing the empty file refuses nothing else."""
+    seed(tmp_path, n=2)
+    assert ledger.key_path(tmp_path).stat().st_size == 32
+    result = ledger.verify(tmp_path)
+    assert result.ok and result.signed == 2
+
+
+def test_a_present_but_unusable_key_is_not_reported_as_an_absent_one(tmp_path):
+    """Two different events, and the problem used to name the wrong one.
+
+    Entries carrying `sig` with no readable key is the shape an attacker makes by rewriting
+    the chain and deleting the key, and the problem says so — "the key was removed, or this
+    is a checkout that never had it". A key that is *present* and below the floor reaches the
+    same branch and is not that event at all; reading "absent" over a file that is sitting
+    right there sends whoever is holding the incident somewhere else.
+    """
+    seed(tmp_path, n=1)                                   # signed, with a real key
+    assert ledger.verify(tmp_path).signed == 1
+    ledger.key_path(tmp_path).write_bytes(b"short")       # present, unusable
+
+    problems = ledger.verify(tmp_path).problems
+    assert any("is present and is not a usable key" in p for p in problems)
+    assert not any("is absent" in p for p in problems)
+
+    # …and the key actually gone still reads as gone, so this distinguishes the two rather
+    # than replacing one wording with another.
+    ledger.key_path(tmp_path).unlink()
+    assert any("is absent" in p for p in ledger.verify(tmp_path).problems)
+
+
+def test_the_conformance_report_says_the_approver_names_it_counted_are_claims(tmp_path):
+    """The report is the number that gets quoted upward, so it has to say what it knows.
+
+    An approver's name here is whatever the approving command was run under — nothing
+    authenticates it — and a `✓ approvals` line that says only "satisfied" reads as "the
+    right people approved". Counted and reported, not scored: every approval in every
+    repository is on a self-asserted name, so failing on it would fail everyone.
+    """
+    repo = govern_repo(tmp_path, roles={"dev": ["accept"], "reviewer": ["approve"]},
+                       members={"alice": ["dev"], "bob": ["reviewer"]},
+                       approvals={"feature": {"quorum": 1, "roles": ["reviewer"]}})
+    run = add_task(repo, "t1")
+    (run / "approvals.json").write_text(json.dumps(
+        {"task_id": "t1", "decisions": [
+            {"actor": "bob", "decision": "approve", "roles": ["reviewer"], "head": None,
+             "branch_tip": None, "note": "read it",
+             "ts": datetime.datetime.now().astimezone().isoformat(timespec="seconds")}]}),
+        encoding="utf-8")
+
+    result = check(evaluate_project(repo), "approvals")
+    assert result.verdict == conf.PASS
+    assert "1 accepted run(s) in the window satisfied it" in result.detail
+    assert "all 1 counted approval(s) are on self-asserted names" in result.detail
+
+
+def test_a_forged_assertion_does_not_talk_the_clause_out_of_the_conformance_report(tmp_path):
+    """The second reader of the mark, and it has to refuse the same input the first does.
+
+    The clause counts every counted approval; filtering it on what the decision claims about
+    itself would let the file the report is scoring decide the report, and a mutant that put
+    that filter back survived every suite because no fixture carried a forged value. This one
+    does: `"actor_assertion": "authenticated"`, hand-written into `approvals.json`.
+    """
+    repo = govern_repo(tmp_path, roles={"dev": ["accept"], "reviewer": ["approve"]},
+                       members={"alice": ["dev"], "bob": ["reviewer"]},
+                       approvals={"feature": {"quorum": 1, "roles": ["reviewer"]}})
+    run = add_task(repo, "t1")
+    (run / "approvals.json").write_text(json.dumps(
+        {"task_id": "t1", "decisions": [
+            {"actor": "bob", "decision": "approve", "roles": ["reviewer"], "head": None,
+             "branch_tip": None, "note": "read it", "actor_assertion": "authenticated",
+             "actor_source": "corporate sso",
+             "ts": datetime.datetime.now().astimezone().isoformat(timespec="seconds")}]}),
+        encoding="utf-8")
+
+    result = check(evaluate_project(repo), "approvals")
+    assert result.verdict == conf.PASS
+    assert "all 1 counted approval(s) are on self-asserted names" in result.detail
+
+
+def test_the_count_in_that_clause_is_the_number_of_approvals_not_a_constant(tmp_path):
+    """Every fixture above counts one approval, so "all N" never pinned N: a clause hard-
+    coded to 1 would pass them all. Two counted approvals on one run, and the line says two.
+    """
+    repo = govern_repo(tmp_path, roles={"dev": ["accept"], "reviewer": ["approve"]},
+                       members={"alice": ["dev"], "bob": ["reviewer"], "carol": ["reviewer"]},
+                       approvals={"feature": {"quorum": 2, "roles": ["reviewer"]}})
+    run = add_task(repo, "t1")
+    now = datetime.datetime.now().astimezone().isoformat(timespec="seconds")
+    (run / "approvals.json").write_text(json.dumps(
+        {"task_id": "t1", "decisions": [
+            {"actor": who, "decision": "approve", "roles": ["reviewer"], "head": None,
+             "branch_tip": None, "note": "read it", "ts": now}
+            for who in ("bob", "carol")]}), encoding="utf-8")
+
+    result = check(evaluate_project(repo), "approvals")
+    assert result.verdict == conf.PASS
+    assert "all 2 counted approval(s) are on self-asserted names" in result.detail
+
+
+def test_a_failing_approvals_check_says_it_too(tmp_path):
+    """The FAIL branch carries the same clause and needs its own case: a mutant that dropped
+    it there survived every test, because every fixture that reached the clause passed.
+
+    One counted approval against a quorum of two — an offender *and* a counted name, which is
+    the only shape that reaches both halves of the line at once.
+    """
+    repo = govern_repo(tmp_path, roles={"dev": ["accept"], "reviewer": ["approve"]},
+                       members={"alice": ["dev"], "bob": ["reviewer"], "carol": ["reviewer"]},
+                       approvals={"feature": {"quorum": 2, "roles": ["reviewer"]}})
+    run = add_task(repo, "t1")
+    (run / "approvals.json").write_text(json.dumps(
+        {"task_id": "t1", "decisions": [
+            {"actor": "bob", "decision": "approve", "roles": ["reviewer"], "head": None,
+             "branch_tip": None, "note": "read it",
+             "ts": datetime.datetime.now().astimezone().isoformat(timespec="seconds")}]}),
+        encoding="utf-8")
+
+    result = check(evaluate_project(repo), "approvals")
+    assert result.verdict == conf.FAIL
+    assert "1 of 1 accepted run(s) were applied without their approvals" in result.detail
+    assert "all 1 counted approval(s) are on self-asserted names" in result.detail
+    assert "t1" in result.evidence[0] and "1/2" in result.evidence[0]

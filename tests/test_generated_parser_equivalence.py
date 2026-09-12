@@ -589,6 +589,30 @@ HELP_CHANGES: tuple[HelpChange, ...] = (
             "one to leave unexplained."
         ),
     ),
+    *(
+        HelpChange(
+            verb=verb,
+            target="--actor",
+            shipped=shipped,
+            generated=generated_help,
+            judgement=(
+                "`identity` was the wrong word and the CLI now contradicts it in as many "
+                "words: `--actor` is a string this invocation types, nothing checks it "
+                "against anything, and the decision it writes is marked `[self-asserted]` "
+                "wherever it is printed. A flag that says \"this identity\" while the report "
+                "under it says the name is a claim teaches the reading the report exists to "
+                "refuse. Reversing it — leaving the help alone — would mean the only place "
+                "the surface still calls a typed name an identity is the place a person "
+                "reads before typing one."
+            ),
+        )
+        for verb, shipped, generated_help in (
+            ("approve", "record the decision under this identity",
+             "record the decision under this name (a claim; nothing authenticates it)"),
+            ("waiver", "act as this identity",
+             "act under this name (a claim; nothing authenticates it)"),
+        )
+    ),
     HelpChange(
         verb="rollup",
         target="--since-days",

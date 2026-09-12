@@ -495,6 +495,12 @@ def _check_approvals(root: pathlib.Path, eff: EffectivePolicy, records: RunRecor
         return Check("approvals", NA, UNLISTED)
     offenders: list[str] = []
     checked = 0
+    # How many of the approvals this check is about were counted on a name nothing
+    # authenticated. Reported rather than scored: a self-asserted approver is what every
+    # approval in this repository has (`identity.SELF_ASSERTED`), so failing on it would
+    # fail every project, and saying nothing would let this report be quoted upward as
+    # "N runs approved by the right people" when what it knows is "N runs carry N names".
+    claimed = 0
     # Read once for the whole window rather than per task: `ledger_attestations` walks the
     # chain, and a conformance run scores every accepted run in the period.
     attested = ledger_attestations(root, chain_required=eff.audit_chain_required, files=files)
@@ -508,17 +514,26 @@ def _check_approvals(root: pathlib.Path, eff: EffectivePolicy, records: RunRecor
         status = evaluate(eff, task,
                           load_approvals(root, task.get("task_id", ""), files=files),
                           attested=attested, clock=clock)
+        # Every counted approval, not the ones whose record happens to say so: the names are
+        # self-asserted because nothing here authenticates anybody, and reading that back out
+        # of the approvals file would let the file it is caveating decide the count.
+        claimed += len(status.counting)
         if not status.satisfied:
             offenders.append(f"{task.get('task_id')} ({task.get('task_type')}): "
                              f"{status.counted}/{status.required} approvals")
     shortfall = records.note()
+    # "all N", not "N of the counted approvals": since the count is every counted approval
+    # and cannot be a subset of them, a ratio-shaped clause would invite a reader to look for
+    # the other kind. There is no other kind.
+    claim_note = (f"; all {claimed} counted approval(s) are on self-asserted names "
+                  "(nothing authenticates an approver)") if claimed else ""
     if offenders:
         return Check("approvals", FAIL,
                      f"{len(offenders)} of {checked} accepted run(s) were applied without "
-                     f"their approvals{shortfall}", offenders[:10])
+                     f"their approvals{shortfall}{claim_note}", offenders[:10])
     rules = ", ".join(f"{t}≥{r['quorum']}" for t, r in sorted(quorums.items()))
     return Check("approvals", PASS, f"required ({rules}); {checked} accepted run(s) in the "
-                                    f"window satisfied it{shortfall}")
+                                    f"window satisfied it{shortfall}{claim_note}")
 
 
 def _check_waivers(root: pathlib.Path, eff: EffectivePolicy, *,

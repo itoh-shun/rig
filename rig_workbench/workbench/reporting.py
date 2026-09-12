@@ -277,12 +277,12 @@ def cmd_audit(args: argparse.Namespace) -> None:
     accept_requirements, this audit log permanently records cases where an
     unmet gate was overridden with --force (evidence of the differentiator's
     physical strength). `accept_force` is written once the squash has applied;
-    `accept_refused` is a force that did not apply, on any of the seven paths its `reason`
+    `accept_refused` is a force that did not apply, on any of the eight paths its `reason`
     names (`branch_unresolvable`, `governance`, `worktree_missing`, `worktree_dirty`,
-    `branch_empty`, `main_tree_dirty`, `squash_failed`), so that reaching for the override
-    is visible whether or not it worked.
+    `branch_empty`, `main_tree_dirty`, `provenance_key_unavailable`, `squash_failed`), so
+    that reaching for the override is visible whether or not it worked.
     """
-    from ..govern.ledger import collapsed_note
+    from ..govern.ledger import AUDIT_LOG_ACTOR_SOURCES, actor_note, collapsed_note
 
     root = repo_root()
     events = _load_audit(root)
@@ -295,7 +295,14 @@ def cmd_audit(args: argparse.Namespace) -> None:
         return
     limit = args.limit if args.limit else len(events)
     shown = events[-limit:]
-    print(f"## rig audit (latest {len(shown)} / {len(events)} total)\n")
+    # The caveat rides on the header print rather than on one of its own: this package's
+    # `print` count is a ceiling in `tests/test_architecture_inventory.py`, and the note is
+    # a property of the listing, not an event in it.
+    # …and the sources it names are the ones that feed THIS file: `.rig/audit.jsonl` is
+    # written by `accept`, whose actor is `state.current_identity` (`RIG_USER`, then `git
+    # config user.name`). `--actor` and `RIG_ACTOR` reach the chain, not this log.
+    print(f"## rig audit (latest {len(shown)} / {len(events)} total)\n\n"
+          f"{actor_note(AUDIT_LOG_ACTOR_SOURCES)}\n")
     for e in shown:
         ts = _audit_cell(e.get("ts", "?"))
         action = _audit_cell(e.get("action", "?"))

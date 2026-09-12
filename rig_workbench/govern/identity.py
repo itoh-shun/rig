@@ -31,6 +31,64 @@ from ..ports.local import LOCAL_FILES, OS_ENV, SUBPROCESS
 ORG_SCHEMA = "rig.org/v2"
 _ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
+#: What every actor in this repository is, and the word the record uses for it.
+#:
+#: There is no identity provider here and this change does not invent one. What the four
+#: resolutions below actually read is: a flag typed on the command line, two environment
+#: variables set by whoever ran the command, and `git config user.name`, which is a config
+#: file that same person writes (`git config user.name "anyone"` and the next approval is
+#: theirs). None of them is checked against anything, so none of them is an identity —
+#: every one is a claim, and telling them apart by *trust* would be a distinction this
+#: repository cannot back. `ActorClaim.source` says which mechanism carried the name
+#: because that is a fact worth recording; `authenticated` is False on all four because
+#: that is the other fact, and it is the one a reader of an approval needs.
+SELF_ASSERTED = "self-asserted"
+
+
+@dataclasses.dataclass(frozen=True)
+class ActorClaim:
+    """A name that arrived, and how much is known about it.
+
+    `name` is exactly what `current_actor` has always returned, so nothing that stores or
+    compares an actor sees any change. `source` and `assertion` are what the record gains:
+    a decision can now say that the name on it was never authenticated, instead of leaving
+    a reader to assume it was.
+    """
+
+    name: str
+    source: str
+    authenticated: bool = False
+
+    @property
+    def assertion(self) -> str:
+        """The word written into the record. `SELF_ASSERTED` for everything today."""
+        return "authenticated" if self.authenticated else SELF_ASSERTED
+
+
+def resolve_actor(root: pathlib.Path | None = None, override: str | None = None, *,
+                  env: Env = OS_ENV, runner: ProcessRunner = SUBPROCESS) -> ActorClaim:
+    """`current_actor`'s resolution, with the provenance of the answer kept.
+
+    `override` is the caller's own `--actor`, which every govern command accepts and which
+    used to be applied at the call site as `args.actor or current_actor(root)`. It is
+    resolved here so that the one place that knows a name came from a flag is the place
+    that can say so.
+    """
+    if override:
+        return ActorClaim(override, "--actor")
+    for var in ("RIG_ACTOR", "RIG_USER"):
+        value = env.get(var)
+        if value:
+            return ActorClaim(value, f"${var}")
+    try:
+        proc = runner.run(["git", "config", "user.name"], cwd=root if root else None)
+        name = proc.stdout.strip()
+        if name:
+            return ActorClaim(name, "git config user.name")
+    except Exception:
+        pass
+    return ActorClaim("unknown", "nothing supplied a name")
+
 
 @dataclasses.dataclass(frozen=True)
 class OrgBinding:
@@ -92,6 +150,11 @@ def current_actor(root: pathlib.Path | None = None, *, env: Env = OS_ENV,
     existing `.rig/access.json` setups keep working), then `git config
     user.name`, then "unknown".
 
+    The name and nothing else, which is all any caller that stores or compares an actor
+    wants. A caller that *records* one wants `resolve_actor`, which returns the same name
+    with the two facts this function drops: which of the four supplied it, and that none of
+    them authenticates anybody (`SELF_ASSERTED`).
+
     Through `ProcessRunner` and deliberately **not** `GitRepo.config_value`, which is
     the second decision the ports left open. `GitRepo` goes via `gitroot._git`, which
     strips `GIT_DIR` / `GIT_WORK_TREE` / `GIT_COMMON_DIR` first — so moving this call
@@ -108,15 +171,4 @@ def current_actor(root: pathlib.Path | None = None, *, env: Env = OS_ENV,
     the test that exports `GIT_DIR` at a second repository with a different `user.name`
     and asserts the actor comes from the tree the caller is standing in.
     """
-    for var in ("RIG_ACTOR", "RIG_USER"):
-        value = env.get(var)
-        if value:
-            return value
-    try:
-        proc = runner.run(["git", "config", "user.name"], cwd=root if root else None)
-        name = proc.stdout.strip()
-        if name:
-            return name
-    except Exception:
-        pass
-    return "unknown"
+    return resolve_actor(root, env=env, runner=runner).name

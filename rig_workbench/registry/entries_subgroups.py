@@ -252,7 +252,8 @@ GOVERN: tuple[Capability, ...] = (
             Flag(name="task_id", type="string", help="defaults to the most recent task"),
             Flag(name="--note", type="string",
                  help="why (recorded with the decision; required in practice for deny)"),
-            Flag(name="--actor", type="string", help="record the decision under this identity"),
+            Flag(name="--actor", type="string",
+                 help="record the decision under this name (a claim; nothing authenticates it)"),
         ),
         exit_codes=(
             ExitCode(code=0, meaning="必要な承認が揃っている、または承認自体が不要"),
@@ -287,7 +288,8 @@ GOVERN: tuple[Capability, ...] = (
                  help="YYYY-MM-DD (defaults to the policy's maximum)"),
             Flag(name="--scope", type="string",
                  help="fnmatch pattern over task_type or task_id (default: *)", default="*"),
-            Flag(name="--actor", type="string", help="act as this identity"),
+            Flag(name="--actor", type="string",
+                 help="act under this name (a claim; nothing authenticates it)"),
         ),
         output_schema="rig.waivers/v2",
         exit_codes=(

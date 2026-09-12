@@ -39,6 +39,30 @@ from ..ports.local import LOCAL_FILES, OS_ENV, SYSTEM_CLOCK
 LEDGER_REL = ".rig/ledger.jsonl"
 GENESIS = "0" * 64
 
+#: How each listing names the ways an actor could have reached it. Two listings, two files,
+#: two different sets of sources, and naming the wrong ones is its own small lie: the chain
+#: (`govern audit log`) carries entries written by `govern approve` and `govern waiver`,
+#: which honour `--actor` and `identity.current_actor`'s `RIG_ACTOR` / `RIG_USER` /
+#: `git config user.name`, while `.rig/audit.jsonl` (`workbench audit`) is written only by
+#: `accept`, whose actor is `state.current_identity` — `RIG_USER`, then `git config
+#: user.name`, and nothing else.
+LEDGER_ACTOR_SOURCES = "--actor, RIG_ACTOR, RIG_USER or git config user.name"
+AUDIT_LOG_ACTOR_SOURCES = "RIG_USER or git config user.name"
+
+
+def actor_note(sources: str) -> str:
+    """What a listing has to say about its `actor` column, once, at the top.
+
+    An entry's actor is whatever name the command was run under, and this repository has no
+    identity provider: every way of supplying one is a name typed by the caller and none is
+    checked against anything. A listing that prints the column without saying so invites the
+    reading the column cannot support — that the name is who did it — and entries written
+    before any record said so are exactly as unauthenticated as the ones written after, so
+    the caveat belongs on the listing rather than on the entries that happen to carry a
+    field.
+    """
+    return f"actor names are self-asserted — nothing here authenticates them ({sources})"
+
 #: How many identical events in a row are written before the run is collapsed.
 #:
 #: **Why there is a cap at all.** Every append is one line and one `read_ledger`, so a
@@ -49,7 +73,7 @@ GENESIS = "0" * 64
 #: records that it ran) and `govern approve grant` (re-runnable, and `upsert` keeps
 #: `approvals.json` at one decision while the chain grows a line each time) are both
 #: loopable today by a caller who is otherwise getting nowhere, and `accept --force`'s
-#: `accept_refused` line (a3a7508) is the loudest of them: seven refusal paths each write
+#: `accept_refused` line (a3a7508) is the loudest of them: eight refusal paths each write
 #: one, so the caller a governance boundary is refusing is the caller who can write most.
 #:
 #: **Why the bound is a cap and not a rewrite.** Collapsing a run into one line carrying a
@@ -122,8 +146,39 @@ def key_path(root: pathlib.Path) -> pathlib.Path:
     return root / ".rig" / "provenance.key"
 
 
+#: The shortest byte string this repository will sign with, and the one rule about it.
+#:
+#: HMAC takes a key of any length, including none, so "is there a file" was never the
+#: question — `.rig/provenance.key` at zero bytes signed every entry with a secret anybody
+#: reproduces with `touch`, and a one-byte key written by `echo > .rig/provenance.key` was
+#: brute-forced in five guesses. 16 bytes is 128 bits, the conventional floor for an HMAC
+#: secret, and it costs nothing rig has ever written: there is exactly one writer of this
+#: file — `workbench.state.load_or_create_provenance_key`, the only `secrets.token_bytes`
+#: call in the tree — and it generates 32 bytes. So the only keys this refuses are keys nobody
+#: generated — an empty file, a stray newline, a truncated copy — and it refuses them
+#: loudly rather than signing with them.
+MIN_KEY_BYTES = 16
+
+
+def usable_key(raw: bytes | None) -> bytes | None:
+    """`raw` if it can be signed with, else `None`. **The single definition, on purpose.**
+
+    There are two readers of `.rig/provenance.key` — `_key` here and
+    `workbench.state.provenance_key` — and one creator,
+    `workbench.state.load_or_create_provenance_key`, which asks the reader first and only
+    makes a key where there is none. They were fixed one at a time once already: closing the
+    empty key in the ledger left the provenance signer recomputing under the same empty
+    secret, so a record rewritten to a different `accepted_by` and re-signed still printed
+    `valid, untampered`. All of them ask this function, so what counts as a key is one
+    answer in one place and a third reader cannot quietly disagree with it.
+    """
+    return raw if raw is not None and len(raw) >= MIN_KEY_BYTES else None
+
+
 def _key(root: pathlib.Path, *, files: FileStore = LOCAL_FILES) -> bytes | None:
-    """The signing key, if this repository has one. Never creates it here —
+    """The signing key, if this repository has one — and a file too short to be a key is
+    not one (`usable_key` is the rule; the comment above the read says what signing with an
+    empty one produced). Never creates it here —
     signing is opportunistic, and a read-only checkout must still be able to
     append (an unsigned entry is still chained).
 
@@ -134,8 +189,9 @@ def _key(root: pathlib.Path, *, files: FileStore = LOCAL_FILES) -> bytes | None:
     put in front of `LOCAL_FILES.read_secret_bytes`: a key at mode 0600 inside a 0755
     `.rig/` — which is what every checkout has, because `.rig/` is created by
     `mkdir(parents=True, exist_ok=True)` under the ambient umask and
-    `workbench.state.load_or_create_provenance_key` chmods the file and not the
-    directory — was refused with `OSError: secure runtime directory must be owned by
+    `workbench.state`'s creator chmods the file and not the
+    directory (the `chmod` moved into `_create_key_if_absent`'s temporary file, where it is
+    applied before the key is linked into place; the observable mode is the same 0600) — was refused with `OSError: secure runtime directory must be owned by
     the caller with mode 0700`; 0600 inside 0700 was read; and 0644 inside 0700 was
     refused with `secure runtime file must be caller-owned regular mode 0600 with one
     link`. The first row is the legitimate ledger the swap would break: the strict read
@@ -151,11 +207,24 @@ def _key(root: pathlib.Path, *, files: FileStore = LOCAL_FILES) -> bytes | None:
     through `write_secret_bytes`, and existing keys have to be chmod-ed — in that
     order, because the strict read refuses the directory before it looks at the file.
     """
+    # A file too short to be a key is not a key, and signing with one is worse than not
+    # signing: HMAC accepts a zero-length secret, so every entry got a `sig` that anybody
+    # can recompute — `touch .rig/provenance.key` anywhere reproduces it — while `verify`
+    # reported them "signed". Measured before this rule existed, on a repository whose key
+    # file was zero bytes: `_key` returned b"", the appended entry carried a `sig`, `verify`
+    # answered `ok=True`, "ledger intact — 1 entries, 1 signed", and that signature
+    # recomputed byte-for-byte under `hmac.new(b"", ...)`. `None` is the answer the
+    # unreadable key already gives, and it is the right one for the same reason: the file is
+    # there and this process has no secret out of it. `verify`'s existing "exists but could
+    # not be read" problem then covers this without a second shape, and `signs_here` — which
+    # asks about the path, not the bytes — keeps answering that this repository signs, so an
+    # unsigned entry beside an unusable key is still reported.
     p = key_path(root)
     try:
-        return files.read_bytes(p) if files.is_file(p) else None
+        key = files.read_bytes(p) if files.is_file(p) else None
     except OSError:
         return None
+    return usable_key(key)
 
 
 def signs_here(root: pathlib.Path, *, files: FileStore = LOCAL_FILES) -> bool:
@@ -328,15 +397,20 @@ def verify(root: pathlib.Path, *, files: FileStore = LOCAL_FILES) -> VerifyResul
     previous entry's hash (removed or reordered entry), a sequence number that
     skips, and a signature that does not verify against the local key.
 
-    A key file that is present and unreadable is itself one of the problems, reported
-    before the walk: that is the only state in which the signature column below is
-    absent for a reason other than "this repository has no key".
+    A key file that is present and yields no key — unreadable, or too short to sign with
+    (`MIN_KEY_BYTES`) — is itself one of the problems, reported before the walk: that is the only state in which the
+    signature column below is absent for a reason other than "this repository has no key".
     """
     entries = read_ledger(root, files=files)
     problems: list[str] = []
     signed = 0
     key = _key(root, files=files)
     key_file = key_path(root)
+    # Present, in the sense that matters here: something is at the path. A zero-byte file, a
+    # one-byte file and a directory are all a key this process cannot sign with, and none of
+    # them is the key being *gone* — saying "absent" over one of them describes the wrong
+    # event to whoever is reading the problem.
+    key_present = files.is_file(key_file) or files.is_dir(key_file)
     if key is None and any(e.get("sig") for e in entries):
         # The other way the signature pass falls silent, and the one an attacker chooses:
         # the hash chain needs no secret, so anybody can rewrite the ledger, recompute
@@ -345,18 +419,24 @@ def verify(root: pathlib.Path, *, files: FileStore = LOCAL_FILES) -> VerifyResul
         # before this line `verify` answered `ok=True`, "ledger intact — 1 entries,
         # unsigned". Entries that carry `sig` are a claim that this repository signs; a
         # missing key cannot check that claim, and unchecked is not intact.
-        problems.append("entries carry signatures but .rig/provenance.key is absent, so no "
-                        "signature could be checked (the key was removed, or this is a "
-                        "checkout that never had it)")
-    if key is None and (files.is_file(key_file) or files.is_dir(key_file)):
+        problems.append(
+            "entries carry signatures but .rig/provenance.key "
+            + ("is present and is not a usable key, so no signature could be checked "
+               "(see the next problem)" if key_present else
+               "is absent, so no signature could be checked (the key was removed, or this "
+               "is a checkout that never had it)"))
+    if key is None and key_present:
         # The compensating check `_key` names. Without it, a key this process cannot read
         # — a mode it may not open, a directory in its place, a mount that refuses it —
         # makes every signature check below fall away silently, and `verify` answers
         # "intact, unsigned" for a repository whose entries were all signed. `is_dir` is
         # here beside `is_file` because the path existing at all is the fact: `_key` reads
-        # only a regular file, so a directory reaches this line as an absent key too.
-        problems.append(".rig/provenance.key exists but could not be read, so no signature "
-                        "was checked; the hash chain was still checked")
+        # only a regular file, so a directory reaches this line as an absent key too — and
+        # so does a file too short to sign with, which `_key` refuses rather than using.
+        problems.append(".rig/provenance.key exists but could not be read as a key (it is "
+                        f"unreadable, or shorter than the {MIN_KEY_BYTES} bytes a signing "
+                        "key must have), so no signature was checked; the hash chain was "
+                        "still checked")
     prev_hash = GENESIS
     for index, entry in enumerate(entries):
         where = f"entry #{index}"

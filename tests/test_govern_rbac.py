@@ -4,19 +4,40 @@ The three questions a governed accept asks — may you, did enough people say ye
 and is the exception you are leaning on still alive.
 """
 
+import ast
 import datetime
 import json
+import pathlib
 
 import pytest
 
-from rig_workbench.govern.approval import (UNKNOWN_HEAD, Attestations, evaluate,
-                                           ledger_attestations, load_approvals,
+from rig_workbench.govern.approval import (UNKNOWN_HEAD, Attestations, actor_label,
+                                           evaluate, ledger_attestations, load_approvals,
                                            make_decision, record_decision)
-from rig_workbench.govern.identity import current_actor, load_org_binding
+from rig_workbench.govern.identity import (SELF_ASSERTED, current_actor, load_org_binding,
+                                           resolve_actor)
 from rig_workbench.govern.policy import (SCHEMA, EffectivePolicy, PolicyError,
                                          effective_policy)
 from rig_workbench.govern.rbac import PermissionDenied, can, explain, require, roles_of
 from rig_workbench.govern import waiver
+
+
+def _scoped_nodes(tree):
+    """Every node in a module, paired with the name of the function it sits in.
+
+    `<module>` covers module level and class bodies; `AsyncFunctionDef` opens a scope like
+    `FunctionDef` does. Both matter: a scan that walks `ast.FunctionDef` alone cannot see a
+    reference written anywhere else, which is how the first version of the scan below could
+    be slipped past.
+    """
+    stack = [("<module>", tree)]
+    while stack:
+        scope, node = stack.pop()
+        for child in ast.iter_child_nodes(node):
+            yield scope, child
+            inner = (child.name if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef))
+                     else scope)
+            stack.append((inner, child))
 
 
 def policy(**doc) -> EffectivePolicy:
@@ -525,3 +546,195 @@ def test_a_denial_entry_does_not_attest_an_approval():
                       attested=attestations(denial))
     assert not status.satisfied and status.counted == 0
     assert status.ignored[0][1] == "no ledger entry attests this decision"
+
+
+# ── whose name is on a decision, and what that name is worth ────────────────
+#
+# There is no identity provider in this repository. `--actor` is a flag, `RIG_ACTOR` and
+# `RIG_USER` are environment variables, and `git config user.name` is a file the same person
+# writes — four ways of typing a name and no way of checking one. Before this, the record
+# said only the name, so `--actor "Chief Security Officer"` read back out of
+# `approvals.json`, the chain and every listing exactly like a name somebody had proved.
+# These pin the record saying what it knows, and — the half that must not break — pin that
+# saying it changed nothing about which decisions the chain attests.
+class _FakeProc:
+    def __init__(self, stdout=""):
+        self.stdout = stdout
+
+
+class _FakeRunner:
+    def __init__(self, stdout=""):
+        self.stdout = stdout
+
+    def run(self, argv, cwd=None, **kw):
+        return _FakeProc(self.stdout)
+
+
+def test_every_way_of_naming_an_actor_is_a_claim(monkeypatch, tmp_path):
+    """All four resolutions, and not one of them is authenticated. The `source` is kept
+    because "the name came from a flag on this invocation" is a fact worth recording; it is
+    not a ranking, and nothing reads it as one."""
+    monkeypatch.delenv("RIG_ACTOR", raising=False)
+    monkeypatch.delenv("RIG_USER", raising=False)
+    from_git = resolve_actor(tmp_path, runner=_FakeRunner("carol\n"))
+    monkeypatch.setenv("RIG_USER", "bob")
+    from_v1_env = resolve_actor(tmp_path, runner=_FakeRunner("carol\n"))
+    monkeypatch.setenv("RIG_ACTOR", "alice")
+    from_env = resolve_actor(tmp_path, runner=_FakeRunner("carol\n"))
+    from_flag = resolve_actor(tmp_path, "Chief Security Officer", runner=_FakeRunner("carol\n"))
+    nobody = resolve_actor(tmp_path, runner=_FakeRunner(""))
+
+    assert [c.name for c in (from_flag, from_env, from_v1_env, from_git)] == [
+        "Chief Security Officer", "alice", "bob", "carol"]
+    assert [c.source for c in (from_flag, from_env, from_v1_env, from_git)] == [
+        "--actor", "$RIG_ACTOR", "$RIG_USER", "git config user.name"]
+    for claim in (from_flag, from_env, from_v1_env, from_git, nobody):
+        assert claim.authenticated is False
+        assert claim.assertion == SELF_ASSERTED == "self-asserted"
+
+
+def test_resolving_an_actor_returns_the_name_current_actor_always_returned(monkeypatch, tmp_path):
+    """The name is the compatibility surface: it is stored, compared against the task's
+    author, de-duplicated on and matched against the chain. Only what is recorded *beside*
+    it is new."""
+    monkeypatch.setenv("RIG_ACTOR", "alice")
+    assert resolve_actor(tmp_path).name == current_actor(tmp_path) == "alice"
+
+
+def test_what_a_decision_records_about_its_actor_decides_nothing():
+    """The two written fields, pinned by what they are *for* rather than by their values.
+
+    They exist so the record states what rig knew, and the copy that carries weight is the
+    one in the `approval.grant` entry, where the hash chain covers it — that copy is pinned
+    end to end in `test_govern_accept.py`, on the entry rather than on the file. Here the
+    contract is the other half: whatever a caller puts in them, including a caller claiming
+    the name was authenticated, changes nothing about how the decision reads. A test that
+    only asserted `d["actor_assertion"] == "self-asserted"` pinned data and would have gone
+    on passing through the whole defect this closes.
+    """
+    honest = make_decision(actor="alice", decision="approve", roles=["reviewer"],
+                           actor_source="--actor")
+    assert honest["actor"] == "alice"                 # unchanged, and load-bearing
+    assert (honest["actor_assertion"], honest["actor_source"]) == (SELF_ASSERTED, "--actor")
+
+    lying = make_decision(actor="alice", decision="approve", roles=["reviewer"],
+                          assertion="authenticated", actor_source="corporate sso")
+    assert actor_label(lying) == actor_label(honest) == "alice [self-asserted]"
+    assert (evaluate(approving_policy(quorum=1), TASK, approvals(lying)).satisfied
+            is evaluate(approving_policy(quorum=1), TASK, approvals(honest)).satisfied)
+
+
+def test_a_decision_that_says_nothing_about_its_actor_is_read_as_a_claim():
+    """Every decision on disk today. Absence is not evidence of an identity — nothing has
+    ever authenticated an approver here — so the name is marked all the same."""
+    old_shape = decision("alice")
+    assert "actor_assertion" not in old_shape
+    assert actor_label(old_shape) == "alice [self-asserted]"
+
+
+def test_the_approvals_file_cannot_talk_the_mark_off_a_name():
+    """The reproduction the security lane made, pinned at the function it lives in.
+
+    The first shape of the mark read `actor_assertion` back out of the decision, so the one
+    person who can write `approvals.json` — the task's own author — could edit it to
+    `"authenticated"` and the name printed clean, with the explanatory note gone too. That
+    is worse than no mark at all: an unmarked name among marked ones reads as a checked one.
+    Nothing in the record decides this now.
+    """
+    # "SELF-ASSERTED" and "self-asserted " are the behavioural lane's two: a predicate that
+    # compared the stored string exactly dropped the mark for both, while `_same_actor`
+    # case-folds and strips — two readings of one file's strings, in one module. Nothing
+    # compares this string now, so the whole class of near-miss is gone rather than widened.
+    for claimed in ("authenticated", "sso", "SELF-ASSERTED", "self-asserted ", "", None, 42,
+                    {"trust": "total"}):
+        forged = {**decision("alice"), "actor_assertion": claimed}
+        assert actor_label(forged) == "alice [self-asserted]"
+
+    status = evaluate(approving_policy(quorum=1), TASK,
+                      approvals({**decision("alice"), "actor_assertion": "authenticated"}))
+    text = "\n".join(status.lines())
+    assert "✓ alice [self-asserted] (reviewer)" in text
+    assert "not authenticated by anything" in text
+
+
+def test_the_approval_report_marks_the_claims_and_says_what_the_mark_means():
+    status = evaluate(approving_policy(quorum=1), TASK,
+                      approvals(decision("alice"), decision("carol", roles=("dev",)),
+                                decision("bob", verdict="deny")))
+    text = "\n".join(status.lines())
+    assert "✓ alice [self-asserted] (reviewer)" in text
+    assert "· carol [self-asserted] — not counted:" in text
+    assert "✗ bob [self-asserted] denied:" in text
+    assert "not authenticated by anything" in text
+
+
+def test_marking_a_name_as_a_claim_changes_nothing_the_chain_attests():
+    """The lock-out this fix must not cause, pinned from both sides.
+
+    `Attestations` matches a decision to a ledger entry on the actor's NAME. A record
+    written before `actor_assertion` existed — which is every record on every checkout that
+    upgrades into this commit — still attests, and so does a record written after it against
+    an entry written before it. If this ever fails, an upgrade has locked teams out of
+    approvals their own ledger holds.
+    """
+    old_entry = grant_entry(head=None, branch_tip=None)
+    assert "actor_assertion" not in old_entry["data"]
+
+    old_decision = decision("alice")
+    assert "actor_assertion" not in old_decision
+    assert evaluate(approving_policy(quorum=1), TASK, approvals(old_decision),
+                    attested=attestations(old_entry)).satisfied
+
+    new_decision = make_decision(actor="alice", decision="approve", roles=["reviewer"],
+                                 actor_source="$RIG_ACTOR")
+    assert evaluate(approving_policy(quorum=1), TASK, approvals(new_decision),
+                    attested=attestations(old_entry)).satisfied
+
+
+def test_nothing_reads_the_assertion_fields_back_out_of_a_record():
+    """`actor_assertion` and `actor_source` are written and never consulted, and this is the
+    guard that keeps it that way.
+
+    The first shape of the mark read `actor_assertion` back, which put the caveat in the
+    gift of the author of the file it caveats. The fields stay because the record should say
+    what rig knew when it wrote it — and because the copy in the `approval.grant` entry is
+    inside the hash chain — but a reader appearing later would be the same defect again.
+
+    **Every mention of the name, not every shape of read.** The first version of this looked
+    for `d["actor_assertion"]` and `d.get("actor_assertion")` and would have missed
+    `d.pop(...)`, `"actor_assertion" in d`, a key held in a variable, a module-level
+    expression and an `async def`. So the rule is about the string rather than the shape of
+    the read: it may appear in exactly the two places that *write* it, counted, and nowhere
+    else in the package. A future authenticator that wants to read it has to come here and
+    say so.
+
+    **What it does not reach, said here rather than left implied.** A name that is never
+    written out whole is invisible to it: `d["actor_" + "assertion"]`, an f-string, a
+    `startswith("actor_")` prefix match over a record's keys. No static scan resolves those,
+    and the same limit is written on the caller scan in `test_provenance.py` for the same
+    reason — a guard whose docstring overstates it is worse than no guard. What stops the
+    defect itself is not this scan but `actor_label`, which takes no argument from the
+    record at all, and the tests that drive a forged `"authenticated"` through the label,
+    the report and the conformance clause.
+    """
+    package = pathlib.Path(__file__).resolve().parent.parent / "rig_workbench"
+    watched = {"actor_assertion", "actor_source"}
+    mentions: dict[str, int] = {}
+    for path in sorted(package.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for scope, node in _scoped_nodes(tree):
+            if isinstance(node, ast.Constant) and node.value in watched:
+                key = f"{path.name}:{scope}:{node.value}"
+                mentions[key] = mentions.get(key, 0) + 1
+    # COUNTED, and one apiece. Keyed by scope alone, a read added inside `make_decision` —
+    # the scope that legitimately writes the field — was invisible to this scan; review
+    # demonstrated exactly that. The count makes a second mention in a listed scope fail
+    # like a mention in any other.
+    assert mentions == {
+        # the decision record…
+        "approval.py:make_decision:actor_assertion": 1,
+        "approval.py:make_decision:actor_source": 1,
+        # …and the `approval.grant` / `approval.deny` entry the chain covers.
+        "cli.py:cmd_approve:actor_assertion": 1,
+        "cli.py:cmd_approve:actor_source": 1,
+    }

@@ -425,6 +425,16 @@ class Capability:
     #: (`writes-worktree`). A capability that only fetches and reports is `read-only` however
     #: far it reached — `rig-wb gh-check` runs `gh auth status` against github.com and leaves
     #: nothing behind, so it is `read-only`, `network="always"`.
+    #:
+    #: **One near-universal write is outside this axis, and is stated here rather than in
+    #: sixty-eight effect lines.** An invocation ordinarily appends a line to
+    #: `.rig/context.jsonl`, the usage log `wb context` reads — from `read-only` verbs too.
+    #: "Ordinarily" and not "always": `RIG_NO_CONTEXT_METER` switches it off, and a command
+    #: that ends before the meter is installed writes nothing either. It is a property of
+    #: running rig at all rather than of any capability's subject matter, so it does not
+    #: make a verb `writes-state`; repeating it per entry would bury the distinction each
+    #: effect line exists to draw. What `read-only` promises is that the thing the verb is
+    #: *about* — the task, the key, the ledger, the worktree — is unchanged afterwards.
     effect_class: str
 
     #: Whether it reaches off this machine; one of `NETWORK_REACH`.
