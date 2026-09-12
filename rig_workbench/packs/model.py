@@ -97,7 +97,7 @@ PROMPT_KINDS = frozenset(set(ASSET_DIRS) - {"eval-case", "eval-result", "resourc
 #: this to 2.12.0 fails 46 tests across five pack test files, one of them in that frozen
 #: file. So the constant cannot silently fall behind — which is what makes writing it here
 #: a relocation of the dependency rather than a loss of it.
-ENGINE_VERSION = "2.13.0"
+ENGINE_VERSION = "3.0.0"
 
 TIERS = ("project", "user", "org", "official", "core")
 

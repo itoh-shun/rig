@@ -1,12 +1,56 @@
 # Changelog
 
-## Unreleased
+## [3.0.0] - 2026-09-12
+
+### Breaking
+
+**Publisher signing is gone — signing, verification, trust roots, key generation and
+revocation, the whole rung.** `rig-wb pack sign` and `rig-wb pack keygen` are removed, and so is
+`--allow-unverified` on `pack install` and `pack update`. All four now exit 2: the two verbs as
+argparse's `invalid choice`, the flag as `unrecognized arguments`. That is the loud half, and it is
+loud on purpose — a pipeline that signed or that passed the flag stops on the next run rather than
+carrying on with a guarantee that is no longer there. `cryptography` leaves the dependency list with
+them; rig is stdlib plus `pyyaml` and `pytest` again.
+
+**Why: the cost of the first pack.** The rung was paid for entirely at the start — generate a key,
+keep it, sign each release, distribute a trust root, and teach every consumer to configure one —
+and it was charged to the person who had not yet decided whether rig was worth using, before they
+had installed anything. Removing it is a judgement that the barrier cost more than the rung
+returned, not that the rung was worthless.
+
+**What it cost, plainly.** Nothing now binds a pack's bytes to an author, and that binding was the
+only protection that worked on *first acquisition* — the moment the pack arrives from somewhere you
+have not checked, which is the moment that actually matters. The lock's hash chain is not a
+substitute and should not be read as one: it proves nothing changed *after* install, which says
+nothing about what was installed. Revocation has no mechanism left at all; a pack found to be
+malicious cannot be recalled by rig, only removed by hand wherever it landed. What remains is
+trust-on-first-use — an explicit consent before a project-tier asset executes — the lock's hash
+chain, and declaration-drift validation, which refuses any file the manifest did not declare and
+hashes every file it did.
+
+**Four upgrade situations, measured by running `install_pack` and `resolved_collection` against
+each shape rather than reasoned about.** Every "before" in this entry is the 2.13.0 release commit,
+because that is where a reader of this entry is upgrading from; a branch point is the wrong ruler
+for a changelog even when, as here, the two happen to coincide.
+
+| situation | what happens |
+|---|---|
+| a signed pack is installed; the lock says `verified-publisher` with both publisher columns filled | works, and says nothing. `pack list` still prints `verified-publisher`; nothing verifies it any more |
+| the lock says `verified-publisher` with null columns | `PackError: pack lock drift: invalid publisher trust`, and because resolution is fail-closed the whole tier goes down with it. Not a 3.0.0 change: 2.13.0 carries the same check and the same message, which is also why 2.x can never have written the combination |
+| `--allow-unverified` in a script or CI job | exit 2, argparse error — fails loudly |
+| `pack sign` or `pack keygen` in a pipeline | exit 2, `invalid choice` — fails loudly |
+
+The first row is the one to read twice: the label survives the upgrade and is still displayed, so a
+lock carrying it reads exactly as it did before while meaning strictly less. It is kept rather than
+rejected because dropping the value refuses such a lock outright, and on a fail-closed resolve path
+that is every `rig` run and not merely `pack`. New installs record `verified-local` or `unverified`,
+decided by the pack's own evidence — there is no third rung above them to reach for now.
 
 ### Added
 
 **One table of what rig can do — declaration only, nothing rewired.** `rig_workbench/registry/`
-now declares all 139 dispatchable capabilities as data: 39 top-level verbs, 51 under `rig-wb wb`,
-and 49 across `govern`, `pack`, `eval`, `baseline` and `githooks`. Each record carries what
+now declares all 137 dispatchable capabilities as data: 39 top-level verbs, 51 under `rig-wb wb`,
+and 47 across `govern`, `pack`, `eval`, `baseline` and `githooks`. Each record carries what
 argparse never asked anybody to write — what the person wanted (`intent`), what a machine can
 check before running (`preconditions`), the sentence to show immediately before it runs
 (`effect_line`), and two independent axes: what it disturbs on this machine (`effect_class`) and
@@ -189,7 +233,7 @@ heaviest check is that content was preserved. Schema and template ship in
 `japanese-writing` reviewer gains the sensor as an optional stdin pre-pass — evidence for
 `readability`, never a verdict.
 
-**Six ports, three ratchets, and the first of five pillars behind them.** `rig_workbench/ports/`
+**Six ports, three ratchets, and four of seven pillars behind them.** `rig_workbench/ports/`
 declares six protocols — `Presenter`, `ProcessRunner`, `FileStore`, `Env`, `GitRepo`, `Clock` —
 with one adapter module (`ports/local.py`) wrapping today's behaviour exactly. Three ratchets went
 in before any pillar moved, because stage 3 of `docs/v3-architecture-design-brief.ja.md` spans many
@@ -204,7 +248,9 @@ counted before, are 43. `pyproject.toml` bans the 22 calls the ports replace and
 unmigrated path in a per-file-ignores ledger whose 42 lines each carry the count sitting behind them.
 `tests/test_layering_contract.py` asserts the one import rule: a migrated pillar's judgement layer may
 reach the standard library, its own pillar, and `rig_workbench.ports`, and nothing else. A pillar's
-migration is *completed* by deleting its ledger line, and govern's — `68 print, 12 banned` — is gone.
+migration is *completed* by deleting its ledger line, and four of those lines are gone: govern's
+`68 print, 12 banned`, eval's `16 print, 31 banned`, packs' `51 print, 11 banned` and validation's
+`13 print, 3 banned`. `tests/test_layering_contract.py`'s `MIGRATED` names the same four.
 **Nothing a user runs behaves differently**, with the single exception recorded under Changed.
 
 **govern went first because it measured smallest, not because it looked easiest.** Of the five
@@ -239,11 +285,17 @@ same thirteen and a test reads the ban table out of `pyproject.toml` so the two 
 Widening it found a second `datetime.date.today()` in `validation/catalog.py` and raised
 `orchestrate` from 4 to 6; those numbers are re-measured, not regressed.
 
-**Four of the five pillars have not started.** The design brief records the remaining cost from the
-same ratchet and ledger: `eval`+`packs`+two `orchestrate` modules are one pillar because a 12-module
-cycle spans them (129 effect sites), the rest of `orchestrate` (272), `workbench` (562), and the 31
-modules directly under `rig_workbench/` (285), which are a bag rather than a layer. `validation/` is
-not a pillar at all — nothing outside it imports it.
+**What is left is three ledger lines, and they continue in 3.x.** The ledger states the remaining
+cost in the same units it charged the migrated four: `rig_workbench/orchestrate/**` is down to
+`0 print, 5 banned` — and those five are not a queue but a decision, the three import-time
+`os.environ` reads in `orchestrate/config.py` (wiring, not judgement: moving them changes *when* the
+value resolves) and two `time.time_ns()` sites whose reasons are written where they sit;
+`rig_workbench/workbench/**` stands at `513 print, 31 banned`, the largest pillar by far; and the 27
+modules directly under `rig_workbench/` carry `195 print, 69 banned` between them, listed one line
+each because ruff's per-file-ignores glob cannot express "directly under" without also matching the
+pillars and silently voiding their rows. `registry/` needs no line — it holds data and no effects —
+and neither does `ports/__init__.py`, which is protocols only; both pass the checks untouched, which
+is their design claim rather than an exemption.
 
 ### Changed
 
