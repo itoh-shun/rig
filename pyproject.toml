@@ -161,7 +161,7 @@ extend-select = [
 
 [tool.ruff.lint.per-file-ignores]
 # ── 恒久的に認めた場所。負債ではない ──────────────────────────────────
-# ここの 2 行は柱を待っていない。効果が **あるべき** 場所であり、消したら誤りになる。
+# ここの 3 行は柱を待っていない。効果が **あるべき** 場所であり、消したら誤りになる。
 # 下の台帳とは意図が違うので、混ぜずに分けてある。
 #
 # ports/local.py はアダプタ層そのもの: ポート 1 本につき 1 クラス、置き換える対象の
@@ -175,6 +175,17 @@ extend-select = [
 # を検査するためにあり、ポート経由に替えると製品ではなくポートを試すテストになる。
 # 期限つきの負債と称する筋合いがないので、恒久扱いにして台帳から外す。
 "tests/**" = ["T201", "TID251"]  # 2 print, 682 banned — CLI をプロセスとして駆動する側
+#
+# orchestrate/config.py は柱の **配線** である。import 時に RIG_HOME / os.getcwd() /
+# RIG_GLOBAL_RUNS_PATH / RIG_CONVERGENCE_K を読み、資産・実行ログ・state root が
+# どこかを答える。これを Env ポートへ移しても判定層から効果が出ていくわけではない
+# —— ここは何も判定していない —— が、**いつ解決するか** が import 時から初回呼び出し
+# 時へ変わる。12 モジュールがこれを import し、約 40 のテストがこの属性を
+# monkeypatch して rig を一時プロジェクトへ向けているので、それは誰も頼んでいない
+# 挙動変更である。だから移さないと決め、tests/test_layering_contract.py の
+# SHELL_MODULES にその理由を書き、ここは柱まるごとではなく **このファイル 1 本** の
+# 行にした。台帳が記録するのは例外であってディレクトリではない。
+"rig_workbench/orchestrate/config.py" = ["TID251"]  # 3 banned — 判定ではなく配線
 
 # ── 負債台帳 ──────────────────────────────────────────────────────────
 # 未移行の経路を 1 行ずつ、今日そこにある件数つきで並べる。柱がポートの背後に移れば、
@@ -185,11 +196,12 @@ extend-select = [
 # 先頭にあった `rig_workbench/govern/**`（68 print, 12 banned）、
 # `rig_workbench/eval/**`（16 print, 31 banned）、
 # `rig_workbench/packs/**`（51 print, 11 banned）、
-# `rig_workbench/validation/**`（13 print, 3 banned）はもう無い。第 3 段で最初から
-# 4 番目までに移った柱であり、その行の削除がこの台帳の言うとおり移行の完了そのものである。
-# govern と eval は tests/test_layering_contract.py の MIGRATED と対になっている。
-# packs と validation はまだ MIGRATED に入っていない —— 判定層に残る柱跨ぎの import 辺は
-# 次の pass の仕事で、govern と eval も同じ順序（先に効果地点、後から層の規則）で通した。
+# `rig_workbench/validation/**`（13 print, 3 banned）、
+# `rig_workbench/orchestrate/**`（0 print, 5 banned）はもう無い。第 3 段で最初から
+# 5 番目までに移った柱であり、その行の削除がこの台帳の言うとおり移行の完了そのものである。
+# この 5 本はすべて tests/test_layering_contract.py の MIGRATED に入っており、台帳の
+# 行と層の規則が同じ柱を指している。残るのは workbench と registry の 2 本である。
+# どの柱も同じ順序（先に効果地点、後から層の規則）で通した。
 # eval の行を消した時点で ruff が eval/ を実際に検査するようになる。行があるうちは
 # `--select TID251` を付けても per-file-ignores は外れないので、あの緑は何も測って
 # いなかった —— 消す前に、禁止呼び出しを 1 つ戻して規則が鳴ることを確かめてある。
@@ -228,10 +240,14 @@ extend-select = [
 # shell=True + stdout=stderr=DEVNULL が 3、端末へ素通しさせる dashboard が 1、
 # 封をした fd を子へ渡す pass_fds が 1。ポートは shell= も pass_fds も持たず、
 # 常に capture するので、どれも「まだ移していない」ではなく「移さない」）。
-# したがって報告に残る 5 件は subprocess ではなく、上の 2 段落の残り —— すなわち
-# config.py の os.environ 3 と time.time_ns 2 —— がそのまま全部である。
-# config.py が SHELL_MODULES に宣言された時点でこの行は消せる見込み。
-"rig_workbench/orchestrate/**" = ["TID251"]  # 0 print, 5 banned
+# したがって報告に残った 5 件は subprocess ではなく、上の 2 段落の残り —— すなわち
+# config.py の os.environ 3 と time.time_ns 2 —— がそのまま全部だった。
+# **その 5 件で柱の行は消えた。** time.time_ns の 2 件はどちらも恒久的に認めた例外
+# なので、subprocess の 5 件と同じ扱いに揃えて各地点へ `noqa: TID251` と理由を
+# 書いた —— 台帳の横の数字ではなく、コードのその行に理由がある方が正しい。残る
+# config.py の 3 件は上の「恒久的に認めた場所」へ、ファイル 1 本の行として移した。
+# よって `rig_workbench/orchestrate/**` の行は無い。ここまでが第 3 段で 5 番目に
+# 移った柱であり、この行の削除がこの台帳の言うとおり移行の完了そのものである。
 "rig_workbench/workbench/**" = ["T201", "TID251"]    # 513 print, 31 banned
 # root 直下のモジュールは glob 1 行にまとめられない。ruff の per-file-ignores は
 # パターンを設定ファイルからの相対パスに突き合わせるが、その glob では `*` が `/` を

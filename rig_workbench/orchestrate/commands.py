@@ -1077,8 +1077,11 @@ def cmd_run(args, *, out: Presenter = CONSOLE, env: Env = OS_ENV):
             # shape that does belong on the port: the clock for ordering, `secrets` for
             # uniqueness — and adopting it here would change this filename, which is a
             # decision about an artifact path and not a migration.
+            # noqa below is permanent, for the reason the paragraph above gives: the
+            # `Clock` port answers a moment, and what this needs is a value no second run
+            # can repeat.
             out_path = pathlib.Path(".rig") / "secure-runs" / (
-                f"run-{time.time_ns()}-{os.getpid()}.json"
+                f"run-{time.time_ns()}-{os.getpid()}.json"  # noqa: TID251
             )
         try:
             prepare_output_target(out_path)

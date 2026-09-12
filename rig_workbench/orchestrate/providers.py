@@ -509,7 +509,8 @@ def _record_benchmark_provider_call(
             # journal that nothing in this tree reads back; `Clock.stamp()` would change
             # the record `bench_providers` writes, and a `now_ns()` grown for one unread
             # field is a port method written from a name rather than from a call site.
-            "started_ns": time.time_ns(),
+            # The noqa is permanent for that reason, not a deferral.
+            "started_ns": time.time_ns(),  # noqa: TID251
         },
         ensure_ascii=True,
         separators=(",", ":"),
