@@ -405,7 +405,7 @@ recipe の上位は adaptive-bugfix 2,167 / writing 767 / japanese-writing 644�
 bugfix 144）。窓は `2026-09-09T15:52:13Z` から `2026-09-12T07:26:48Z`。`invoker` は 3,985 件が
 `direct` で、`rig-wb/2.13.0` が 111、`rig-wb/3.0.0` が 18。pack を引いた記録は 0 件。**テスト用の
 走行がそのまま残った台帳であって、人が `/rig:go` を打った記録ではない。** 残る 5 件は backend も
-`invoker` も `workbench`。下の「rig を rig に通した 18 本」の表の、最初の 5 行がその 5 件に
+`invoker` も `workbench`。下の「rig を rig に通した 29 本」の表の、最初の 5 行がその 5 件に
 あたる。
 
 V3 の作業そのものがどう回ったかは、この台帳の外にある。調整役は各レーンを生の Agent ツールで
@@ -671,8 +671,8 @@ max-parallel の既定 3 は `orchestrate/queueing.py:519`——`:696` ではな
 | T4 | `rig-wb list` / `review` をディスパッチ表から落とす | `rig_workbench/cli.py`・`tests/test_capability_registry_vs_cli.py` | `pytest tests/test_capability_registry_vs_cli.py tests/test_cli_surface_contract.py -q` | T1–T3 | 削 | **P2**（着地済み。能力 137→135） |
 | T5 | `agents/` 固有の 2 枚を `facets/personas/` へ移し、残り 10 枚を落とす | `agents/*.md`・`skills/engine/facets/personas/`・`facets/instructions/parallel-review.md` | `pytest tests/test_brick_resolution_declaration.py -q` ＋ 31＋2 枚の解決を確認 | T1–T3 | 削 | **P2**（着地済み。前提が崩れ、移動も削除も 0） |
 | T6 | `max-bugfix` を `bugfix` ＋ `checks:` のフラグに畳む | `skills/engine/recipes/max-bugfix.md`・`skills/engine/recipes/bugfix.md` | `pytest -q -k recipe` ＋ `wb route --type bugfix --json` が同じ recipe を返す | T3 | 削 | **P2**（見送り。スキーマに `checks:` を任意にする表現が無い） |
-| T7 | `.gitignore` の無断追記に同意を挟み、`hostcheck` の 2 回目以降の見え方を直す | `rig_workbench/workbench/lifecycle.py`・`tests/test_first_run_cost.py` | `pytest tests/test_first_run_cost.py -q`（新しい 2 本を足す） | T1–T3 | 削 | 単独（実行中） |
-| T8 | 最後の行の `cd … && claude` と README §1 の約束を、どちらかに寄せる | `rig_workbench/workbench/lifecycle.py`・`README.md`・`README.ja.md` | `pytest tests/test_docs_registry.py tests/test_first_run_cost.py -q` | T7 | 削 | 単独（実行中） |
+| T7 | `.gitignore` の無断追記に同意を挟み、`hostcheck` の 2 回目以降の見え方を直す | `rig_workbench/workbench/lifecycle.py`・`tests/test_first_run_cost.py` | `pytest tests/test_first_run_cost.py -q`（新しい 2 本を足す） | T1–T3 | 削 | 単独（着地済み） |
+| T8 | 最後の行の `cd … && claude` と README §1 の約束を、どちらかに寄せる | `rig_workbench/workbench/lifecycle.py`・`README.md`・`README.ja.md` | `pytest tests/test_docs_registry.py tests/test_first_run_cost.py -q` | T7 | 削 | 単独（着地済み） |
 | T9 | `commands/rig.md` を落とし、`SKILL.md` の description 行を直す | `commands/rig.md`・`skills/engine/SKILL.md` | `pytest tests/test_capability_registry_vs_surfaces.py -q`（30 枚の凍結は 30 のまま） | T0 | 削 | 単独（着地済み。削除ではなく非推奨 shim へ） |
 | T10 | ヘルプに出ない 15 動詞を 1 本ずつ監査する（`approve`/`next`/`check`/`verdict` は人のゲートに触るので最後） | `rig_workbench/cli.py`・`tests/test_capability_registry_vs_cli.py` | `pytest tests/test_capability_registry_vs_cli.py -q` | T4 | 削 | 単独（着地済み。13 本を監査し 9 載せ 4 残し 0 削除） |
 | T11 | D を `rig_workbench/workbench/` から **`rig_workbench/assurance/`** へ切り出し、`pyproject.toml` の台帳を直す（切り出し先は本ブリーフでは決めていなかったので、この run で決めた）。実測は 16 ファイル 7,872 行ではなく **19 ファイル 8,903 行・`print` 161**（T7/T8 の着地後は 160。18 動詞は 18 モジュールで、閉包が `org_knowledge` を 1 本足す） | `rig_workbench/workbench/`・`rig_workbench/assurance/`・`pyproject.toml` | `pytest tests/test_architecture_inventory.py tests/test_layering_contract.py -q` ＋ `--help` 差分 0（実測 127 本：`rig-wb --help` と、`tests/test_cli_surface_contract.py` が `--help` を解すと宣言する subcommand 126 本。§3 の 140 本とは合わないが、突き合わせていない） | T1–T3, T4 | 決 | 単独（着地済み） |
@@ -693,14 +693,15 @@ T0 と共有するので T0 に続ける。**id を `T0b` と書かなかった�
 id を読めないためである。** `orchestrate/plan_dispatch.py:142` の `^T\d+$` に外れた行は、
 読めなかった行として表ごと refuse される。番号を振り直すか読み手を広げるかは第 4 段で決める。
 
-#### rig を rig に通した 18 本
+#### rig を rig に通した 29 本
 
 T0・T1・T2・T3 と本ブリーフ自身の改稿は、`/rig:go` の workbench で走った。どれも隔離 worktree
 で実装し、ゲートを通してから base branch へ着地した。`.rig/runs.jsonl` に backend も `invoker` も
 `workbench` の記録が入ったのが、最初の 5 本。台帳の `backend` と `invoker` を引けば、この 5 件と
-残り 4,114 件を、いま初めて別々に数えられる。下表はそのあと着地した 13 本を足した 18 本である。
-レビュー欄は、run の diff.md が名指しした reviewer の persona 数と round 数。名指しの無い run は
-`—` を置いた。機械の記録である `review.json` は、どの run も verdict を 1 件までしか持たない。
+残り 4,114 件を、いま初めて別々に数えられる。下表はそのあと着地した 24 本を足した 29 本である。
+上から 18 行目までのレビュー欄は、run の diff.md が名指しした reviewer の persona 数と
+round 数。名指しの無い run は `—` を置いた。機械の記録である `review.json` は、どの run も
+verdict を 1 件までしか持たない。
 
 | run | 中身 | 着地 | ゲート | レビュー |
 |---|---|---|---|---|
@@ -722,6 +723,35 @@ T0・T1・T2・T3 と本ブリーフ自身の改稿は、`/rig:go` の workbench
 | `rig-20260912-101630` | A1（squash 失敗の分類） | `7bebdc5` | passed_with_warnings | 2 / 2 |
 | `rig-20260912-075021` | T12（`composition.py` と循環 5→4） | `1e2adad` | passed | 4 / 4 |
 | `rig-20260912-092922` | T9（`/rig:rig` を非推奨 shim に） | `9c2d4fc` | failed。`--force` で着地 | 3 / 3 |
+| `rig-20260912-104903` | docs（§11 に第 2 段を記録） | `630798c` | passed_with_warnings | 2 / 4 |
+| `rig-20260912-092924` | ja-lint（コードスパン内の抑止マーカーの無効化） | `a083cbb` | failed。`--force` で着地 | 4 / 10 |
+| `rig-20260912-102826` | secret scan（免除の rig checkout 限定） | `0a3cbfa` | passed_with_warnings | 3 / 7 |
+| `rig-20260912-093814` | T7・T8（初回実行の同意・差分表示と最後の行） | `b42a5f6` | passed_with_warnings | 4 / 10 |
+| `rig-20260912-111709` | T11（`assurance/` の切り出しと shim） | `60499df`・`ce06de7` | failed。`--force` で着地 | 6 / 11 |
+| `rig-20260912-120032` | G1（ゲートが判定した commit と着地の一致） | `7ca50c6` | passed_with_warnings | 5 / 13 |
+| `rig-20260912-130518` | R1（run-state 不在と usage の 3 件） | `fefef50` | passed_with_warnings | 4 / 8 |
+| `rig-20260912-133718` | G2（承認の branch tip への束縛） | `b5016ed` | passed_with_warnings | 5 / 10 |
+| `rig-20260912-140750` | V1（レビューが記録した負債 4 件） | `66bd4fe` | passed_with_warnings | 4 / 10 |
+| `rig-20260912-142222` | G3（`accept_force` の書き位置と拒否の記録） | `a3a7508` | passed_with_warnings | 5 / 13 |
+| `rig-20260912-151510` | C1（承認の裏書き照合と audit 重複の 4 行上限） | `8fbbe39` | passed_with_warnings | 5 / 13 |
+
+**`9c2d4fc` より後の 11 行は、この表が 18 行だった時点より後に着地した run である。** 並びは
+base branch への着地順で、run と commit の対応は commit message の `Run:` 行で引いた。着地欄の
+`8fbbe39` には `Run:` 行が無く、run の head `f5139ed` と木が一致することで引いた。
+`60499df`・`ce06de7` は 1 つの run が残した 2 つの commit である。レビュー欄はこの 11 行だけ、
+diff.md に代えて run の `reviews/` から数えている。persona 数はそのディレクトリのファイル数、
+round 数は各ファイルが記録した最大の round 番号の合計である。
+
+**この 2 通りの数え方は、同じ測定ではない。** 上の 18 行のうち 10 本は `reviews/` を持たず、
+残る 8 本も 1〜2 ファイルしか残していない。`reviews/` から数え直して同じ値になる行は、
+18 行に 1 つも無い。基を変えたのは、上の 18 行を `reviews/` から数え直せないためである。
+`rig-20260912-092924` の diff.md は test-reviewer を r3 と書き、`reviews/test-reviewer.md` は
+round 4 と名乗る。diff.md を数えれば 4 / 9、`reviews/` を数えれば 4 / 10 で、表には 10 が
+載っている。18 行側の round 数も、run ごとに数え方が違う。T13 の 17 は diff.md に並んだ
+verdict の数で、r 番号の最大を足すと 16 になる。r 番号を書かないのは ai-smell だけで、16 は
+それを 3 と読んだ数である。T14 の 8 は逆で、r 番号の最大の合計である。下の 11 行はレビュー
+本体そのものの数、上の 18 行は run を書いた側の要約の数で、1 つの列に並んでいても強さは
+同じでない。
 
 T3 が束ねたのは 152 項目。26 枚 29 ブロックの `acceptance:` が持つ項目数で、行に直すと 136 行
 （うち 8 行は inline list で、24 項目を載せる）。内訳は 78 項目が基準に束ね、74 項目が
@@ -768,12 +798,14 @@ provider 隔離とは別の理由。case を走らせられない点は変わら
 `.rig/runs/` には本 run を含めて 5 本のディレクトリが `status` が `running` のまま残る。
 どれも台帳にはまだ載っていない。
 
-`--force` で着地したのは 3 本になった。`.rig/audit.jsonl` は 3 行で、action はどれも
-`accept_force`。bypassed はどれも `acceptance_gate_not_failed` の 1 件。落ちた基準も
-どれも `prompt_regression_passed` の 1 件だけ。T3 が `2026-09-12T07:26:47Z`、T14 が
-`2026-09-12T09:21:17Z`、T9 が `2026-09-12T11:12:25Z`。T14 と T9 の acceptance.json では、
-どちらもこの 1 件を除く 17 基準が passed か warning。
-`prompt_regression_passed` の detail は 3 本とも `machine eval gate: infra_error` である。
+`8fbbe39` までで `--force` で着地したのは 5 本になった。`.rig/audit.jsonl` は 5 行で、action は
+どれも `accept_force`。bypassed はどれも `acceptance_gate_not_failed` の 1 件。落ちた基準が
+`prompt_regression_passed` の 1 件だけなのは、T3・T14・T9 と `rig-20260912-092924` の 4 本。
+ts はどれも `2026-09-12` で、順に `07:26:47Z`・`09:21:17Z`・`11:12:25Z`・`11:39:59Z`。
+4 本とも、acceptance.json ではこの 1 件を除く 17 基準が passed か warning。
+`prompt_regression_passed` の detail も 4 本とも `machine eval gate: infra_error` である。
+5 本目の `rig-20260912-111709`（`2026-09-12T13:00:42Z`）だけ落ちた基準が違う。`ja_lint_clean`
+の error 2 件で、その run の `prompt_regression_passed` は `debt` の warning に留まっている。
 この箱で機械 eval ゲートが出す答えは、case の合否ではない。case を走らせられないという
 事実のほうで、測定は CI の側にある。
 
@@ -818,7 +850,7 @@ secret scan は 3 本に分かれ、2 本が着地した。`d382330` は値の�
 見る規則を入れた。`206774e` は鍵らしい前置きを digest キーから外し、引用符の無い `key=value`
 を左辺と右辺に割った。`tests/test_secret_scan.py` は `bb173a7` で 43、`d382330` で 80、
 `206774e` で 113 テスト（`pytest --collect-only`）。3 本目は除外規則の 2 件で、
-`rig-20260912-102826` が実行中。
+`rig-20260912-102826` が `0a3cbfa` として着地した。
 
 A1 は、`git merge --squash` の非ゼロ終了をすべて衝突と呼んでいた accept の文面を 3 つに
 分けた。衝突は `--diff-filter=U` のパスを 20 件まで、identity 未設定は 3 つの綴りで見分け、
@@ -859,7 +891,7 @@ ja_textlint の抑止マーカーは、コードスパンの中でも効いて�
 囲われた文字列である。マーカーは 742 行目まで効き、646 行（文書の 87.1%）を黙らせていた。
 抑止を外して `rig-wb ja-lint` を 5 枚に当てると、error は 101 件。内訳は SKILL.md 51・
 BRICKS.md 19・RESOLVE.md 18・COMPOSE.md 12・RECIPE-SCHEMA.md 1 で、warning は 25 件。
-直す run（`rig-20260912-092924`）は実行中で、着地していない。その run の 1 回目の修正は、
+直す run（`rig-20260912-092924`）は `a083cbb` として着地した。その run の 1 回目の修正は、
 規範の強さか適用範囲が変わった hunk を 5 つ作った。`.rig/runs/` のその run の
 `reviews/ai-smell-reviewer.md` が、head `9fbc2c9` への round 1 の REJECT として記録している。
 節 (3) に S1〜S5 として並ぶ。S1 は `SKILL.md` の runner 代替を MUST から MAY に落とし、
@@ -932,7 +964,7 @@ CHANGELOG の G2 の項が債務として記録し、その run では直さな�
 1 件目は本 run が閉じた。残りは手を入れず、実測だけ置く。どれも同じ sink の周りにある。
 
 - `.rig/audit.jsonl` と `.rig/ledger.jsonl` に上限が無く、刈る仕掛けも無い。拒まれた force が 1 行になったので、他人が書かせられる行が増えた。繰り返し試せば両方が伸びる。閉じた（`410092c`）。実測は下に分けて置く。
-- `ledger._key` は 0 バイトの鍵を受け取り、それで署名する。本 run より前からある。
+- `ledger._key` は 0 バイトの鍵を受け取り、それで署名する。本 run より前からある。`8fbbe39` でもそのままである。`rig-20260912-172156` がこの件を扱ったが、本節を書き足した時点では未着地で、commit は無い。
 - `state.audit_append` は例外を全部握り潰す。書けなかった追記は誤りではなく欠落として残る。欠落は `verify` が報告するが、書けなかったこと自体は誰も報告しない。
 - squash と追記の間に窓が残る。ここで落ちると、適用された accept の `accept_force` が落ちる。置き換えた前の穴（適用されていない accept が記録される）より狭い。跡は、行の無い staged な木として残る。
 - 能力レジストリの `wb audit` の説明は、いまも force の記録だけを指している。ファイルは 2 種を持つ。
@@ -944,7 +976,7 @@ CHANGELOG の G2 の項が債務として記録し、その run では直さな�
 - `ledger._key` は `read_bytes` で鍵を読む。a3a7508 が据え置きと決めた件で、判断は変えていない。
 - `govern approve` は `--actor` をそのまま信じ、`RIG_USER` も認証されていない。誰が承認したかは
   「主張」であって「身元」ではない。台帳との突き合わせはこの主張の一貫性を見るだけで、主張そのものは
-  検証しない。
+  検証しない。`8fbbe39` でもそのままである。`rig-20260912-172156` がこの件を扱ったが、本節を書き足した時点では未着地で、commit は無い。
 - `state.audit_append` も `ledger._event_total` も、1 行書くたびにファイル全体を読み直す。
   どちらも entry ごとに `json.dumps` を回す。上限が守ろうとしている経路そのもので計算量が
   二次になる。`govern.ledger.append` が `prev` のために前から払っていた費用と同じ形で、上限は
