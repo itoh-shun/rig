@@ -16,7 +16,6 @@ import stat as _stat
 from dataclasses import dataclass
 from typing import Protocol
 
-from .. import bench_providers as _bench_provider_patches
 from ..ports import Env, FileStore, Presenter, ProcessRunner
 from ..ports.local import CONSOLE, LOCAL_FILES, OS_ENV, SUBPROCESS
 from . import config
@@ -24,6 +23,7 @@ from . import perf
 from .gates import is_runtime_gate
 from .adaptive import analyze_diff, invocation_limit
 from .pack_surfaces import PACK_SURFACES, PackError
+from .package_surfaces import CALLER_IDENTITY, PATCH_APPLIER
 from .quarantine import wrap_untrusted
 from .recipes import (git_diff_lines, learned_auto_route, load_manifest,
                       resolve_auto_route, size_class)
@@ -79,6 +79,60 @@ class PackComposition(Protocol):
 
     def builtin(self) -> dict:
         """The bundled packs, keyed `(namespace, pack_id)`, with the core ids applied."""
+        ...
+
+
+class PatchApplier(Protocol):
+    """What a tool-free local generator needs to be given writable parity.
+
+    A provider that cannot edit files is asked for a unified diff instead, and three things
+    then have to happen to it: the prompt has to carry a snapshot of the workspace, the
+    answer has to be checked for being a unified diff at all before anything touches the
+    tree, and it has to be applied through `git apply` — once dry, once for real. All three
+    are `rig_workbench.bench_providers`' rules, written for the benchmark harness and reused
+    here so that a local generator behaves identically under `bench` and under a run.
+
+    Stated as a protocol rather than imported, because the import is what
+    `tests/test_layering_contract.py` forbids: a judgement module may reach the standard
+    library, its own pillar and the six ports, and `rig_workbench.bench_providers` is none
+    of the three. `package_surfaces.PATCH_APPLIER` satisfies this shape and is what every
+    shipped caller passes; it reaches the functions through the module at call time, because
+    `tests/test_bench_providers.py` substitutes `_run_git_apply` by assigning to the module
+    attribute — which is what the alias this import used to carry, `_bench_provider_patches`,
+    was saying.
+    """
+
+    def patch_prompt(self, prompt: str, workspace: pathlib.Path) -> str:
+        """The prompt with the workspace snapshot a diff has to be written against."""
+        ...
+
+    def validate(self, workspace: pathlib.Path, patch: str) -> None:
+        """Raise `ValueError` unless `patch` is a unified diff this workspace can take."""
+        ...
+
+    def apply(self, workspace: pathlib.Path, patch: str, *, check_only: bool):
+        """Run `git apply`, dry or for real, and return its completed process."""
+        ...
+
+
+class CallerIdentity(Protocol):
+    """What the telemetry writer needs: which harness invoked rig.
+
+    A hint for runtime and reviewer selection, never an input to a rule — `caller` is
+    resolved in this module, the driver, and `tests/test_caller_contract.py` forbids the
+    four decisive files from mentioning it at all, because a gate that can see who called it
+    is a gate that can soften for one harness.
+
+    Stated as a protocol rather than imported, because the import is what
+    `tests/test_layering_contract.py` forbids: `rig_workbench.caller` is neither this
+    pillar nor a port. `package_surfaces.CALLER_IDENTITY` satisfies this shape, and keeps
+    the import inside its function for the reason this module's own comment already gave:
+    `caller` pulls in `workbench.injection` for the shared list of characters that make
+    printed text lie, and the orchestrator should not need the workbench package to start.
+    """
+
+    def __call__(self) -> dict:
+        """The attribution record telemetry writes."""
         ...
 
 
@@ -567,11 +621,12 @@ def _dispatch_provider(provider: str, role: str, prompt: str, cfg: dict, persona
     return r.returncode, out
 
 
-def _run_local_patch_generator(provider: str, prompt: str, cfg: dict) -> tuple[int, str]:
+def _run_local_patch_generator(provider: str, prompt: str, cfg: dict, *,
+                               patches: PatchApplier = PATCH_APPLIER) -> tuple[int, str]:
     """Give tool-free local generators writable parity through a validated patch."""
     workspace = pathlib.Path(cfg["cwd"])
     try:
-        patch_prompt = _bench_provider_patches._patch_prompt(prompt, workspace)
+        patch_prompt = patches.patch_prompt(prompt, workspace)
     except OSError as error:
         return 1, f"[provider workspace snapshot failure: {type(error).__name__}: {error}]"
 
@@ -580,12 +635,12 @@ def _run_local_patch_generator(provider: str, prompt: str, cfg: dict) -> tuple[i
         return returncode, patch
 
     try:
-        _bench_provider_patches._validate_unified_diff(workspace, patch)
+        patches.validate(workspace, patch)
     except ValueError as error:
         return 1, f"[provider malformed output: {error}]"
 
     try:
-        checked = _bench_provider_patches._run_git_apply(workspace, patch, check_only=True)
+        checked = patches.apply(workspace, patch, check_only=True)
     except (OSError, UnicodeError, subprocess.SubprocessError) as error:
         return 1, f"[provider patch application failure: {type(error).__name__}: {error}]"
     if checked.returncode != 0:
@@ -593,7 +648,7 @@ def _run_local_patch_generator(provider: str, prompt: str, cfg: dict) -> tuple[i
         return 1, f"[provider malformed output: {detail}]"
 
     try:
-        applied = _bench_provider_patches._run_git_apply(workspace, patch, check_only=False)
+        applied = patches.apply(workspace, patch, check_only=False)
     except (OSError, UnicodeError, subprocess.SubprocessError) as error:
         return 1, f"[provider patch application failure: {type(error).__name__}: {error}]"
     if applied.returncode != 0:
@@ -3527,7 +3582,7 @@ def run_loop(state: dict, sp: pathlib.Path | None, gen: str, ver: str,
     return last
 
 
-def _caller_record() -> dict:
+def _caller_record(*, identity: CallerIdentity = CALLER_IDENTITY) -> dict:
     """Who invoked rig, resolved here and handed to the telemetry writer (#548, slice 4).
 
     Here rather than in `runstate`, which holds gate evaluation and which
@@ -3536,13 +3591,12 @@ def _caller_record() -> dict:
     decides what to run and with which provider, and resolving an attribution here keeps the
     decision and the gate in different files.
 
-    Imported late for the same reason the rest of this module defers: `rig_workbench.caller`
-    pulls in `workbench.injection` for the shared list of characters that make printed text
-    lie, and the orchestrator should not need the workbench package to start.
+    The import that used to sit inside this function — deferred because
+    `rig_workbench.caller` pulls in `workbench.injection` for the shared list of characters
+    that make printed text lie, and the orchestrator should not need the workbench package
+    to start — is now in `package_surfaces`, which defers it there for the same reason.
     """
-    from rig_workbench import caller as caller_mod
-
-    return caller_mod.detect().as_record()
+    return identity()
 
 
 def run_dag(state: dict, sp: pathlib.Path | None, gen_list: list[str], ver: str,

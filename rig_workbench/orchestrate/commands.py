@@ -13,7 +13,6 @@ from collections import Counter
 from functools import wraps
 from typing import Protocol
 
-from .. import repo_paths
 from ..ports import Clock, Env, Presenter, ProcessRunner
 from ..ports.local import CONSOLE, OS_ENV, SUBPROCESS, SYSTEM_CLOCK
 from . import config
@@ -42,6 +41,33 @@ from .secure_fs import (
 from .batch_surface import KNOWN_PROJECTS
 from .govern_surfaces import GOVERN_SURFACES
 from .pack_surfaces import PackError
+from .package_surfaces import SCRIPT_LOCATOR
+
+
+class ScriptLocator(Protocol):
+    """What `runs --html` needs in order to find `scripts/dashboard.py`.
+
+    The package is installed without a `scripts/` sibling, so finding one means searching
+    for a checkout — `RIG_HOME`, then the install source, then the current directory and its
+    parents — rather than computing a path relative to this file, which lands inside
+    site-packages once installed and finds no `scripts/` at all. That search is
+    `rig_workbench.repo_paths`' rule, held in one place on purpose.
+
+    Stated as a protocol rather than imported, because the import is what
+    `tests/test_layering_contract.py` forbids: a judgement module may reach the standard
+    library, its own pillar and the six ports, and `rig_workbench.repo_paths` is none of the
+    three. `package_surfaces.SCRIPT_LOCATOR` satisfies this shape, and `mcp_scan.py` declares
+    the same two questions for the same reason — two callers, two narrow declarations, one
+    adapter, which is how `rig_surfaces` holds eight of them.
+    """
+
+    def find(self, name: str) -> pathlib.Path | None:
+        """The repository's `scripts/<name>`, or None when no checkout holds one."""
+        ...
+
+    def expected(self, name: str) -> pathlib.Path:
+        """Where `scripts/<name>` would be — the path an error message names."""
+        ...
 
 
 class StageGovernance(Protocol):
@@ -1834,7 +1860,8 @@ def cmd_otel(args, *, out: Presenter = CONSOLE):
         out.out(f"[otel] WARN export failed — {line}")
 
 
-def cmd_runs(args, *, out: Presenter = CONSOLE):
+def cmd_runs(args, *, out: Presenter = CONSOLE,
+             scripts: ScriptLocator = SCRIPT_LOCATOR):
     """Run telemetry listing: runs [--limit N] [--recipe R] [--personas] [--html <path>] [--since YYYY-MM-DD].
 
     Reads .rig/runs.jsonl (appended by telemetry_append; the manual backend appends the same
@@ -1878,9 +1905,9 @@ def cmd_runs(args, *, out: Presenter = CONSOLE):
         # Shared resolver: RIG_HOME, then the install source, then cwd. A path
         # computed from this file's parents lands inside site-packages once
         # installed, where there is no scripts/ at all.
-        dash = repo_paths.find_script("dashboard.py")
+        dash = scripts.find("dashboard.py")
         if dash is None:
-            out.out(f"[ERROR] dashboard.py not found: {repo_paths.script_path('dashboard.py')}")
+            out.out(f"[ERROR] dashboard.py not found: {scripts.expected('dashboard.py')}")
             sys.exit(1)
         cmd = [sys.executable, str(dash), "--repo", str(config.INVOCATION_CWD),
                "--out", html_out, "--limit", str(limit)]
