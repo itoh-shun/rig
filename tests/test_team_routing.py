@@ -13,8 +13,8 @@ import sys
 
 import pytest
 
-from rig_workbench.workbench import team_routing
-from rig_workbench.workbench.team_routing import (ARCHITECTURE_VERIFIER, ASSURANCE_ROLES,
+from rig_workbench.assurance import team_routing
+from rig_workbench.assurance.team_routing import (ARCHITECTURE_VERIFIER, ASSURANCE_ROLES,
                                                   DEVELOPER, JUDGE, MEASURED, PLANNER,
                                                   SCHEMA, SECURITY_VERIFIER, SHADOW,
                                                   UNMEASURED, Assignment, Constraints,
@@ -278,10 +278,19 @@ def test_the_module_neither_runs_a_process_nor_calls_a_model():
     """Deciding a provider is right for an authentication review is reading evidence, weighing
     it and concluding. A module that did it would leave nothing a gate could check."""
     import ast
-    tree = ast.parse((REPO_ROOT / "rig_workbench" / "workbench"
+    tree = ast.parse((REPO_ROOT / "rig_workbench" / "assurance"
                       / "team_routing.py").read_text(encoding="utf-8"))
     reaching = {"subprocess", "socket", "http", "urllib", "requests", "os", "open"}
     judging = {"validate", "load", "violations", "check"}
+    # An `ast.walk` loop that matches nothing passes, so an empty or mis-pathed file would
+    # read as a clean module. Assert the functions being judged are in the file first.
+    found = {node.name for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)}
+    assert judging <= found, (
+        "the module this test reads does not define the functions it is about: "
+        f"{sorted(judging - found)}. The loop below judges whatever it finds, "
+        "so a file that lost these names — or a path that stopped resolving to this "
+        "module — would walk zero functions and pass."
+    )
     for node in ast.walk(tree):
         if not (isinstance(node, ast.FunctionDef) and node.name in judging):
             continue

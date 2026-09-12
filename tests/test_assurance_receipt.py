@@ -12,7 +12,7 @@ import re
 import pytest
 
 from rig_workbench.eval.cases import ISOLATION_RANK
-from rig_workbench.workbench import assurance
+from rig_workbench.assurance import assurance
 from rig_workbench.workbench.state import sign_provenance
 
 
@@ -676,7 +676,7 @@ def test_the_page_accounts_for_every_field_a_contract_has():
     """
     import dataclasses
 
-    from rig_workbench.workbench import intent
+    from rig_workbench.assurance import intent
 
     fields = {f.name for f in dataclasses.fields(intent.IntentContract)}
     assert assurance._unrendered(fields, assurance._INTENT_RENDERED,

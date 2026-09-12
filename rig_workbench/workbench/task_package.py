@@ -77,7 +77,7 @@ nothing as evidence.
 from __future__ import annotations
 
 from ..orchestrate.quarantine import strip_invisible, wrap_untrusted
-from . import production_outcome as outcome
+from ..assurance import production_outcome as outcome
 
 #: The three origins a relayed figure may carry, in `production_outcome`'s words.
 RELAYED_KINDS = (outcome.MEASURED, outcome.REPORTED, outcome.UNMEASURED)

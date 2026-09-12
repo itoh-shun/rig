@@ -114,16 +114,24 @@ PORT_LAYER_PACKAGE = "ports"
 BASELINE_RUNTIME_CYCLES: frozenset[tuple[str, ...]] = frozenset(
     {
         ("rig_workbench.cli", "rig_workbench.githooks"),
+        # Renamed, not re-added. Both of these components are the same modules in the
+        # same shape as at 9d038b7; design brief §11 T11 moved them from
+        # `rig_workbench/workbench/` to `rig_workbench/assurance/`, and an exact set of
+        # member tuples has to follow the members. Four components before the move and
+        # four after — the move neither created nor closed one, so the count is not
+        # lowered here and nothing new is frozen. The re-export shims left at the old
+        # paths import only the new package and each other not at all, so they add no
+        # edge either direction.
         (
-            "rig_workbench.workbench.assurance",
-            "rig_workbench.workbench.assurance_target",
-            "rig_workbench.workbench.assurance_wiring",
-            "rig_workbench.workbench.intent_wiring",
+            "rig_workbench.assurance.assurance",
+            "rig_workbench.assurance.assurance_target",
+            "rig_workbench.assurance.assurance_wiring",
+            "rig_workbench.assurance.intent_wiring",
         ),
         ("rig_workbench.workbench.check_synthesis", "rig_workbench.workbench.instincts"),
         (
-            "rig_workbench.workbench.knowledge_candidate",
-            "rig_workbench.workbench.org_knowledge",
+            "rig_workbench.assurance.knowledge_candidate",
+            "rig_workbench.assurance.org_knowledge",
         ),
     }
 )
@@ -176,6 +184,27 @@ BASELINE_EFFECT_SITES: dict[str, dict[str, int]] = {
     # deletes would be a port method written from a name rather than from a call site,
     # which is the thing `ports/__init__.py` says it will not do. So 1 is the floor until
     # that write has a reason to be a port call.
+    # The assurance family, split out of `workbench` by design brief §11 T11: the 18
+    # `wb` verbs an external orchestrator drives (receipt, contract, import, intent,
+    # intent-derive, assurance-target, assurance-derive, synthesise, dev-loop,
+    # route-team, budget-plan, provenance, expected-outcome, effectiveness,
+    # knowledge-candidate, change-graph, anomaly-trigger, compose-options), 19 modules
+    # and 8,903 lines. 161 at the split; 160 once §11 T7/T8's `import_task` print — one of
+    # that pair's five — was ported onto this side of the move.
+    #
+    # **This is a ceiling that arrived at its measured value, not a pillar behind the
+    # ports.** Every number here was already in `workbench`'s entry the commit before;
+    # the move re-bucketed them and put nothing behind a `Presenter`, a `FileStore` or a
+    # `Clock`. It is the ordinary ratchet from here on: these six only come down, and a
+    # `print` that leaves this package for the port lowers this line in the same commit.
+    "assurance": {
+        "print": 160,
+        "subprocess": 4,
+        "open_write": 1,
+        "write_text": 6,
+        "env": 0,
+        "clock": 3,
+    },
     "eval": {
         "print": 0,
         "subprocess": 0,
@@ -465,18 +494,30 @@ BASELINE_EFFECT_SITES: dict[str, dict[str, int]] = {
         "env": 0,
         "clock": 0,
     },
-    # The unmigrated pillar. 513 until §11 T7/T8 removed five `print` sites from it, and 508
-    # is the walk's answer after they landed: two where `ensure_rig_gitignored` took the
+    # The unmigrated pillar, and the one entry two landings moved in the same release.
+    #
+    # §11 T7/T8 took five `print` sites off it — two where `ensure_rig_gitignored` took the
     # `Presenter` and `Env` ports and its two callers stopped printing its outcome for it
     # (18c4021), three where the lines `new` closes with went onto the same presenter
-    # (2ff7696). Measured, not derived — run the walk before editing this literal again.
+    # (2ff7696) — which is the 513 -> 508 that commit recorded.
+    #
+    # §11 T11 then split the assurance family out into `rig_workbench/assurance/`, and what
+    # is left here came down by exactly what left: 348 `print`, 7 `subprocess`, 4
+    # `open(w/a)`, 7 `write_text`, 9 `clock`, `env` unmoved at 8. Nothing was put behind a
+    # port by that move, so this entry and `assurance`'s sum to 508 / 11 / 5 / 13 / 8 / 12
+    # kind by kind — one of T7/T8's five prints was `import_task`'s, so it is counted in
+    # `assurance`'s 160 rather than twice. The 19 re-export shims left at the old paths
+    # contribute 0 to this bucket: they define nothing and call nothing, which is the
+    # property that makes the sum exact rather than approximate.
+    #
+    # Measured, not derived — run the walk before editing either literal again.
     "workbench": {
-        "print": 508,
-        "subprocess": 11,
-        "open_write": 5,
-        "write_text": 13,
+        "print": 348,
+        "subprocess": 7,
+        "open_write": 4,
+        "write_text": 7,
         "env": 8,
-        "clock": 12,
+        "clock": 9,
     },
 }
 

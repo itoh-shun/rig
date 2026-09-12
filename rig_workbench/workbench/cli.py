@@ -35,33 +35,33 @@ from .. import context_meter
 from ..gh_requirement import advise_gh
 from .accept import cmd_accept, cmd_diff, cmd_discard, cmd_gc, cmd_verify_provenance
 from .anchors import cmd_scan_anchors
-from .assurance import cmd_receipt
+from ..assurance.assurance import cmd_receipt
 from .cockpit import cmd_cockpit
-from .assurance_target import cmd_assurance_target
-from .assurance_wiring import cmd_assurance_derive
-from .contract import cmd_contract
-from .development_loop import cmd_dev_loop
-from .assurance_budget import cmd_budget_plan
-from .production_outcome import cmd_production_outcome
-from .provenance_graph import cmd_provenance
-from .synthesis import cmd_synthesis
-from .team_routing import cmd_route_team
-from .workflow_effectiveness import cmd_workflow_effectiveness
-from .intent import cmd_intent
-from .intent_wiring import cmd_derive
-from .knowledge_candidate import cmd_knowledge_candidate
-from .change_graph import cmd_change_graph
-from .anomaly_trigger import cmd_anomaly_trigger
+from ..assurance.assurance_target import cmd_assurance_target
+from ..assurance.assurance_wiring import cmd_assurance_derive
+from ..assurance.contract import cmd_contract
+from ..assurance.development_loop import cmd_dev_loop
+from ..assurance.assurance_budget import cmd_budget_plan
+from ..assurance.production_outcome import cmd_production_outcome
+from ..assurance.provenance_graph import cmd_provenance
+from ..assurance.synthesis import cmd_synthesis
+from ..assurance.team_routing import cmd_route_team
+from ..assurance.workflow_effectiveness import cmd_workflow_effectiveness
+from ..assurance.intent import cmd_intent
+from ..assurance.intent_wiring import cmd_derive
+from ..assurance.knowledge_candidate import cmd_knowledge_candidate
+from ..assurance.change_graph import cmd_change_graph
+from ..assurance.anomaly_trigger import cmd_anomaly_trigger
 from .config import (TASK_TYPES, VALID_CRITERION_STATUS, VALID_STEP_STATUS,
                      VALID_VERDICT)
 from .confidence import cmd_confidence
-from .compose_options import cmd_compose_options, non_negative_diff
+from ..assurance.compose_options import cmd_compose_options, non_negative_diff
 from .context_report import cmd_context
 from .destructive import cmd_scan_destructive
 from .detection_corpus import cmd_drill_corpus
 from .digest import cmd_digest
 from .feedback import cmd_record_commit, cmd_record_outcome, cmd_trace_commit
-from .import_task import cmd_import
+from ..assurance.import_task import cmd_import
 from .injection import cmd_scan_injection
 from .instincts import (_INSTINCT_CONFIDENCE_THRESHOLD, _INSTINCT_DECAY_DAYS,
                         cmd_instincts)

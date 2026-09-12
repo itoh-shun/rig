@@ -27,8 +27,8 @@ import sys
 
 import pytest
 
-from rig_workbench.workbench import intent, provenance_graph
-from rig_workbench.workbench.production_outcome import (
+from rig_workbench.assurance import intent, provenance_graph
+from rig_workbench.assurance.production_outcome import (
     ACHIEVED, AT_LEAST, AT_MOST, CONFIRMED, DECLARED, ESTIMATED, EXPECTATION, GUARDRAIL,
     INCONCLUSIVE, INVALID, MEASURED, NOT_ACHIEVED, OBJECTIVE, OBSERVATION, OUTCOMES,
     PARTIALLY_ACHIEVED, PRECEDENCE, RECORD_NAME, REGRESSED, ROLE_KEYS, SCHEMA, UNMEASURED,
@@ -111,7 +111,7 @@ def test_the_valid_documents_are_accepted():
 def test_the_import_time_vocabulary_check_is_looking_where_it_claims(monkeypatch):
     """The check itself, not just its current answer: a broken pairing has to be found."""
     assert _vocabulary_gaps() == []
-    monkeypatch.setattr("rig_workbench.workbench.production_outcome.PRECEDENCE",
+    monkeypatch.setattr("rig_workbench.assurance.production_outcome.PRECEDENCE",
                         (REGRESSED, NOT_ACHIEVED, UNMEASURED, INCONCLUSIVE, ACHIEVED))
     assert _reasons(_vocabulary_gaps(), "'partially-achieved' is in OUTCOMES")
 
@@ -418,7 +418,7 @@ def test_a_change_that_is_missing_or_blank_is_refused():
 def test_the_object_id_rule_is_imported_rather_than_restated():
     """One declaration site. `provenance_graph` already refuses object *shape* before it will
     ask git, and a second copy of the pattern is a second place for it to be wrong."""
-    from rig_workbench.workbench import production_outcome
+    from rig_workbench.assurance import production_outcome
 
     assert production_outcome.OBJECT_ID is provenance_graph.OBJECT_ID
 
@@ -706,7 +706,7 @@ def test_the_comparison_is_made_in_exactly_one_place():
                and any(form in path.read_text(encoding="utf-8") for form in reaching_in)
                and "cmd_production_outcome" not in path.read_text(encoding="utf-8")]
     assert callers == []
-    body = (REPO_ROOT / "rig_workbench" / "workbench"
+    body = (REPO_ROOT / "rig_workbench" / "assurance"
             / "production_outcome.py").read_text(encoding="utf-8")
     assert body.count("= compare(") == 1
 
@@ -720,7 +720,7 @@ def test_recorded_keeps_absent_unreadable_and_invalid_apart(tmp_path):
     the first time. `assurance_wiring` already splits exactly these at this layer, and the
     words are imported from it rather than spelled again.
     """
-    from rig_workbench.workbench import assurance_wiring
+    from rig_workbench.assurance import assurance_wiring
 
     assert (UNREADABLE_FILE, INVALID) == (assurance_wiring.UNREADABLE_FILE,
                                           assurance_wiring.INVALID)
@@ -1000,7 +1000,7 @@ def test_a_die_deeper_in_the_setup_is_caught_rather_than_allowed_past(git_repo, 
     from types import SimpleNamespace
 
     from rig_workbench.workbench import state
-    from rig_workbench.workbench.production_outcome import cmd_production_outcome
+    from rig_workbench.assurance.production_outcome import cmd_production_outcome
 
     monkeypatch.chdir(git_repo)
     args = _files(git_repo, _expectation(change=head_sha), _observation(change=head_sha))

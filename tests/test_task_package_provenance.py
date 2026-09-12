@@ -19,7 +19,8 @@ apart from a check that runs. That test shows the check firing.
 
 import pytest
 
-from rig_workbench.workbench import production_outcome, task_package
+from rig_workbench.workbench import task_package
+from rig_workbench.assurance import production_outcome
 
 TASK = {
     "task_id": "rig-1", "input": "make it faster", "task_type": "feature",

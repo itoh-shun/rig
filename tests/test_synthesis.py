@@ -13,8 +13,8 @@ import sys
 
 import pytest
 
-from rig_workbench.workbench import synthesis
-from rig_workbench.workbench.synthesis import (OPERATOR_REQUESTED, PLANNER_PROPOSED,
+from rig_workbench.assurance import synthesis
+from rig_workbench.assurance.synthesis import (OPERATOR_REQUESTED, PLANNER_PROPOSED,
                                               Required, check_floor,
                                               POLICY_REQUIRED, SCHEMA, load,
                                                floor, missing_floor, resolve, validate,

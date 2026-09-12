@@ -228,7 +228,7 @@ def test_the_gate_node_reports_the_recorded_status_not_a_recomputed_one(task):
 
 def test_the_decision_node_comes_from_the_receipt(task):
     root, task_id = task
-    from rig_workbench.workbench import assurance
+    from rig_workbench.assurance import assurance
     root_, task_id_ = task
     g = graph.build_graph(root, task_id)
     receipt = assurance.build_receipt(root_, task_id_)

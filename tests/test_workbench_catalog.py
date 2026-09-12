@@ -48,7 +48,7 @@ def parser_for(*names):
 
 CLI = parser_for("receipt", "contract")
 
-_LISTED = "> | **assurance** | 受領書と BYOO 契約 | `rig_workbench/workbench/assurance.py` |"
+_LISTED = "> | **assurance** | 受領書と BYOO 契約 | `rig_workbench/assurance/assurance.py` |"
 
 
 def skill(section_body=_LISTED, before="", after=""):

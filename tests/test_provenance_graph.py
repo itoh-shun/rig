@@ -13,8 +13,8 @@ import sys
 
 import pytest
 
-from rig_workbench.workbench import provenance_graph as graph_mod
-from rig_workbench.workbench.provenance_graph import (COMMIT, CONFIRMED, EVIDENCE, GOAL,
+from rig_workbench.assurance import provenance_graph as graph_mod
+from rig_workbench.assurance.provenance_graph import (COMMIT, CONFIRMED, EVIDENCE, GOAL,
                                                       IMPLEMENTS, INFERRED, INTENT,
                                                       INVALIDATES, REQUIREMENT, SATISFIES,
                                                       DERIVED_FROM, SCHEMA,
@@ -316,10 +316,19 @@ def test_the_judgement_touches_nothing_and_calls_no_model():
     """Deciding that this commit implements that requirement is reading two things and
     concluding a third. A module that did it would leave nothing a gate could check."""
     import ast
-    tree = ast.parse((REPO_ROOT / "rig_workbench" / "workbench"
+    tree = ast.parse((REPO_ROOT / "rig_workbench" / "assurance"
                       / "provenance_graph.py").read_text(encoding="utf-8"))
     reaching = {"subprocess", "socket", "http", "urllib", "requests", "os", "open"}
     judging = {"validate", "load", "trace", "invalidated", "node_problems", "edge_problems"}
+    # An `ast.walk` loop that matches nothing passes, so an empty or mis-pathed file would
+    # read as a clean module. Assert the functions being judged are in the file first.
+    found = {node.name for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)}
+    assert judging <= found, (
+        "the module this test reads does not define the functions it is about: "
+        f"{sorted(judging - found)}. The loop below judges whatever it finds, "
+        "so a file that lost these names — or a path that stopped resolving to this "
+        "module — would walk zero functions and pass."
+    )
     for node in ast.walk(tree):
         if not (isinstance(node, ast.FunctionDef) and node.name in judging):
             continue

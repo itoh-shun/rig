@@ -70,7 +70,7 @@ Proving the rule on more than the tree it happens to be run against
 -------------------------------------------------------------------
 
 `MIGRATED` names `govern`, `eval`, `packs`, `validation` and `orchestrate`, and five pillars
-of seven is still not much of a scan: two are outside the rule, and all five of them pass it
+of eight is still not much of a scan: two are outside the rule, and all five of them pass it
 today, so the real-tree check can only ever say that nothing has regressed. A check that passes because it found nothing keeps passing if
 the checker is written backwards — which is exactly how a check comes to exist without
 ever having been checked, and it was the whole of this file's evidence for the stage in
@@ -205,6 +205,26 @@ PORT_NAMES = ("Presenter", "ProcessRunner", "FileStore", "Env", "GitRepo", "Cloc
 #: `config.py` is declared a shell below, and the entry there states the decision rather than
 #: summarising it: it is configuration, resolved once at import, and moving it behind `Env`
 #: would change *when* it resolves.
+#: `assurance` — the eighth pillar, split out of `workbench` by design brief §11 T11 — is
+#: **deliberately not here**, and the measurement rather than the split is the reason. The
+#: rule this file enforces allows a judgement module the standard library, its own pillar
+#: and `rig_workbench.ports`, and the new package clears none of those three: ten of its
+#: nineteen modules import `rig_workbench.workbench.state` (`assurance`, `assurance_target`,
+#: `compose_options`, `contract`, `development_loop`, `import_task`, `knowledge_candidate`,
+#: `production_outcome`, `provenance_graph`, `workflow_effectiveness`), `import_task` alone
+#: adds `workbench.` `config`, `capabilities`, `flow_view`, `lifecycle`, `progress` and
+#: `runtime`, and `compose_options` and `import_task` between them reach
+#: `orchestrate.recipes`, `packs.model`, `packs.resolver`, `govern.identity` and
+#: `rig_workbench.caller`. Not one of them names a port.
+#:
+#: That is worth stating plainly because the brief said the opposite: "D shares no state
+#: with A (the lifecycle)" is how §11 justified the split, and it is not what the imports
+#: say. The split still earns its keep — the workbench is the task lifecycle again, and the
+#: 161 effect sites that left it are now somebody's ratchet rather than nobody's — but a
+#: package moving to a new directory is not a package moving behind the ports, and putting
+#: it in `MIGRATED` would claim the second because the first happened. It joins when those
+#: edges are inverted into protocols it declares, the same order `govern`, `eval`, `packs`,
+#: `validation` and `orchestrate` each went in: effect sites first, the layering rule after.
 MIGRATED: tuple[str, ...] = ("govern", "eval", "packs", "validation", "orchestrate")
 
 #: The shell of each pillar: modules that wire, not modules that judge. Closed list —
@@ -1575,7 +1595,7 @@ def test_the_scan_reads_real_files_and_finds_real_violations() -> None:
     """The one thing the corpus cannot prove: that the walk reads rig_workbench/.
 
     Applied to every pillar as if it had migrated and with no shell exempt, the rule must
-    object to something — two of the seven pillars are still 未着手, and the five that are
+    object to something — three of the eight pillars are still 未着手, and the five that are
     not answer here through their shells and adapters: the shell wires and the adapter holds
     what a protocol may not, so with the exemptions dropped `govern/cli.py`'s imports of
     `gitroot` and `workbench.reporting` are findings, and so are `packs/scanners.py`'s
@@ -1606,7 +1626,7 @@ def test_the_scan_reads_real_files_and_finds_real_violations() -> None:
     assert found, (
         "Scanning rig_workbench/ with every pillar treated as migrated produced no "
         "findings at all. Before celebrating, check that _module_name and scan() are "
-        "still reading the package: 193 files that all obey a rule five pillars of seven "
+        "still reading the package: 215 files that all obey a rule five pillars of eight "
         "have started applying is the less likely explanation."
     )
 

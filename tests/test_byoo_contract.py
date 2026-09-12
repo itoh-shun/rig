@@ -21,8 +21,9 @@ import subprocess
 
 import pytest
 
-from rig_workbench.workbench import assurance, contract, lifecycle
-from rig_workbench.workbench import import_task as byoo
+from rig_workbench.workbench import lifecycle
+from rig_workbench.assurance import assurance, contract
+from rig_workbench.assurance import import_task as byoo
 from rig_workbench.workbench.state import build_acceptance
 
 

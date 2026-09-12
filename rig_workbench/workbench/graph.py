@@ -34,7 +34,7 @@ from __future__ import annotations
 
 import pathlib
 
-from . import assurance
+from ..assurance import assurance
 from .state import load_task
 
 SCHEMA = "rig.assurance-graph/v1"

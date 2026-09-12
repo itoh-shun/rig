@@ -381,6 +381,64 @@ this task has to be opened inside the worktree, because an agent session is file
 directory it starts in (#471). The path and the `cd` are still printed; only the instruction to
 follow them is gone.
 
+**The assurance family left `rig_workbench/workbench/` for `rig_workbench/assurance/`, and
+every old import path still resolves.** The nineteen modules behind the eighteen `rig-wb wb`
+verbs an external orchestrator drives — `import`, `receipt`, `contract`, `intent`,
+`intent-derive`, `assurance-target`, `assurance-derive`, `knowledge-candidate`,
+`change-graph`, `anomaly-trigger`, `synthesise`, `dev-loop`, `route-team`, `budget-plan`,
+`provenance`, `expected-outcome`, `effectiveness` and `compose-options` — are a package of
+their own, alongside `govern`, `eval`, `packs`, `validation` and `orchestrate`. **Nothing a
+user does changes.** Every verb takes the same flags, prints the same output and returns the
+same codes. 127 `--help` pages were captured before and after and are byte-identical:
+`rig-wb --help` itself plus the 126 subcommands `tests/test_cli_surface_contract.py`
+declares answer the flag (33 top-level and 96 grouped, less the three `githooks` verbs that
+parse their arguments by hand and reject it). `rig-wb usage` is in that 127 and is compared
+separately, because it ignores `--help`, runs, and prints live counters out of
+`.rig/runs.jsonl`; captured back to back it is identical too.
+
+For anyone importing the package rather than running it, each `rig_workbench.workbench.<name>`
+path is now a re-export shim: it resolves to the same objects and is **kept for the whole of
+3.x, removed in 4.0.0**. Change `from rig_workbench.workbench import assurance` to
+`from rig_workbench.assurance import assurance` while you have the major to do it in. One
+thing the bridge cannot carry, and it fails silently rather than loudly: a test that
+substitutes a name — `monkeypatch.setattr("rig_workbench.workbench.assurance.build_receipt", …)`
+— patches the shim's copy, and the functions that read it resolve it in
+`rig_workbench.assurance.assurance`'s globals, so the substitution does not land. Patch the
+new path. Everything in this repo already does.
+
+**So each shim says so out loud: importing one raises a `DeprecationWarning` naming the new
+module and 4.0.0.** That is a new precedent rather than an existing convention —
+`rig_workbench/orchestrate/providers.py`, the re-export bridge 3.0.0's composition split
+left behind, raises none — and it is deliberately not applied there: that file is a live
+module five others import for its own code — `orchestrate/cli.py`, `commands.py`,
+`selftest.py`, `queueing.py` and `workbench/adjudication.py` — so a module-level warning
+would fire on every legitimate import instead of on a use of the bridge. These nineteen are
+bridges and nothing else. Nothing in the ratchet, layering, surface or assurance suites
+imports one: all four run clean under `-W error::DeprecationWarning`.
+
+The lists are written out rather than starred in because `import *` drops every
+underscore name: measured against the first draft of these shims — names a module defines
+at top level that the draft did not expose — seventeen of the nineteen were handing back
+less than their module has, and `import *` on its own would have been eighteen, `intent_wiring`
+being the one module that defines no privates.
+
+**One thing the explicit list deliberately drops, and it fails loudly rather than
+silently.** `import *` used to leak 57 module objects — counted as module objects in
+`dir()`, which is 47 top-level `import X` plus 10 bound by `from … import X` forms —
+`json`, `pathlib`, and seven that are sibling assurance modules, among them
+`workbench.assurance.assurance_target`, `contract.assurance` and `intent_wiring.intent`.
+The named lists do not carry them, so a downstream `setattr` on one of those raises
+`AttributeError` at the patch site instead of succeeding on a copy nothing reads. All 602
+non-module names survive the move unchanged.
+
+Why: `rig_workbench/workbench/` was five pillars wearing one name, and this was the largest
+of them — 19 files, 8,903 lines, and 160 of the 508 `print` sites the package carries after
+T7/T8's five came off. The split leaves the
+workbench as the task lifecycle it is named for. It is a move, not a migration: ten of the
+nineteen modules still import `workbench.state`, so the new package is **not** registered as
+behind-the-ports in `tests/test_layering_contract.py`, and `docs/v3-architecture-design-brief.ja.md`
+§11 T11 records that measurement against the claim the split was argued from.
+
 **`skills/engine/SKILL.md` keeps what a first turn needs; its four longest sections moved to files
 beside it.** The SessionStart hook has the entry read the whole document before the user has said
 anything, and it had reached 104,492 B / 742 lines. §2's brick catalogue, §3.5's recipe schema,

@@ -12,8 +12,8 @@ import sys
 
 import pytest
 
-from rig_workbench.workbench import assurance_budget as budget_mod
-from rig_workbench.workbench.assurance_budget import (BALANCED, CHEAPEST, ESTIMATED, FASTEST,
+from rig_workbench.assurance import assurance_budget as budget_mod
+from rig_workbench.assurance.assurance_budget import (BALANCED, CHEAPEST, ESTIMATED, FASTEST,
                                                       MEASURED, SCHEMA, UNKNOWN, Budget, Plan,
                                                       excluded, load, select, validate)
 
@@ -431,11 +431,20 @@ def test_the_judgement_touches_nothing_and_calls_no_model():
     """What a verifier will cost and which plans are worth considering are reading, judging and
     concluding. A module that did them would leave nothing a gate could check."""
     import ast
-    tree = ast.parse((REPO_ROOT / "rig_workbench" / "workbench"
+    tree = ast.parse((REPO_ROOT / "rig_workbench" / "assurance"
                       / "assurance_budget.py").read_text(encoding="utf-8"))
     reaching = {"subprocess", "socket", "http", "urllib", "requests", "os", "open"}
     judging = {"validate", "load", "excluded", "select", "_rank", "plan_problems",
                "load_budget"}
+    # An `ast.walk` loop that matches nothing passes, so an empty or mis-pathed file would
+    # read as a clean module. Assert the functions being judged are in the file first.
+    found = {node.name for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)}
+    assert judging <= found, (
+        "the module this test reads does not define the functions it is about: "
+        f"{sorted(judging - found)}. The loop below judges whatever it finds, "
+        "so a file that lost these names — or a path that stopped resolving to this "
+        "module — would walk zero functions and pass."
+    )
     for node in ast.walk(tree):
         if not (isinstance(node, ast.FunctionDef) and node.name in judging):
             continue
@@ -576,7 +585,7 @@ def test_the_budget_document_refuses_them_too(tmp_path):
 def test_the_module_names_the_moves_that_may_follow_not_a_record_of_anyone_making_one():
     """Recording who relaxed a target is somebody else's job, and saying otherwise here would
     claim an accountability this module does not hold."""
-    source = (REPO_ROOT / "rig_workbench" / "workbench"
+    source = (REPO_ROOT / "rig_workbench" / "assurance"
               / "assurance_budget.py").read_text(encoding="utf-8")
     assert "target-relaxed-by-a-decision" in source
     assert "relaxed-by-record" not in source

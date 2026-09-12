@@ -203,7 +203,8 @@ extend-select = [
 # `rig_workbench/orchestrate/**`（0 print, 5 banned）はもう無い。第 3 段で最初から
 # 5 番目までに移った柱であり、その行の削除がこの台帳の言うとおり移行の完了そのものである。
 # この 5 本はすべて tests/test_layering_contract.py の MIGRATED に入っており、台帳の
-# 行と層の規則が同じ柱を指している。残るのは workbench と registry の 2 本である。
+# 行と層の規則が同じ柱を指している。残るのは workbench・assurance（§11 T11 で
+# workbench から分かれた）・registry の 3 本である。
 # どの柱も同じ順序（先に効果地点、後から層の規則）で通した。
 # eval の行を消した時点で ruff が eval/ を実際に検査するようになる。行があるうちは
 # `--select TID251` を付けても per-file-ignores は外れないので、あの緑は何も測って
@@ -251,7 +252,25 @@ extend-select = [
 # config.py の 3 件は上の「恒久的に認めた場所」へ、ファイル 1 本の行として移した。
 # よって `rig_workbench/orchestrate/**` の行は無い。ここまでが第 3 段で 5 番目に
 # 移った柱であり、この行の削除がこの台帳の言うとおり移行の完了そのものである。
-"rig_workbench/workbench/**" = ["T201", "TID251"]    # 513 print, 31 banned
+# workbench の assurance 一族（`wb` の 18 動詞）は §11 T11 で
+# `rig_workbench/assurance/` へ出た。台帳の行は 1 本から 2 本になり、**合計は動いて
+# いない**: 508 print / 31 banned が 348 + 160 / 24 + 7 に分かれただけである。柱が
+# 増えたのであって、効果地点が増えたのではない。513 が 508 になったのは §11 T7/T8 で、
+# この分割とは別の出来事である。落ちた 5 件のうち 1 件は `import_task` のもので、
+# 分割後は assurance の側で数える。件数は ruff 0.15.8 で、その行だけを
+# 外して測った実測値（tests/test_architecture_inventory.py の AST 走査と同じ分割になる）。
+# 旧パスに残した 19 本の re-export shim は `rig_workbench/workbench/**` の glob に
+# 当たるが、**どちらの無視も要らない** —— print も禁止 API も 0 で、実測でも
+# `ruff check <shim 19 本> --select T201,TID251` は緑である。ruff の
+# per-file-ignores は和集合なので glob から 1 本だけ外す書き方が無く、素通りしている
+# だけで、shim の分が上の数字に入っているわけではない。
+# assurance は tests/test_layering_contract.py の MIGRATED **に入っていない**。
+# 19 本のうち 10 本が `..workbench.state` を、import_task がさらに 6 本の A の
+# モジュール（config・capabilities・flow_view・lifecycle・progress・runtime）を import
+# しており、柱の外へ出ているのは名前だけで層はまだ越えていない。
+# 台帳の行と層の規則は、ここでも同じ柱を指している。
+"rig_workbench/assurance/**" = ["T201", "TID251"]    # 160 print, 7 banned
+"rig_workbench/workbench/**" = ["T201", "TID251"]    # 348 print, 24 banned
 # root 直下のモジュールは glob 1 行にまとめられない。ruff の per-file-ignores は
 # パターンを設定ファイルからの相対パスに突き合わせるが、その glob では `*` が `/` を
 # またぐ（実測: `rig_workbench/*.py` は govern/cli.py にも当たり、上の柱の行を全部

@@ -144,7 +144,7 @@ SOLID との対応:
 **この形は外部から持ち込むものではない。** 同じ思想が既に本リポジトリ内に 3 回、別々に実装されている。
 
 1. `rig_workbench/workbench/prompt_regression.py` — `--set` を拒否し、機械の eval にしか判定させない。
-2. `rig_workbench/workbench/assurance.py` — 記録のない軸を `{"observed": false, "reason": ...}` として運び、成功に畳まない。
+2. `rig_workbench/assurance/assurance.py` — 記録のない軸を `{"observed": false, "reason": ...}` として運び、成功に畳まない。
 3. `rig_workbench/orchestrate/runstate.py` の `gate_outcome` — 判定者が `self` / `generator` / `producer` である票を自己採点として弾く。
 
 V3 でやるのは新しい概念の導入ではなく、既にここで発明されたものを 1 つの型に畳んで全体に効かせること。
@@ -482,9 +482,42 @@ hook の 1 行では終わらず、T14 という別の run になる。**
 D は `wb` の 18 動詞（import・receipt・contract・intent・intent-derive・assurance-target・
 assurance-derive・knowledge-candidate・change-graph・anomaly-trigger・synthesise・dev-loop・
 route-team・budget-plan・provenance・expected-outcome・effectiveness・compose-options）で、
-A と状態を共有しない。**README が統合を約束しているので、消さずに分ける。** 分ければ A の
-ライフサイクルは 16 ファイルの柱になり、第 5 段の `workbench` 移行は 20,833 行ではなく
-12,961 行の仕事になる。
+A と状態を共有しない。**README が統合を約束しているので、消さずに分ける。** 分ければ第 5 段の
+`workbench` 移行は 12,728 行の仕事になる（9c2d4fc 実測）。A の柱は残る 39 本の中にある。
+どちらの数も下の T11 で数え直した（`wc -l`）。上の表の 20,833 は別の木で数えたもので、
+同じ `wc -l` でも e341366 で 20,771、9c2d4fc で 21,631、b42a5f6 で 22,021 と動く。
+いずれも 58 ファイルである。物差しではなく木が動いている。
+
+T11 で着地した。切り出し先は `rig_workbench/assurance/` である。着地にあたって、
+この段落の数字を 2 つ訂正する。
+
+1 つ目。D は 16 ファイル 7,872 行ではなく、19 ファイル 8,903 行である（`wc -l`）。
+同じ `wc -l` で 9c2d4fc の `workbench/` は 58 ファイル 21,631 行、残るのは 39 ファイル
+12,728 行になる。上の表の 20,833 / 7,872 とは合わないが、突き合わせていない。
+数え方はこうである。`workbench/cli.py` が 18 動詞それぞれの
+`cmd_*` を import しているモジュールから始める。そこから import されるもののうち、D の外の誰も import して
+いないもので閉じる。18 動詞は 18 の別モジュールだった。名前と動詞は 1 対 1 ではない
+（`assurance.py` が receipt、`assurance_wiring.py` が assurance-derive）。閉包は
+`org_knowledge.py` を 1 本足す。`knowledge_candidate.py` からしか届かないからである。
+`print` は 128 ではなく 161 だった。AST 走査で、`tests/test_architecture_inventory.py`
+と同じ数え方である。効果地点は 6 種すべてが足し算どおりに分かれた。workbench の
+513/11/5/13/8/12 が、352/7/4/7/8/9 と 161/4/1/6/0/3 になる。和は動いていない。
+その後 T7/T8 が `print` を 5 件落とし、うち 1 件が `import_task` のものだった。
+main を取り込んだ時点では 348/7/4/7/8/9 と 160/4/1/6/0/3 で、和は 508 である。
+
+2 つ目、そしてこちらの方が重い。**「A と状態を共有しない」は実測に耐えない。**
+19 本のうち 10 本が `workbench.state` を import している。名指しで挙げる。
+
+| import する先 | D 側のモジュール |
+|---|---|
+| `workbench.state` | `assurance`・`assurance_target`・`compose_options`・`contract`・`development_loop`・`import_task`・`knowledge_candidate`・`production_outcome`・`provenance_graph`・`workflow_effectiveness` |
+| `workbench` の config・capabilities・flow_view・lifecycle・progress・runtime | `import_task` |
+| orchestrate・packs・govern・パッケージ直下 | `compose_options`・`import_task` |
+
+**それでも分ける判断は変えない。** 分離の根拠は上で言い直したとおり行数と到達経路であり、
+A のライフサイクルが自分の柱に戻るという結果も変わらない。だが、その依存は切らずに
+`..workbench.<name>` と綴り直して残した。だから `assurance` は
+`tests/test_layering_contract.py` の `MIGRATED` に入らない。
 
 ここで 1 つ訂正する。この決定の根拠として「D の 18 動詞は利用記録が 0」と言っていた。**それは
 台帳を取り違えている。** `.rig/runs.jsonl` は recipe の走行しか記録しないので、`wb` の動詞が
@@ -494,8 +527,8 @@ A と状態を共有しない。**README が統合を約束しているので、
 976、`wb knowledge-candidate` 968、`wb route-team` 708。ただし窓も `invoker` の偏りも
 `runs.jsonl` と同じ（`direct` が 18,094）で、どちらも git の管理外（`.gitignore:26` の `.rig/`）
 である。**正しい言い方は「利用記録が 0」ではなく「この 2 つの台帳からは、人の利用と生成物を
-区別できない」である。** 分離の根拠は利用の多寡ではなく、A と状態を共有しないことと行数の
-ほうに置く。
+区別できない」である。** 分離の根拠は利用の多寡ではなく、行数と到達経路のほうに置く
+（状態の共有については下の T11 を見よ）。
 
 到達経路についても 1 つ直す。「`commands/go.md` の表の 1 行からしか届かない」と言っていたが、
 実際は 18 動詞それぞれに `commands/go.md` の表行が 1 本ずつ、計 18 行ある。共有された 1 行では
@@ -556,10 +589,10 @@ goal / constraints / acceptance criteria / 識別子 / 書き出し先だけで�
 
 | 既存 | 場所 | 語彙 |
 |---|---|---|
-| assurance | `workbench/assurance.py` の `unobserved()` / `observed()` | `observed` の真偽と理由 |
-| intent | `workbench/intent.py`（`UNVERIFIABLE = "unverifiable"` は `:63`、根拠は `:26` と `:58`） | `unverifiable` は `unsatisfied` の弱い版ではない |
-| assurance-target | `workbench/assurance_target.py:16-20` | `unobservable` はそれ自体が 1 つの結末 |
-| production-outcome | `workbench/production_outcome.py` | measured / reported / estimated / unmeasured / inconclusive、`declared_by`・`declared_at`・`PRECEDENCE` つき |
+| assurance | `assurance/assurance.py` の `unobserved()` / `observed()` | `observed` の真偽と理由 |
+| intent | `assurance/intent.py`（`UNVERIFIABLE = "unverifiable"` は `:63`、根拠は `:26` と `:58`） | `unverifiable` は `unsatisfied` の弱い版ではない |
+| assurance-target | `assurance/assurance_target.py:16-20` | `unobservable` はそれ自体が 1 つの結末 |
+| production-outcome | `assurance/production_outcome.py` | measured / reported / estimated / unmeasured / inconclusive、`declared_by`・`declared_at`・`PRECEDENCE` つき |
 | runstate | `orchestrate/runstate.py:751-753` | 判定者が自分なら `self-graded` |
 
 最小の版: `compose()` に「中継した測定値」の節を足し、1 つの数値につき
@@ -641,7 +674,7 @@ max-parallel の既定 3 は `orchestrate/queueing.py:519`——`:696` ではな
 | T8 | 最後の行の `cd … && claude` と README §1 の約束を、どちらかに寄せる | `rig_workbench/workbench/lifecycle.py`・`README.md`・`README.ja.md` | `pytest tests/test_docs_registry.py tests/test_first_run_cost.py -q` | T7 | 削 | 単独（実行中） |
 | T9 | `commands/rig.md` を落とし、`SKILL.md` の description 行を直す | `commands/rig.md`・`skills/engine/SKILL.md` | `pytest tests/test_capability_registry_vs_surfaces.py -q`（30 枚の凍結は 30 のまま） | T0 | 削 | 単独（着地済み。削除ではなく非推奨 shim へ） |
 | T10 | ヘルプに出ない 15 動詞を 1 本ずつ監査する（`approve`/`next`/`check`/`verdict` は人のゲートに触るので最後） | `rig_workbench/cli.py`・`tests/test_capability_registry_vs_cli.py` | `pytest tests/test_capability_registry_vs_cli.py -q` | T4 | 削 | 単独（着地済み。13 本を監査し 9 載せ 4 残し 0 削除） |
-| T11 | D の 16 ファイル 7,872 行を `rig_workbench/workbench/` から単独パッケージへ切り出し、`pyproject.toml` の台帳を直す（切り出し先のパッケージ名は本ブリーフでは決めていない） | `rig_workbench/workbench/`・`pyproject.toml` | `pytest tests/test_architecture_inventory.py tests/test_layering_contract.py -q` ＋ 140 本の `--help` 差分 0 | T1–T3, T4 | 決 | 単独 |
+| T11 | D を `rig_workbench/workbench/` から **`rig_workbench/assurance/`** へ切り出し、`pyproject.toml` の台帳を直す（切り出し先は本ブリーフでは決めていなかったので、この run で決めた）。実測は 16 ファイル 7,872 行ではなく **19 ファイル 8,903 行・`print` 161**（T7/T8 の着地後は 160。18 動詞は 18 モジュールで、閉包が `org_knowledge` を 1 本足す） | `rig_workbench/workbench/`・`rig_workbench/assurance/`・`pyproject.toml` | `pytest tests/test_architecture_inventory.py tests/test_layering_contract.py -q` ＋ `--help` 差分 0（実測 127 本：`rig-wb --help` と、`tests/test_cli_surface_contract.py` が `--help` を解すと宣言する subcommand 126 本。§3 の 140 本とは合わないが、突き合わせていない） | T1–T3, T4 | 決 | 単独（着地済み） |
 | T12 | 合成クラスタを `orchestrate/composition.py`（新設）へ出し、`providers ↔ runstate` の循環を落とす | `rig_workbench/orchestrate/providers.py`・`runstate.py`・`rig_workbench/orchestrate/composition.py` | `pytest tests/test_architecture_inventory.py -q` で循環 5→4 ＋ 全件緑 | T1–T3 | 決 | 単独（着地済み） |
 | T13 | センサー付き基準の判定をセンサーに戻し、`--set` は測定と一致するときだけ受け付ける | `rig_workbench/workbench/lifecycle.py`・`rig_workbench/workbench/secrets.py`・`rig_workbench/workbench/hardening.py`・`rig_workbench/workbench/injection.py`・`rig_workbench/workbench/destructive.py`・`rig_workbench/workbench/anchors.py`・`rig_workbench/workbench/ja_prose.py`・`tests/test_gate_sensor_authority.py`・`tests/test_secret_scan.py`・`tests/test_tamper_sensor.py`・`tests/test_injection_scan.py`・`tests/test_destructive_scan.py`・`tests/test_anchor_sensor.py`・`tests/test_ja_prose_gate.py` | `pytest tests/test_gate_sensor_authority.py tests/test_first_run_cost.py -q` | — | 足 | 単独（着地済み） |
 | T14 | `SKILL.md` の後回しにできる 4 節を参照ファイルへ出し、切り出す側と本文を読むテストを追随させる（T0 の後半） | `skills/engine/SKILL.md`・`rig_workbench/validation/catalog.py`・`tests/` | `pytest tests/test_skills_spec.py tests/test_docs_registry.py -q` ＋ 再測した行数とバイト数 | T0 | 決 | 単独（着地済み。742 行→465 行） |
