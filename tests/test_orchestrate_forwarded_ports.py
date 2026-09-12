@@ -453,7 +453,6 @@ def test_the_run_state_verbs_carry_the_presenter_through_the_whole_cycle(
     assert seen.out_lines, seen.text
 
 
-
 def test_the_recipe_parse_carries_the_presenter_on_the_branch_that_speaks(
         project: pathlib.Path, no_ambient_ports: None,
         monkeypatch: pytest.MonkeyPatch) -> None:
