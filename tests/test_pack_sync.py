@@ -261,9 +261,16 @@ def _installed(tmp_path: pathlib.Path) -> tuple[pathlib.Path, pathlib.Path]:
     project = tmp_path / "project"
     (project / ".git").mkdir(parents=True)
     install_pack("domain:decision-humor", scope="project", project=project)
-    pack = project / ".rig" / "packs" / "decision-humor"
-    (pack / "facets" / "knowledge").mkdir(parents=True, exist_ok=True)
-    return project, pack
+    return project, project / ".rig" / "packs" / "decision-humor"
+
+
+def _stray(pack: pathlib.Path) -> pathlib.Path:
+    """One undeclared file inside the installed pack: what a user adds before reaching
+    for `pack sync` in the first place."""
+    page = pack / "facets" / "knowledge" / "new-page.md"
+    page.parent.mkdir(parents=True, exist_ok=True)
+    page.write_text(PAGE, encoding="utf-8")
+    return page
 
 
 def test_sync_refuses_the_installed_pack_a_lock_owns(tmp_path):
@@ -279,7 +286,7 @@ def test_sync_refuses_the_installed_pack_a_lock_owns(tmp_path):
     re-derived from a modified installed tree.
     """
     _project, pack = _installed(tmp_path)
-    (pack / "facets/knowledge/new-page.md").write_text(PAGE, encoding="utf-8")
+    _stray(pack)
     before = (pack / "pack.yaml").read_bytes()
 
     with pytest.raises(PackError, match="installed"):
@@ -301,8 +308,7 @@ def test_the_refusal_leaves_a_failure_the_user_can_undo(tmp_path):
     from rig_workbench.packs.resolver import resolved_collection
 
     project, pack = _installed(tmp_path)
-    stray = pack / "facets/knowledge/new-page.md"
-    stray.write_text(PAGE, encoding="utf-8")
+    stray = _stray(pack)
 
     with pytest.raises(PackError) as refusal:
         sync_manifest(pack)
