@@ -180,9 +180,9 @@ extend-select = [
 # RIG_GLOBAL_RUNS_PATH / RIG_CONVERGENCE_K を読み、資産・実行ログ・state root が
 # どこかを答える。これを Env ポートへ移しても判定層から効果が出ていくわけではない
 # —— ここは何も判定していない —— が、**いつ解決するか** が import 時から初回呼び出し
-# 時へ変わる。12 モジュールがこれを import し、約 40 のテストがこの属性を
-# monkeypatch して rig を一時プロジェクトへ向けているので、それは誰も頼んでいない
-# 挙動変更である。だから移さないと決め、tests/test_layering_contract.py の
+# 時へ変わる。13 モジュールがこれを import し、25 のテストファイルが 43 箇所でこの
+# 属性を monkeypatch して rig を一時プロジェクトへ向けているので、それは誰も頼んで
+# いない挙動変更である。だから移さないと決め、tests/test_layering_contract.py の
 # SHELL_MODULES にその理由を書き、ここは柱まるごとではなく **このファイル 1 本** の
 # 行にした。台帳が記録するのは例外であってディレクトリではない。
 "rig_workbench/orchestrate/config.py" = ["TID251"]  # 3 banned — 判定ではなく配線
