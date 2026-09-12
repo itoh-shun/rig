@@ -69,9 +69,9 @@ exception, and an exception that has to be typed out with a justification next t
 Proving the rule on more than the tree it happens to be run against
 -------------------------------------------------------------------
 
-`MIGRATED` names `govern`, `eval`, `packs` and `validation`, and four pillars of seven is
-not much of a scan: three are still outside the rule, and all four of them pass it today, so
-the real-tree check can only ever say that nothing has regressed. A check that passes because it found nothing keeps passing if
+`MIGRATED` names `govern`, `eval`, `packs`, `validation` and `orchestrate`, and five pillars
+of seven is still not much of a scan: two are outside the rule, and all five of them pass it
+today, so the real-tree check can only ever say that nothing has regressed. A check that passes because it found nothing keeps passing if
 the checker is written backwards — which is exactly how a check comes to exist without
 ever having been checked, and it was the whole of this file's evidence for the stage in
 which `MIGRATED` was still empty. So the corpus below runs the real checker over
@@ -188,7 +188,22 @@ PORT_NAMES = ("Presenter", "ProcessRunner", "FileStore", "Env", "GitRepo", "Cloc
 #: with `_skill_root`: there, a copy ended an edge nobody measured against; here the drift
 #: between the code and the document *is the measurement*, and a checker holding its own
 #: copy of the vocabulary would drift alongside the document it audits and report nothing.
-MIGRATED: tuple[str, ...] = ("govern", "eval", "packs", "validation")
+#:
+#: `orchestrate` is the fifth and the largest — thirteen thousand lines, twenty-one commands
+#: and forty cross-pillar findings, into `packs`, `govern`, `workbench` and the package's own
+#: top-level modules at once. They are held by four adapters this pillar declares rather than
+#: one, and which edge went into which is a measurement rather than a filing decision:
+#: `pack_surfaces.py` holds the resolver and the trust store, `govern_surfaces.py` the stage
+#: gates and the ledger, `package_surfaces.py` `repo_paths` / `caller` / `bench_providers`,
+#: and `batch_surface.py` the three workbench edges *because* putting them beside the others
+#: closed a new six-module runtime cycle back through `orchestrate.config`. Four modules is
+#: what the graph left standing, not what read best.
+#:
+#: The other reason this pillar took four passes is that its wiring is not all judgement.
+#: `config.py` is declared a shell below, and the entry there states the decision rather than
+#: summarising it: it is configuration, resolved once at import, and moving it behind `Env`
+#: would change *when* it resolves.
+MIGRATED: tuple[str, ...] = ("govern", "eval", "packs", "validation", "orchestrate")
 
 #: The shell of each pillar: modules that wire, not modules that judge. Closed list —
 #: everything else in a migrated pillar is judgement. Every entry states why, because
@@ -281,6 +296,88 @@ SHELL_MODULES: dict[str, dict[str, str]] = {
             "live here and the guard raises PyYAMLMissing, which cli.py reports through "
             "the Presenter it built. Holding this module to the rule would forbid the one "
             "import the whole pillar is built on."
+        ),
+    },
+    "orchestrate": {
+        f"{PACKAGE}.orchestrate.cli": (
+            "The command shell: the module docstring that *is* `--help`, the argparse-free "
+            "dispatch table `COMMANDS`, and the one `ConsolePresenter` built in `main()` and "
+            "handed to all twenty-one verbs as `out=`. It is where the judgement modules get "
+            "called from, so it is allowed to know about them, and about `context_meter` and "
+            "`gh_requirement` — counting what an invocation prints at the parent session and "
+            "advising on a missing `gh` are things the process boundary does once, not "
+            "judgements any command makes. The `COMMANDS` dict stays a literal because "
+            "tests/test_capability_registry_vs_cli.py parses this file with `ast`."
+        ),
+        f"{PACKAGE}.orchestrate.config": (
+            "Configuration wiring, and the one shell entry in stage 3 that is not a command "
+            "surface or an adapter. It reads RIG_HOME, os.getcwd() and RIG_GLOBAL_RUNS_PATH "
+            "at import time and RIG_CONVERGENCE_K beside them, and it reaches "
+            "rig_workbench.gitroot for the main worktree the state root is derived from. "
+            "Putting those reads behind `Env` and `GitRepo` would not move an effect out of "
+            "the judgement layer, because none of this judges anything: it answers where the "
+            "assets, the run log and the state root are, which is what every other module in "
+            "the pillar is configured *by* — twelve of them import it, and roughly forty "
+            "tests monkeypatch its attributes to point rig at a temporary project. It would "
+            "change *when* those questions are answered, from import time to first call, and "
+            "that is a behaviour change nobody asked for and no test declares. So the reads "
+            "stay, they are named here rather than left to be rediscovered, and "
+            "pyproject.toml carries the matching narrow TID251 line for this file alone."
+        ),
+        f"{PACKAGE}.orchestrate.pack_surfaces": (
+            "The first of this pillar's four adapters, here for the reason PORT_ADAPTERS "
+            "gives for ports/local.py: an adapter exists precisely to hold what the protocol "
+            "may not. Twenty edges into `packs` — does this asset name resolve, is the file "
+            "it resolves to trusted, which packs are installed, what does a pack call this "
+            "kind of asset — behind the PackAssets, PackComposition, PackProvenance and "
+            "PackInventory shapes recipes.py, providers.py, runstate.py and graph.py "
+            "declare. `PackError` is republished rather than inverted, because an `except` "
+            "clause compares class identity and two classes would be two rules. It imports "
+            "no judgement module, so the inverted edges stay one-way."
+        ),
+        f"{PACKAGE}.orchestrate.govern_surfaces": (
+            "The second adapter: eleven edges into `govern`, all one request in different "
+            "words — has this step a human gate, may this identity sign it, who is this "
+            "identity, where is the decision written down. Quorum, qualifying roles, "
+            "separation of duties and the hash chain are govern's arithmetic, and a runner "
+            "that re-derived any of it would be a second governance implementation nobody "
+            "audits. Behind the StageGovernance and StepGovernance shapes commands.py and "
+            "runstate.py declare. `PolicyError` stops here — this pillar only ever caught "
+            "it — and `policy()` answers a refusal the command prints unchanged."
+        ),
+        f"{PACKAGE}.orchestrate.package_surfaces": (
+            "The third adapter, and the one that holds what belongs to no pillar: "
+            "`repo_paths` (where is scripts/<name>.py), `caller` (what invoked this "
+            "process) and `bench_providers` (the patch machinery a tool-free local "
+            "generator is given writable parity through). Behind ScriptLocator, "
+            "CallerIdentity and PatchApplier. A fourth module rather than a fourth group in "
+            "pack_surfaces.py because these are one collaborator — the package's own shared "
+            "utilities — and an answer about scripts/dashboard.py does not belong in a "
+            "module about trust stores; the cycle measurement left that choice free."
+        ),
+        f"{PACKAGE}.orchestrate.batch_surface": (
+            "The fourth adapter, and the only one whose existence is a measurement rather "
+            "than a preference. It holds three workbench edges — `workbench.batch` for what "
+            "a batch did, `workbench.state` for where the repository is, `workbench.state`'s "
+            "companion `workbench.run_index` for the projects that have recorded a run — "
+            "behind the BatchSummary and ProjectIndex shapes queueing.py and commands.py "
+            "declare. Filed apart from the other three because `workbench.progress` reaches "
+            "`orchestrate.recipes` and `workbench.run_index` reaches `orchestrate.config`: "
+            "in the same module as the packs and govern collaborators those imports close a "
+            "new six-module runtime cycle that tests/test_architecture_inventory.py freezes "
+            "the absence of. The same constraint that split packs/case_schema.py out of "
+            "packs/eval_bridge.py, found the same way — by running the graph."
+        ),
+        f"{PACKAGE}.orchestrate.yaml_adapter": (
+            "The pillar's one optional dependency, behind a call, and validation's "
+            "yaml_adapter.py's twin. PyYAML is third-party and a judgement module may not "
+            "import it. `recipes.py` carried `try: import yaml / except ImportError: yaml = "
+            "None` at module level, which bound the name once at import and made the "
+            "`yaml is None` branch unreachable from any running process with PyYAML "
+            "installed — a refusal no test had ever executed. The import and the guard live "
+            "here, the guard raises PyYAMLMissing, and parse_frontmatter reports it through "
+            "the Presenter the shell built. Holding this module to the rule would forbid "
+            "the one import the whole pillar is built on."
         ),
     },
     "eval": {
@@ -1425,12 +1522,12 @@ def test_the_walk_checks_the_right_files(tmp_path: pathlib.Path) -> None:
 
 
 def test_a_migrated_pillar_imports_nothing_but_the_ports() -> None:
-    """The contract itself, and no longer vacuous: three pillars are behind the ports.
+    """The contract itself, and no longer vacuous: five pillars are behind the ports.
 
-    All three pass, which is the only thing a green contract can mean — every edge either
+    All five pass, which is the only thing a green contract can mean — every edge either
     became a port call or was inverted into a protocol the pillar declares, and each
     pillar's wiring is named in `SHELL_MODULES`. What it cannot mean is that the rule is
-    right: three compliant pillars exercise almost none of the checker, which is what the
+    right: five compliant pillars exercise almost none of the checker, which is what the
     corpus above is for. The skip below is kept for the case `MIGRATED` is ever emptied to
     take a pillar back out.
     """
@@ -1475,20 +1572,30 @@ def test_the_scan_reads_real_files_and_finds_real_violations() -> None:
     """The one thing the corpus cannot prove: that the walk reads rig_workbench/.
 
     Applied to every pillar as if it had migrated and with no shell exempt, the rule must
-    object to something — three of the seven pillars are still 未着手, and the four that are
+    object to something — two of the seven pillars are still 未着手, and the five that are
     not answer here through their shells and adapters: the shell wires and the adapter holds
     what a protocol may not, so with the exemptions dropped `govern/cli.py`'s imports of
     `gitroot` and `workbench.reporting` are findings, and so are `packs/scanners.py`'s
-    sensors, `packs/eval_bridge.py`'s evaluation imports and every one of the eight surfaces
-    `validation/rig_surfaces.py` holds. (What no longer appears is the judgement layer of any
-    of the four: `conformance.py`, `affected.py`, `promote.py`, `manifest.py`,
-    `validation.py`, `evidence.py`, `installer.py`, `tester.py`, `lock.py`, `resolver.py`,
-    and validation's `catalog.py`, `drill.py`, `manifest.py`, `mcp_scan.py`, `recipes.py`,
-    `routes.py` and `stale_refs.py` have each had their cross-pillar import inverted into a
-    protocol they declare. Those are the edges `MIGRATED` was waiting on.) A scan that found nothing here
+    sensors, `packs/eval_bridge.py`'s evaluation imports, every one of the eight surfaces
+    `validation/rig_surfaces.py` holds, and everything orchestrate's four adapters hold —
+    plus `orchestrate/config.py`'s `gitroot`, which is the one shell entry in this table
+    that is neither a command surface nor an adapter. (What no longer appears is the
+    judgement layer of any of the five: `conformance.py`, `affected.py`, `promote.py`,
+    `manifest.py`, `validation.py`, `evidence.py`, `installer.py`, `tester.py`, `lock.py`,
+    `resolver.py`, validation's `catalog.py`, `drill.py`, `manifest.py`, `mcp_scan.py`,
+    `recipes.py`, `routes.py` and `stale_refs.py`, and orchestrate's `commands.py`,
+    `providers.py`, `runstate.py`, `recipes.py`, `queueing.py` and `graph.py` have each had
+    their cross-pillar imports inverted into a protocol they declare. Those are the edges
+    `MIGRATED` was waiting on.) A scan that found nothing here
     would mean the walk read no files, and every check above it would be passing on air.
     When the last pillar migrates this test starts failing, and deleting it is the correct
     response: it will have run out of work.
+
+    This assertion is the one thing in the file that a pillar entering `MIGRATED` does not
+    move: it replaces `migrated` with every pillar and `shell` with nothing before it scans,
+    so declaring `orchestrate` changed the count by zero. That is the design, not an
+    oversight — the number moves when imports move, which is what the four preceding
+    commits did and this one did not.
     """
     layout = real_layout()
     everything = dataclasses.replace(layout, migrated=layout.pillars, shell=frozenset())
@@ -1496,7 +1603,7 @@ def test_the_scan_reads_real_files_and_finds_real_violations() -> None:
     assert found, (
         "Scanning rig_workbench/ with every pillar treated as migrated produced no "
         "findings at all. Before celebrating, check that _module_name and scan() are "
-        "still reading the package: 185 files that all obey a rule three pillars of seven "
+        "still reading the package: 193 files that all obey a rule five pillars of seven "
         "have started applying is the less likely explanation."
     )
 
