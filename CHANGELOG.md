@@ -765,6 +765,95 @@ reproduced through the real CLI before it was touched.**
   decisions — answering "no key" there would loosen the reconciliation exactly where the
   stricter reading is called for.
 
+- **The set-aside warning stops telling an operator their records are gone about a file it never
+  read.** The warning has two branches and shared one tail — "anything signed with the moved file
+  no longer verifies". Measured before this change, an 8-byte key file and a FIFO at the key path
+  produced lines identical from `It has been moved to` onward. On the short branch that tail is
+  earned and permanent: the bytes were counted, they are under `MIN_KEY_BYTES` = 16, and every
+  reader refuses that file forever. On the unreadable branch nothing was counted — a genuine
+  32-byte key behind a mode this process cannot open, or owned by somebody else, arrives there
+  with its bytes whole — so the tail was a claim about a file nobody looked at, read by the
+  operator deciding whether to delete it. The short branch keeps the tail, unchanged to the byte.
+  The unreadable branch now ends `its contents are unread, so whether anything signed with it
+  still verifies is unknown — read it before deleting it`; it is not made conditional on the file
+  being a key because that condition is unanswerable from there — the read that would answer it is
+  the read that just failed.
+
+  **The unreadable branch was itself two situations wearing one sentence,** and the split is the
+  same defect one level down. A regular file this process may not open and a FIFO at the key path
+  produced identical lines, so both were told to read the file before deleting it — advice that is
+  actively wrong for one of them, since `cat` on the moved FIFO blocks until something writes.
+  There are now three lines. The third says that a path of that kind is never read as a key, so
+  nothing was signed with what was moved, and to identify it rather than open it; that is a claim
+  this code can make, because both readers of the path gate on `is_file` — `state.provenance_key`
+  and `ledger._key` — so a FIFO, a directory, a device or a symlink resolving to nothing has never
+  been accepted as a key by either.
+
+  **A `stat` that fails is a third answer, and it joins the permissions line, not that one.**
+  `Path.is_file()` swallows `ENOENT`, `ENOTDIR`, `EBADF` and `ELOOP` and re-raises the rest, so
+  `EACCES` comes out of it — a key symlinked through a directory this process may not traverse is
+  the reproducible case. `_observe_key_file` reports it as an unknown kind, and unknown routes to
+  the line that claims nothing about the contents and asks the operator to go and look. The other
+  way round prints "nothing was signed with what was moved" over a live 32-byte key, measured by
+  doing it. The kind and the bytes come from one function so the two cannot drift, and
+  `_read_key_bytes` is now that function with the kind dropped rather than a second reader beside
+  it.
+
+  All three lines keep the half recording what the process did, moved to `provenance.key.unusable`
+  and a new key generated, which is the only way an operator finds the file and, where nothing was
+  measured, the more important half. **No test asserted any tail**, which is how it survived: the
+  two existing tests pin the opening phrases and stop. Four new tests close that, and
+  `tests/test_provenance.py` is 29. The first drives four shapes — an 8-byte file, a 32-byte key
+  denied by inode so the denial survives the rename, a FIFO, and a dangling symlink, which is none
+  of the kinds the message names and must still reach that line. The second runs the loader in a
+  forked child that drops to an unprivileged uid, because `mode 0o000` does not stop root and the
+  inode denial passes as root: it pins that the traversal-denied key recovers rather than raising,
+  and that the line it prints claims nothing. The third holds `_read_key_bytes` to the observer, and holds it to *delegation* rather than
+  to agreement: it patches the observer to return a sentinel and requires the helper to hand that
+  back, because reinstating the old standalone body agreed on every shape the test drives and
+  passed an earlier version of it.
+  The fourth compares the fenced block in `skills/engine/facets/instructions/workbench-ops.md`
+  against the three lines the loader actually prints, byte for byte after the repository root is
+  substituted; nothing tied those together before, and that is the gap this defect reached the
+  documentation through. Five mutations, each killed: the stat outside the `try` and a failed stat
+  answering "not a regular file" each fail the forked-child test alone; `_read_key_bytes` reading
+  on its own fails the delegation test alone; one word changed inside the facet's quoted block
+  fails the comparison test alone; the shared tail restored fails two, the branch test and the
+  comparison test, because it puts the code and the quoted block out of step as well.
+
+  The operator prose quoted the warnings and corrected the tail immediately afterwards. The block
+  now matches what the code prints and carries a third bullet, and it points `ls -l` at the
+  set-aside file rather than the key path, which by then holds a fresh regular file. **The
+  correction paragraph itself is deleted rather than rescoped.** Nothing released has ever
+  printed this warning: `git tag --contains` finds no tag holding the commit that introduced the
+  set-aside path, and at v2.13.0 the loader is a docstring and eleven lines that return the
+  file's bytes if it is there and create thirty-two fresh ones if it is not — no floor, no
+  set-aside, no warning. The wording it corrected
+  therefore existed on exactly one untagged commit of this unreleased line. A paragraph whose
+  trigger is that somebody is sitting on that commit was not earning the two raw hashes it had to
+  put in operator documentation, and each attempt to scope it honestly produced another claim
+  wider than what had been checked — which is the defect this entry is about. The story is told
+  here instead, where the reader meets it on upgrade.
+
+  **Four faults recorded here rather than fixed.** Three are pre-existing: the em dash in these
+  clauses — and in the rescue warning, and across roughly a hundred and forty other print sites —
+  raises `UnicodeEncodeError` under an ASCII output encoding, landing on this path after the file
+  is moved and before the replacement key exists; and "a new key generated" is false on every
+  branch when a sibling wins the creation race, since `_create_key_if_absent` may create nothing;
+  and `govern/ledger.py` reports `.rig/provenance.key exists but could not be read as a key (it
+  is unreadable, or shorter than the 16 bytes a signing key must have)` in one collapsed clause,
+  the same collapse this entry un-collapses on the signing side, with no test asserting its text.
+  It is left alone deliberately: unlike the warning above it makes no claim it has not measured —
+  "no signature was checked" holds for every shape that reaches it — and splitting it is a change
+  to what `govern audit verify` reports, with its own reader, its own remedy and its own tests.
+  The fourth is a residual of this change and is stated in `_observe_key_file` itself: the `stat`,
+  the `read` and the `rename` are three calls, so a sibling that changes the kind in between is
+  reported under the kind seen first. Its sharpest form, reproduced by driving a sibling in
+  between both calls: the path is unlinked before the `stat` and a regular file written before
+  the `rename`, and the warning prints the not-a-regular-file line — claim included — over a
+  moved regular file. It narrows the window rather than closing it; closing it wants the file
+  held open across the rename, which is a different change with its own failure modes.
+
 **Three acceptance-gate integrity holes, each measured on a scratch `feature` task before it
 was closed.**
 

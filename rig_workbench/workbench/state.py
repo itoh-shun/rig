@@ -702,7 +702,7 @@ def load_or_create_provenance_key(root: pathlib.Path) -> bytes:
         if existing is not None:
             return existing
         if p.is_symlink() or p.exists():
-            observed = _read_key_bytes(p)
+            observed, kind = _observe_key_file(p)
             aside = _set_unusable_key_aside(p)
             if aside is None:
                 continue
@@ -729,29 +729,120 @@ def load_or_create_provenance_key(root: pathlib.Path) -> bytes:
                         if kept else f". The copy is at {aside.name}")
                      + ". No key has been discarded")
                 continue
-            # What this process saw, and it distinguishes the two ways a file fails to be a
-            # key. `_read_key_bytes` answers `None` for "could not be read" as well as for
-            # "not a regular file" — a FIFO at the key path, a mode this process may not
-            # open — and rendering either as "held 0 byte(s)" states something false about a
-            # file whose length nobody here knows.
-            observed_note = (f"held {len(observed)} byte(s) when this process read it, below "
-                             f"the {MIN_KEY_BYTES} a signing key must have"
-                             if observed is not None else
-                             "could not be read as a key by this process (it may not be a "
-                             "regular file, or the permissions may not allow it)")
-            warn(f"{p} {observed_note}. It has been moved to {aside.name} and a new key "
-                 "generated; anything signed with the moved file no longer verifies")
+            # What this process saw. Three messages, because *what the operator should do
+            # next* differs and a line that blurs them gives one of them bad advice. Four
+            # observations map onto the three: `"unknown"` joins `"regular"`, because the
+            # two lines differ in whether they claim anything, and a claim needs a `stat`
+            # that answered.
+            #
+            # `held N byte(s)` is the only one that measured anything, and it is the only
+            # one that may end "anything signed with the moved file no longer verifies":
+            # the bytes were counted, they are under the floor, and every reader refuses
+            # that file forever, so nothing signed with it will ever verify again.
+            #
+            # A regular file this process could not open — a mode it may not read, an owner
+            # who is not us — was not measured at all. A genuine 32-byte key arrives here
+            # with its bytes whole, so the "no longer verifies" clause would be a claim
+            # about a file nobody looked at, told to the operator deciding whether to
+            # delete it. It is dropped rather than made conditional on the file being a
+            # key, because that condition is unanswerable from here: the read that would
+            # answer it is the read that just failed, and it failed again on the moved file
+            # a few lines up (`rescued`). Reading it is what the operator must do, and only
+            # they can.
+            #
+            # A path a `stat` came back on as not a regular file — a FIFO, a directory, a
+            # device, a symlink to nothing or to itself — is the third, and it used to
+            # share the second's wording and so its advice. Telling somebody to read a FIFO
+            # before deleting it is worse than saying nothing: `cat` on it blocks until
+            # something writes. Neither reader of this path has ever accepted a non-regular
+            # file (`state.provenance_key` and `ledger._key` both gate on `is_file`), so
+            # unlike the second shape this one is not withholding a key — which is what
+            # lets it say so, and what a failed `stat` must never be allowed to borrow.
+            if observed is not None:
+                seen = (f"held {len(observed)} byte(s) when this process read it, below the "
+                        f"{MIN_KEY_BYTES} a signing key must have")
+                consequence = "anything signed with the moved file no longer verifies"
+            elif kind == "other":
+                seen = ("could not be read as a key by this process (it is not a regular "
+                        "file, such as a FIFO, a directory, a device, or a symlink that "
+                        "resolves to nothing)")
+                consequence = ("a path of that kind is never read as a key, so nothing was "
+                               "signed with what was moved; identify it rather than opening "
+                               "it, because reading a FIFO blocks until something writes")
+            else:
+                # "regular" and "unknown" both land here, and that is the safe direction:
+                # this branch claims nothing about the contents, it asks the operator to go
+                # and look. The branch above does make a claim, so it needs a `stat` that
+                # actually answered.
+                seen = ("could not be read as a key by this process (the permissions may "
+                        "not allow it)")
+                consequence = ("its contents are unread, so whether anything signed with it "
+                               "still verifies is unknown — read it before deleting it")
+            warn(f"{p} {seen}. It has been moved to {aside.name} and a new key "
+                 f"generated; {consequence}")
         _create_key_if_absent(p, secrets.token_bytes(32))
     raise OSError(f"{p} could not be settled into a usable signing key after "
                   f"{_KEY_SETTLE_PASSES} attempts (another process may be creating it). "
                   "Re-run")
 
 
+#: What `_observe_key_file` was able to establish about the path.
+#:
+#: `"other"` is the only one that asserts anything about the *kind* of the file, and the
+#: set-aside warning says "nothing was signed with what was moved" on the strength of it.
+#: It is what `p.is_file()` answering `False` means, and that is a slightly wider thing
+#: than "a `stat` said not-a-regular-file": `pathlib` turns `ENOENT`, `ENOTDIR`, `EBADF`
+#: and `ELOOP` into `False` as well. All four are safe to put here, and for the same
+#: reason the honest ones are — no such path, a non-directory in the way, a bad
+#: descriptor and a symlink loop are each a thing that cannot be a key and that both
+#: readers of this path already refuse. What is *not* safe is the errno `pathlib`
+#: re-raises: `EACCES` on the `stat` establishes nothing at all, so it is `"unknown"` and
+#: routes with `"regular"` to the branch that assumes a key may be in there. Sending it
+#: the other way prints "nothing was signed with what was moved" over a live key — a
+#: symlink to a real 32-byte key through a directory this process may not traverse is the
+#: reproducible case, and there is no reading it from here to find out.
+_KeyFileKind = str  # "regular" | "other" | "unknown"
+
+
 def _read_key_bytes(p: pathlib.Path) -> bytes | None:
+    """The bytes, or `None` for every way this process did not get them."""
+    return _observe_key_file(p)[0]
+
+
+def _observe_key_file(p: pathlib.Path) -> tuple[bytes | None, _KeyFileKind]:
+    """The bytes this process read, and what it could establish about the path's kind.
+
+    `_read_key_bytes` (which is now this function with the kind dropped, so the two cannot
+    drift) collapses every failure into one `None`, and the set-aside warning has to tell
+    them apart: a regular file we may not open can be a whole key and wants reading, a FIFO
+    cannot be a key and must not be read, and a path we could not even `stat` is neither
+    known.
+
+    **`p.is_file()` is inside the `try`.** It swallows `ENOENT`, `ENOTDIR`, `EBADF` and
+    `ELOOP` and re-raises everything else, so a key symlinked through a directory this
+    process may not traverse raised `PermissionError` out of the loader — a state that
+    warns and recovers, turned fatal, `accept` refusing with "the key could not be
+    prepared".
+
+    **This narrows the sibling race; it does not close it.** The `stat` and the `read` are
+    two calls, and the `rename` at the call site is a third: a sibling that changes the
+    kind in between is reported under the kind seen first. The sharpest form, reproduced:
+    a sibling unlinks the path before the `stat` and writes a regular file before the
+    `rename`, and the warning prints the not-a-regular-file line — with its claim that
+    nothing was signed with what was moved — over a moved regular file. That is the
+    residual, and it is written down rather than claimed away; closing it wants the file
+    held open across the rename, which is a different change.
+    """
     try:
-        return p.read_bytes() if p.is_file() else None
+        regular = p.is_file()
     except OSError:
-        return None
+        return None, "unknown"
+    if not regular:
+        return None, "other"
+    try:
+        return p.read_bytes(), "regular"
+    except OSError:
+        return None, "regular"
 
 
 def _usable(raw: bytes | None) -> bytes | None:

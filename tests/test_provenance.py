@@ -604,6 +604,262 @@ def test_a_key_this_process_could_not_read_is_not_reported_as_zero_bytes(tmp_pat
     assert len(moved) == 1
 
 
+def _warned_about(root: pathlib.Path, prepare, capsys) -> str:
+    """Drive `load_or_create_provenance_key` over one broken-key shape; return its warning.
+
+    `prepare` leaves something at `.rig/provenance.key` and returns an undo callable, so a
+    shape that has to monkeypatch (the unreadable regular file) can put the world back.
+    """
+    from rig_workbench.workbench.state import load_or_create_provenance_key
+
+    (root / ".rig").mkdir(parents=True)
+    undo = prepare(root / ".rig" / "provenance.key")
+    try:
+        assert len(load_or_create_provenance_key(root)) == 32
+    finally:
+        undo()
+    lines = [ln for ln in capsys.readouterr().out.splitlines() if "[WARN]" in ln]
+    assert len(lines) == 1, lines
+    return lines[0]
+
+
+def _short_file(path):
+    path.write_bytes(b"12345678")
+    return lambda: None
+
+
+def _unreadable_regular_file(path):
+    """A regular file holding a real 32-byte key that this process may not open.
+
+    A sandbox running as root cannot be denied by `chmod`, so the denial is attached to the
+    file's inode: the same file stays unreadable after the rename (which is what a mode or
+    an owner would do), while the replacement key, a different inode, reads normally.
+    """
+    path.write_bytes(bytes(range(32)))
+    denied = path.stat().st_ino
+    real = pathlib.Path.read_bytes
+
+    def guarded(self):
+        if self.stat().st_ino == denied:
+            raise PermissionError(13, "Permission denied")
+        return real(self)
+
+    pathlib.Path.read_bytes = guarded
+    return lambda: setattr(pathlib.Path, "read_bytes", real)
+
+
+def _fifo(path):
+    import os
+
+    os.mkfifo(path)
+    return lambda: None
+
+
+def _dangling_symlink(path):
+    path.symlink_to(path.parent / "nothing-is-here")
+    return lambda: None
+
+
+def test_the_set_aside_warning_claims_a_lost_record_only_where_it_measured_one(tmp_path,
+                                                                               capsys):
+    """How each branch of the set-aside warning *ends*, which nothing pinned before this.
+
+    Every branch used to share one tail: "anything signed with the moved file no longer
+    verifies". Measured on the previous shape, the three lines below were byte-identical
+    from "It has been moved to" onward. Only the first earned it: its bytes were counted,
+    they are under `MIN_KEY_BYTES`, and every reader of that file refuses it forever.
+
+    The other two counted nothing, and they are not the same situation either. A regular
+    file this process may not open can be a whole 32-byte key whose records only it
+    verifies, so the operator must read it before deleting it. A FIFO cannot be a key at
+    all — both readers go through `p.is_file()` — and telling somebody to read *that*
+    before deleting it is worse than silence, because opening it blocks until a writer
+    appears.
+
+    The existing tests pin the opening phrases and stop, which is how the tail survived.
+    This one asserts the ends, and the half that must stay on all three — where the file
+    went — because where nothing was measured that is the more important half.
+    """
+    measured = _warned_about(tmp_path / "short", _short_file, capsys)
+    assert "held 8 byte(s) when this process read it" in measured
+    assert measured.endswith("anything signed with the moved file no longer verifies")
+
+    denied = _warned_about(tmp_path / "denied", _unreadable_regular_file, capsys)
+    assert "could not be read as a key by this process (the permissions" in denied
+    assert "no longer verifies" not in denied      # the claim about bytes nobody read, gone
+    assert denied.endswith("its contents are unread, so whether anything signed with it "
+                           "still verifies is unknown — read it before deleting it")
+
+    fifo = _warned_about(tmp_path / "fifo", _fifo, capsys)
+    assert "could not be read as a key by this process (it is not a regular file" in fifo
+    assert "no longer verifies" not in fifo
+    assert "read it before deleting it" not in fifo    # …and no advice to block on a FIFO
+    assert fifo.endswith("a path of that kind is never read as a key, so nothing was signed "
+                         "with what was moved; identify it rather than opening it, because "
+                         "reading a FIFO blocks until something writes")
+
+    # A dangling symlink is neither a FIFO nor a directory nor a device, and it reaches the
+    # same branch — `is_file()` follows the link, finds nothing, and answers False. The
+    # enumeration in the message is open ("such as") because of exactly this.
+    dangling = _warned_about(tmp_path / "dangling", _dangling_symlink, capsys)
+    assert dangling.split("provenance.key ", 1)[1] == fifo.split("provenance.key ", 1)[1]
+
+    # …and what the process actually did survives on all of them. It is the only way an
+    # operator finds the file, and where nothing was measured they must go and look.
+    for line in (measured, denied, fifo, dangling):
+        assert "moved to provenance.key.unusable and a new key generated" in line
+
+
+def test_a_path_this_process_cannot_stat_is_not_reported_as_a_non_regular_file(tmp_path):
+    """The claim the third line makes needs a `stat` that answered, and here none did.
+
+    A genuine 32-byte key, symlinked through a directory this process may not traverse.
+    `Path.is_file()` swallows `ENOENT`, `ENOTDIR`, `EBADF` and `ELOOP` and re-raises the
+    rest, so `EACCES` comes straight out of it — measured: with the stat outside the `try`
+    this raised `PermissionError` out of the loader and `accept` refused, where the shape
+    before it warned and recovered. Putting the stat inside the `try` is only half of it:
+    answering "not a regular file" for a stat that never answered would print "nothing was
+    signed with what was moved" over a live key. It routes to the branch that claims
+    nothing and asks the operator to look.
+
+    The denial has to be real, not monkeypatched: `mode 0o000` does not stop root, so the
+    loader is run in a forked child that drops to an unprivileged uid first. The existing
+    inode-denial shape above passes as root and would not have caught this.
+    """
+    import contextlib
+    import io
+    import os
+    import select
+    import shutil
+    import signal
+    import tempfile
+
+    from rig_workbench.govern import ledger                        # imported before the
+    from rig_workbench.workbench.state import (                    # fork: the child may
+        load_or_create_provenance_key)                             # not reach the tree
+    assert ledger.MIN_KEY_BYTES
+
+    nobody = 65534
+    root = pathlib.Path(tempfile.mkdtemp())        # not tmp_path: the whole chain has to be
+    vault = root / "vault"                         # traversable by the unprivileged child
+    try:
+        os.chmod(root, 0o755)
+        (root / ".rig").mkdir()
+        os.chmod(root / ".rig", 0o777)
+        vault.mkdir()
+        (vault / "real.key").write_bytes(bytes(range(32)))
+        (root / ".rig" / "provenance.key").symlink_to(vault / "real.key")
+        os.chmod(vault, 0o000)
+
+        read_fd, write_fd = os.pipe()
+        pid = os.fork()
+        if pid == 0:                                               # pragma: no cover
+            try:
+                os.close(read_fd)
+                if os.getuid() == 0:
+                    os.setgid(nobody)
+                    os.setuid(nobody)
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    got = len(load_or_create_provenance_key(pathlib.Path(root)))
+                os.write(write_fd, f"key={got}\n{out.getvalue()}".encode())
+            except BaseException as exc:                           # noqa: BLE001
+                os.write(write_fd, f"raised={type(exc).__name__}: {exc}".encode())
+            finally:
+                os._exit(0)
+        os.close(write_fd)
+        # Bounded, because the thing under test is a loader that can wedge: an unbounded
+        # `read` on a child that never writes turns a failure into a hung suite, and the
+        # repository sets no global test timeout to catch it.
+        answer = ""
+        if select.select([read_fd], [], [], 60)[0]:
+            answer = os.read(read_fd, 65536).decode()
+        else:
+            os.kill(pid, signal.SIGKILL)
+        os.close(read_fd)
+        os.waitpid(pid, 0)
+        assert answer, "the child produced nothing within 60s"
+
+        first, _, printed = answer.partition("\n")
+        assert first == "key=32", answer           # recoverable, and it recovered
+        # The half of this that a `try` around the `stat` does not fix: answering "not a
+        # regular file" for a `stat` that never answered would print "nothing was signed
+        # with what was moved" over the 32 bytes in `vault/real.key`.
+        assert "could not be read as a key by this process (the permissions" in printed
+        assert "nothing was signed with what was moved" not in printed
+        moved = list((root / ".rig").glob("provenance.key.unusable*"))
+        assert len(moved) == 1 and moved[0].is_symlink()
+        # The mode goes back before this: following the link reads *through* `vault`, and
+        # leaving that until the `finally` would make the last assertion pass only for a
+        # root runner. The denial the child needed is over by now either way.
+        os.chmod(vault, 0o700)
+        assert moved[0].readlink().read_bytes() == bytes(range(32))   # …and it is a key
+    finally:
+        os.chmod(vault, 0o700)
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_the_read_helper_delegates_to_the_observer_rather_than_agreeing_with_it(tmp_path,
+                                                                                monkeypatch):
+    """`_read_key_bytes` is `_observe_key_file` with the kind dropped, and stays that way.
+
+    Two functions doing the same read with a flag between them is how the two halves of a
+    message drift apart, which is the shape of the defect this whole run is about.
+
+    **Agreement over a handful of shapes is not delegation**, and asserting only that was
+    this test's own version of the same defect: reinstating the old standalone body passed
+    it, because a faithful reimplementation agrees everywhere it was asked. The sentinel
+    below is a value no reimplementation can produce, so only a real call to the observer
+    returns it. The shapes are still driven, because delegation to something that answers
+    wrongly is no better.
+    """
+    from rig_workbench.workbench import state
+
+    for name, prepare in (("short", _short_file), ("fifo", _fifo), ("absent", None),
+                          ("dangling", _dangling_symlink)):
+        path = tmp_path / name / "provenance.key"
+        path.parent.mkdir(parents=True)
+        if prepare is not None:
+            prepare(path)
+        assert state._read_key_bytes(path) == state._observe_key_file(path)[0]
+
+    assert state._observe_key_file(tmp_path / "short" / "provenance.key")[1] == "regular"
+    assert state._observe_key_file(tmp_path / "fifo" / "provenance.key")[1] == "other"
+    assert state._observe_key_file(tmp_path / "dangling" / "provenance.key")[1] == "other"
+
+    sentinel = object()
+    monkeypatch.setattr(state, "_observe_key_file", lambda p: (sentinel, "regular"))
+    assert state._read_key_bytes(tmp_path / "short" / "provenance.key") is sentinel
+
+
+def test_the_operator_prose_quotes_the_warnings_this_code_actually_prints(tmp_path, capsys):
+    """The facet's fenced block, compared against the three lines the loader emits.
+
+    This is the gap the defect came through: the warning and the prose that quotes it were
+    tied by nothing but somebody re-reading both, so when the tail was wrong it was wrong in
+    two places and corrected in prose instead of in code. Anyone editing either side now
+    has to edit the other.
+
+    Only the repository root is substituted (the facet writes `/path/to/repo`, and says so);
+    everything after it is compared byte for byte.
+    """
+    facet = (pathlib.Path(__file__).resolve().parents[1] / "skills" / "engine" / "facets"
+             / "instructions" / "workbench-ops.md")
+    lines = facet.read_text().splitlines()
+    anchors = [i for i, ln in enumerate(lines) if "provenance.key held" in ln]
+    assert len(anchors) == 1, "the quoted set-aside warnings should appear exactly once"
+    top = max(i for i in range(anchors[0]) if lines[i].startswith("```"))
+    bottom = min(i for i in range(anchors[0], len(lines)) if lines[i].startswith("```"))
+    quoted = lines[top + 1:bottom]
+
+    printed = [_warned_about(tmp_path / name, prepare, capsys).replace(str(tmp_path / name),
+                                                                      "/path/to/repo")
+               for name, prepare in (("short", _short_file),
+                                     ("denied", _unreadable_regular_file),
+                                     ("fifo", _fifo))]
+    assert quoted == printed
+
+
 def test_a_key_is_created_without_clobbering_one_that_appeared_first(tmp_path):
     """The creation is a link from a complete temporary file, not a write to the path.
 

@@ -203,17 +203,19 @@ HMAC は鍵が空でも署名できてしまう。そのため16バイト未満�
 
 鍵の取得は squash の**前**に行う。退避や生成は失敗しうる操作なので、何も適用されていない位置で止める。退避そのものができないときも拒否する。いずれも exit 2 で、`--force` 時は `accept_refused`（reason: `provenance_key_unavailable`）として記録する。
 
-退避したときに出る警告は 2 種類あり、どちらが出たかが後の判断を決める。パスは実際には絶対パスで出る。
+退避したときに出る警告は 3 種類あり、どれが出たかが後の判断を決める。パスは実際には絶対パスで出る。
 
 ```
 [WARN] /path/to/repo/.rig/provenance.key held 8 byte(s) when this process read it, below the 16 a signing key must have. It has been moved to provenance.key.unusable and a new key generated; anything signed with the moved file no longer verifies
-[WARN] /path/to/repo/.rig/provenance.key could not be read as a key by this process (it may not be a regular file, or the permissions may not allow it). It has been moved to provenance.key.unusable and a new key generated; anything signed with the moved file no longer verifies
+[WARN] /path/to/repo/.rig/provenance.key could not be read as a key by this process (the permissions may not allow it). It has been moved to provenance.key.unusable and a new key generated; its contents are unread, so whether anything signed with it still verifies is unknown — read it before deleting it
+[WARN] /path/to/repo/.rig/provenance.key could not be read as a key by this process (it is not a regular file, such as a FIFO, a directory, a device, or a symlink that resolves to nothing). It has been moved to provenance.key.unusable and a new key generated; a path of that kind is never read as a key, so nothing was signed with what was moved; identify it rather than opening it, because reading a FIFO blocks until something writes
 ```
 
-どちらの行も `anything signed with the moved file no longer verifies` で終わる。この節が当てはまるのは `held N byte(s)` の側だけである。`could not be read` の側は長さを測れていないので、この節にも根拠がない。退避したファイルを消してよいかも、2 種のどちらが出たかで決まる。
+3 行は末尾が違う。`anything signed with the moved file no longer verifies` で終わるのは `held N byte(s)` の側だけで、長さを測れた側にしかこの断定の根拠がないからである。`the permissions` の側は、中身を読めていないので検証できるかどうかも分からない、と言うにとどまる。`it is not a regular file` の側は、そもそも鍵として読まれない種類のパスなので、それで署名されたレコードは無い。種類を `stat` できなかったときは、読めていないものを「署名に使われていない」と言い切る方が危険なので、`the permissions` の側に出る。退避したファイルを消してよいかも、3 種のどれが出たかで決まる。
 
 - `held N byte(s)` の側：消してよい。16 バイト未満であり、`verify-provenance` も `govern audit verify` も同じ規則で拒む。そのファイルで署名済みのレコードは、以後検証できないままになる。
-- `could not be read` の側：消してはいけない。この行は長さを測れなかったと言っているだけで、中身が本物の鍵でないとは言っていない。権限やファイル種別だけが問題で、バイト列は無傷という場合がある。本物の鍵であれば、そのファイルで署名済みのレコードを検証できるのはそのファイルだけである。まず中身と権限を確認するよう案内する。権限を直して `.rig/provenance.key` に戻せば、そのファイルで署名済みのレコードは再び検証できる。その代わり、新しい鍵で署名したレコードの側が検証できなくなる。
+- `the permissions` の側：消してはいけない。この行は中身を読めなかったと言っているだけで、中身が本物の鍵でないとは言っていない。権限やパスの途中のディレクトリだけが問題で、バイト列は無傷という場合がある。本物の鍵であれば、そのファイルで署名済みのレコードを検証できるのはそのファイルだけである。行自体も、消す前に読めと言っている。権限を直して `.rig/provenance.key` に戻せば、そのファイルで署名済みのレコードは再び検証できる。その代わり、新しい鍵で署名したレコードの側が検証できなくなる。
+- `it is not a regular file` の側：正体を確かめてから消す。FIFO・ディレクトリ・デバイス・壊れたシンボリックリンクなど、通常ファイルでないものは鍵として読まれたことがないので、失われるレコードは無い。ただし FIFO を `cat` すると書き込み側が現れるまで止まるので、中身は見ずに種類だけを確かめる。見るのは退避先の `.rig/provenance.key.unusable` であり、`ls -l` もそちらに向ける。`.rig/provenance.key` は新しい鍵に置き換わっていて、そちらを見ると通常ファイルに見える。鍵のパスにそれがあった理由の方が、退避したもの自体より重要である。
 
 検証する側（`verify-provenance`）は鍵を**読むだけ**で、生成も置換もしない。鍵が無い場合も、鍵として使えない場合も、`verify-provenance` はどちらも「検証できない」として扱う。出力は `signature: ✗ INVALID (record or key may have changed)` で exit 1 である。つまりレコードに一切触れていなくても、鍵が入れ替わっていれば INVALID になる。この点をユーザーに伝えると、原因の切り分けが早い。`govern audit verify` と共有しているのは、何を鍵と見なすかの規則（16 バイトの下限）である。読めないファイルを鍵として扱わない点も一致するが、こちらは共通の定義ではなく、両者が同じように書かれているだけである。`govern audit verify` の側は、鍵が存在するのに読めない・短すぎる場合に、署名検査が落ちたことを問題として報告する。鍵が無い場合は、署名付きのエントリがあるときにだけ問題として報告する。
 
