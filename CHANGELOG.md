@@ -297,6 +297,12 @@ pillars and silently voiding their rows. `registry/` needs no line — it holds 
 and neither does `ports/__init__.py`, which is protocols only; both pass the checks untouched, which
 is their design claim rather than an exemption.
 
+**`tests/test_reviewer_surface.py` pins the reviewer surface to the directories behind it.** The
+agent and persona rows of `SKILL.md` §2, the dispatch lanes of `facets/instructions/parallel-review`
+and `adversarial-review`, and each reviewer agent's read-only tool allowlist are parsed out of the
+shipped files and held against `agents/` and `facets/personas/`, so a lane a document names with no
+brick behind it fails here rather than at dispatch.
+
 ### Changed
 
 **`rig-wb govern --help` reads differently on seven lines, and that is the only user-visible part of
