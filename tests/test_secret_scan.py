@@ -8,6 +8,8 @@ failed with a masked excerpt, and a hand-written --set passed refused rather
 than recorded — see tests/test_gate_sensor_authority.py for that rule).
 """
 
+import base64
+import hashlib
 import json
 import os
 import pathlib
@@ -18,7 +20,9 @@ import sys
 import pytest
 
 from rig_workbench.workbench.secrets import (apply_secret_sensor,
-                                             entropy_allowlisted, mask,
+                                             digest_under_label,
+                                             entropy_allowlisted,
+                                             git_id_under_label, mask,
                                              scan_diff_text,
                                              scan_line, scan_paths,
                                              scan_worktree_diff,
@@ -134,9 +138,219 @@ def test_drill_corpus_fixtures_are_entropy_allowlisted_but_not_leak_proof():
 
 
 def test_hex_lockfile_hash_vs_source_file():
-    hex64 = "a3f1c9e2b8d4470a5e6f1029c3b7d8e4f0a1b2c3d4e5f60718293a4b5c6d7e8f"
+    # Derived, not pasted, like every other fixture here: an unlabelled hex64 written
+    # into this file as a literal is an added high-entropy line in its own diff.
+    hex64 = hashlib.sha256(b"rig workbench lockfile hash fixture").hexdigest()
     assert scan_line(hex64, "go.sum", 1) == []                       # allowlisted path
     assert any(f["kind"] == "high_entropy" for f in scan_line(hex64, "src/app.py", 1))
+
+
+# ── a digest under a digest label ─────────────────────────────────────────────
+# Computed, never pasted. A literal digest written into this module is an added
+# high-entropy line in every diff that touches it, and the diff-scoped scan behind
+# `no_secret_leak` reports added lines — so pasting the fixtures would make the test
+# suite for the scanner fail the scanner. Hashing a fixed seed gives the same three
+# values on every run, with the one property the tests actually need: real hex of
+# real digest length.
+_FIXTURE_SEED = b"rig workbench secret-scan fixture"
+SHA256_HEX = hashlib.sha256(_FIXTURE_SEED).hexdigest()
+SHA1_HEX = hashlib.sha1(_FIXTURE_SEED).hexdigest()
+SHA512_HEX = hashlib.sha512(_FIXTURE_SEED).hexdigest()
+# The base64 counterpart, likewise derived rather than typed: 43 chars, the length a
+# base64-encoded sha256 lands on, and the charset the rule refuses to exempt.
+B64_OF_DIGEST_LEN = base64.urlsafe_b64encode(bytes.fromhex(SHA256_HEX)).decode().rstrip("=")
+
+
+def test_the_fixtures_are_the_shapes_the_rules_turn_on():
+    """Guard the derivation: a seed change must not silently weaken the cases below."""
+    assert len(SHA256_HEX) == 64 and len(SHA1_HEX) == 40 and len(SHA512_HEX) == 128
+    assert all(re.fullmatch(r"[0-9a-f]+", h) for h in (SHA256_HEX, SHA1_HEX, SHA512_HEX))
+    # Every one of them clears the hex entropy threshold, so "still reported" cases
+    # below really are the rule speaking and not a low-entropy accident.
+    assert all(shannon_entropy(h) > 3.0 for h in (SHA256_HEX, SHA1_HEX, SHA512_HEX))
+    assert len(B64_OF_DIGEST_LEN) == 43 and shannon_entropy(B64_OF_DIGEST_LEN) > 4.5
+
+
+@pytest.mark.parametrize("line", [
+    f'        "body_sha256": "{SHA256_HEX}",',
+    f'sha256 = "{SHA256_HEX}"',
+    f"sha256:{SHA256_HEX}",
+    f"checksum: {SHA256_HEX}",
+    f'"content_hash": "{SHA256_HEX}"',
+    f'"blake2b": "{SHA256_HEX}"',
+])
+def test_hex_digest_under_a_digest_label_is_not_a_secret(line):
+    """An attestation table is a table of hashes, and says so on every line.
+
+    The value is the output of a hash function over something public, published so
+    anyone can recompute it; the entropy heuristic cannot tell it from a key, but the
+    line can. Moving one such table between modules used to fail `no_secret_leak` on
+    every row of it.
+    """
+    assert scan_line(line, "src/composition.py", 1) == []
+
+
+def test_the_same_hex_without_a_label_is_still_reported():
+    # The label is the whole of the exemption: nothing about the value itself is safe.
+    findings = scan_line(f'"value": "{SHA256_HEX}"', "src/composition.py", 1)
+    assert [f["kind"] for f in findings] == ["high_entropy"]
+    assert SHA256_HEX not in findings[0]["masked_excerpt"]
+
+
+def test_sha1_and_sha512_lengths_are_exempt_and_other_hex_lengths_are_not():
+    assert scan_line(f'"sha1": "{SHA1_HEX}"', "src/app.py", 1) == []
+    assert scan_line(f'"sha512": "{SHA512_HEX}"', "src/app.py", 1) == []
+    # Exactly sha1/sha256/sha512 output length, nothing else: a 48-char hex blob under
+    # a digest label is not the shape of any digest this rule knows about.
+    hex48 = SHA256_HEX[:48]
+    assert [f["kind"] for f in scan_line(f'"digest": "{hex48}"', "src/app.py", 1)] == ["high_entropy"]
+
+
+def test_a_labelled_base64_token_is_never_exempted():
+    """Charset carries the rule, because it is the part an attacker cannot cheaply fake.
+
+    Base64 of digest length is indistinguishable from base64 of key length, so a
+    `sha256` label over a base64 value is exactly what hiding a key would look like.
+    """
+    findings = scan_line(f'"body_sha256": "{B64_OF_DIGEST_LEN}"', "src/app.py", 1)
+    assert [f["kind"] for f in findings] == ["high_entropy"]
+
+
+def test_named_patterns_still_fire_under_a_digest_label():
+    # Only the entropy heuristic is silenced; a vendor-formatted credential is a leak
+    # wherever it is written, and a `checksum:` in front of it changes nothing.
+    kind, sample = SAMPLES[0]
+    findings = scan_line(f'"checksum": "{sample}"', "src/app.py", 1)
+    assert [f["kind"] for f in findings] == [kind]
+
+
+# ── a git object id under its label ───────────────────────────────────────────
+@pytest.mark.parametrize("label", [
+    "source_commit", "git_commit", "commit",
+    "source_git_blob", "git_blob", "blob",
+    "tree", "object_id", "oid",
+])
+def test_git_object_id_under_a_git_id_label_is_not_a_secret(label):
+    """The other digest an attestation table cannot avoid: where the text was read from.
+
+    A commit or blob id is the coordinate that makes the binding checkable at all, and
+    it is hex by construction because that is how git addresses content.
+    """
+    assert scan_line(f'"{label}": "{SHA1_HEX}"', "src/composition.py", 1) == []
+
+
+def test_checksum_and_digest_are_whole_keys_and_still_vouch():
+    """The closed list keeps the two plain English ones, as whole keys only.
+
+    `checksum` and `digest` name a digest and nothing else; it is `digest_auth_secret`
+    and `password_hash` — the families that only start or end with one — that were the
+    way in, and those are closed above. A `_`-joined prefix is allowed before the five
+    common keys and no suffix after any of them.
+    """
+    assert scan_line(f'checksum = "{SHA256_HEX}"', "src/app.py", 1) == []
+    assert scan_line(f'"digest": "{SHA512_HEX}"', "src/app.py", 2) == []
+    assert scan_line(f'"source_excerpt_sha256": "{SHA256_HEX}"', "src/app.py", 3) == []
+    assert scan_line(f'"blob_checksum": "{SHA256_HEX}"', "src/app.py", 4) == []
+
+
+def test_the_git_id_label_class_applies_to_40_hex_only():
+    # A git id is a sha1 and is always 40 hex. A 64-hex value under a `commit` label is
+    # not a git id, and the label does not reach it.
+    findings = scan_line(f'"commit": "{SHA256_HEX}"', "src/app.py", 1)
+    assert [f["kind"] for f in findings] == ["high_entropy"]
+    assert [f["kind"] for f in scan_line(f'"commit": "{SHA512_HEX}"', "src/app.py", 2)] == ["high_entropy"]
+    # …and without a label of either class, 40 hex is still reported.
+    assert [f["kind"] for f in scan_line(f'"value": "{SHA1_HEX}"', "src/app.py", 3)] == ["high_entropy"]
+
+
+def test_a_key_that_merely_contains_a_label_does_not_carry_it():
+    """Reversing an earlier pin: `commit_token` is reported again.
+
+    It was exempt while the label was any word within 40 characters of the value. A
+    security review measured what that bought: six ordinary key names, none of them
+    naming a digest, each silencing a 40-hex value beside it. The label is now the
+    value's own key, matched whole, so a key that merely *contains* one carries
+    nothing.
+    """
+    findings = scan_line(f'"commit_token": "{SHA1_HEX}"', "src/app.py", 1)
+    assert [f["kind"] for f in findings] == ["high_entropy"]
+
+
+# The six key names the review measured: each contains a former label as a substring
+# (`rev` in prev/revenue/revoked, `commit` in committee, `tree` in street, `blob` in
+# blobstore) and each silenced the 40-hex value beside it. 40 hex is a live credential
+# shape — Datadog application keys, CircleCI tokens, legacy GitHub PATs — that no
+# named pattern covers, so these are the regression cases that matter most here.
+@pytest.mark.parametrize("key", [
+    "prev_api_key", "revenue_api_token", "revoked_key",
+    "committee_api_key", "street_service_key", "blobstore_key",
+])
+def test_substring_of_a_git_id_label_no_longer_silences_a_40_hex_value(key):
+    findings = scan_line(f'{key} = "{SHA1_HEX}"', "src/app.py", 1)
+    assert [f["kind"] for f in findings] == ["high_entropy"]
+
+
+@pytest.mark.parametrize("key", ["digest_auth_secret", "password_hash", "session_hash"])
+def test_a_key_that_is_not_a_digest_key_reports_64_hex(key):
+    """`secrets.token_hex(32)` is 64 hex, and so is every key it makes.
+
+    An AES-256 key, an HMAC key, a session key and a Sentry auth token all have this
+    exact shape, so a key family that merely ends in `_hash` or begins with `digest`
+    cannot be allowed to vouch for one. Bare `_hash` is gone from the label set, and
+    the prefix rule runs one way only: `body_sha256` yes, `digest_auth_secret` no.
+    """
+    findings = scan_line(f'{key} = "{SHA256_HEX}"', "src/app.py", 1)
+    assert [f["kind"] for f in findings] == ["high_entropy"]
+
+
+def test_the_label_window_is_the_same_line_only():
+    # A label on the previous line does not vouch for a value on this one — otherwise
+    # any file with the word `digest` anywhere in it would silence the detector below.
+    assert scan_line('        "body_sha256":', "src/app.py", 1) == []
+    findings = scan_line(f'        "{SHA256_HEX}",', "src/app.py", 2)
+    assert [f["kind"] for f in findings] == ["high_entropy"]
+    # …nor does a label far enough back on the same line to belong to another field.
+    far = f'"sha256": "", "pad": "{"-" * 40}", "k": "{SHA256_HEX}"'
+    assert [f["kind"] for f in scan_line(far, "src/app.py", 3)] == ["high_entropy"]
+    # Both label classes are anchored the same way, so both stay on their own line.
+    assert scan_line('        "source_commit":', "src/app.py", 4) == []
+    assert [f["kind"] for f in scan_line(f'        "{SHA1_HEX}",', "src/app.py", 5)] == ["high_entropy"]
+
+
+@pytest.mark.parametrize("predicate,key", [
+    (digest_under_label, "body_sha256"),
+    (git_id_under_label, "source_commit"),
+])
+def test_the_charset_guard_holds_when_the_predicate_is_called_directly(predicate, key):
+    """Both predicates are public, so each re-checks the charset itself.
+
+    Through `scan_line` the guard is unreachable — that caller has already decided the
+    token is hex before it asks — and the base64 case a few tests up is killed by the
+    length set, not the charset. Called directly with a 40-char base64 token, which
+    passes every length test either rule applies, only the charset guard is left to
+    say no. It is the load-bearing half of the rule, so it is pinned where it can
+    actually fail.
+    """
+    line = f'"{key}": "{RANDOM_B64_40}"'
+    assert predicate(line, RANDOM_B64_40, line.index(RANDOM_B64_40)) is False
+    # …and the same call with real hex of the same length is True, so the assertion
+    # above is the charset talking and not the anchor failing to match.
+    hex_line = f'"{key}": "{SHA1_HEX}"'
+    assert predicate(hex_line, SHA1_HEX, hex_line.index(SHA1_HEX)) is True
+
+
+def test_the_three_accepted_label_forms_and_nothing_else():
+    """A key and its separator, the colon form, and the whole-word prose form."""
+    for line in (f'"body_sha256": "{SHA256_HEX}"',   # mapping
+                 f'sha256 = "{SHA256_HEX}"',          # assignment
+                 f"sha256:{SHA256_HEX}",              # the form digests are quoted in
+                 f"sha256 {SHA256_HEX}"):             # prose / Markdown
+        assert scan_line(line, "src/app.py", 1) == [], line
+    # Not a form: anything between the key and the value that is not a separator.
+    for line in (f'sha256 -> {SHA256_HEX}',
+                 f'sha256, {SHA256_HEX}',
+                 f'sha256("{SHA256_HEX}")'):
+        assert [f["kind"] for f in scan_line(line, "src/app.py", 1)] == ["high_entropy"], line
 
 
 # ── clean tree ────────────────────────────────────────────────────────────────
@@ -314,6 +528,57 @@ def test_scan_secrets_cli_clean_paths_exits_zero(tmp_path):
     r = cli(repo, tmp_path / "wt", "scan-secrets", ".")
     assert r.returncode == 0, r.stderr
     assert "No potential secrets found." in r.stdout
+
+
+def test_an_attestation_table_lands_through_the_gate_without_an_override(tmp_path):
+    """The whole point, end to end: the case that motivated the rule.
+
+    Moving `_JAPANESE_MATERIAL_ATTESTATIONS` between modules put four `*_sha256` rows
+    and two `source_commit` rows into a diff and failed `no_secret_leak` on lines that
+    had not changed at all. An ordinary source path, no allowlist, no `--set` escape
+    hatch: the diff-scoped scan must simply come back empty.
+    """
+    repo, _sha = make_repo(tmp_path)
+    wt_root = tmp_path / "wt"
+
+    r = cli(repo, wt_root, "new", "move attestations", "--type", "refactor",
+            "--slug", "move-attestations")
+    assert r.returncode == 0, r.stderr
+    task_id = re.search(r"task_id: (\S+)", r.stdout).group(1)
+    wt = wt_root / task_id
+
+    rows = []
+    for material in ("technical", "conversation"):
+        body = hashlib.sha256(material.encode()).hexdigest()
+        excerpt = hashlib.sha256(f"{material}-excerpt".encode()).hexdigest()
+        commit = hashlib.sha1(f"{material}-commit".encode()).hexdigest()
+        blob = hashlib.sha1(f"{material}-blob".encode()).hexdigest()
+        rows += [
+            f'    "{material}": {{',
+            f'        "source_git_blob": "{blob}",',
+            f'        "source_commit": "{commit}",',
+            f'        "source_excerpt_sha256": "{excerpt}",',
+            f'        "body_sha256": "{body}",',
+            "    },",
+        ]
+    (wt / "composition.py").write_text(
+        "ATTESTATIONS = {\n" + "\n".join(rows) + "\n}\n", encoding="utf-8")
+    _git(wt, "add", "composition.py")
+    _git(wt, "commit", "-q", "-m", "move the attestation table")
+
+    task = json.loads((repo / ".rig" / "runs" / task_id / "task.json").read_text(encoding="utf-8"))
+    assert scan_worktree_diff(pathlib.Path(task["worktree_path"]), task["base_commit"]) == []
+
+    r = cli(repo, wt_root, "scan-secrets", "--diff", task_id)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "No potential secrets found." in r.stdout
+
+    # …and the same table with one real credential added is still caught, so the case
+    # above is the rule working and not the scan failing to look.
+    kind, sample = SAMPLES[0]
+    (wt / "composition.py").write_text(f'TOKEN = "{sample}"\n', encoding="utf-8")
+    r = cli(repo, wt_root, "scan-secrets", "--diff", task_id)
+    assert r.returncode == 1 and kind in r.stdout and sample not in r.stdout
 
 
 def test_signed_eval_evidence_is_entropy_allowlisted_but_not_leak_proof():

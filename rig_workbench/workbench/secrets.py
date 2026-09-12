@@ -22,8 +22,13 @@ Patterns covered (kind → shape):
 The entropy detector carries a path allowlist for the obvious false-positive
 factories — lockfile hashes and vendored trees: *.lock, *.sum,
 package-lock.json / npm-shrinkwrap.json / pnpm-lock.yaml, and anything under
-node_modules/ or .git/. The named patterns still run there (a real token is a
-leak wherever it sits); only the entropy heuristic is silenced.
+node_modules/ or .git/. It also carries two content rules, independent of path,
+each keyed on the value's OWN key rather than on a word near it: a 64/128-hex token
+whose key is a digest key (sha256 / sha512 / *_sha256 / digest / checksum / …), and a
+40-hex token whose key is either a digest key or a git-id key (commit / blob / tree /
+object_id / oid) — 40 hex being a sha1 and a git object id alike. The named patterns
+still run in every case (a real token is a leak wherever it sits); only the entropy
+heuristic is silenced.
 
 CLI: `workbench.py scan-secrets [paths...]` scans files/trees;
 `scan-secrets --diff <task-id>` scans only the task worktree's diff vs its
@@ -100,6 +105,78 @@ ALLOW_DIR_PARTS = ("node_modules", ".git", "corpora")
 # (sk-ant-…, AKIA…, a PEM header) written into an evidence file is still reported.
 ALLOW_PATH_PREFIXES = (("evals", "evidence"),)
 
+# The one entropy exemption that reads content rather than path: a content digest
+# written on a line that already names it as one. `"body_sha256": "<64 hex>"` is an
+# attestation table, not a credential — the value is the output of a hash function
+# over something public, published precisely so anyone can recompute it, and a format
+# that binds a commit to its source cannot avoid carrying it. The entropy heuristic
+# cannot tell it from a key; the key beside it can.
+#
+# A LABEL VOUCHES ONLY FOR ITS OWN VALUE. This started as "a digest word somewhere in
+# the 40 characters before the token", and a security review measured what that let
+# through: `prev_api_key`, `revenue_api_token` and `revoked_key` contain `rev`;
+# `committee_api_key` contains `commit`; `street_service_key` contains `tree`;
+# `blobstore_key` contains `blob`. Six ordinary key names, each vouching for a 40-hex
+# value beside it — and 40 hex is a live credential shape (Datadog application keys,
+# CircleCI tokens, legacy GitHub PATs) that no named pattern covers. So the label is
+# no longer *near* the value: it must BE the value's own key, the identifier directly
+# before the separator, matched whole. A substring of a longer identifier is not a
+# label, and there is no window left for an unrelated word to reach across.
+#
+# Which keys count is a closed list, not a word family. `digest` and `checksum` name a
+# digest; `digest_auth_secret` and `password_hash` do not, and both now report — bare
+# `_hash` is gone entirely, because `secrets.token_hex(32)` produces exactly 64 hex
+# and that is what an AES-256 key, an HMAC key, a session key and a Sentry auth token
+# all look like. A `_`-joined PREFIX is allowed only before sha256/sha1/sha512/digest/
+# checksum (`body_sha256`, `source_excerpt_sha256`), never a suffix after them — a
+# suffix is how `digest_auth_secret` would have got in.
+#
+# Pure hex only, and only at digest lengths: 64 and 128 under a digest key, 40 under
+# either class (a sha1 and a git object id are the same 40 hex). A base64 or
+# mixed-charset token is never exempted however it is labelled — `"body_sha256":
+# "<43 chars of base64>"` is exactly what hiding an API key behind a digest label
+# would look like, and base64 of digest length is indistinguishable from base64 of key
+# length. Charset is the part of this test an attacker cannot cheaply satisfy.
+#
+# Named patterns are NOT silenced: sk-ant-…, AKIA…, ghp_… under a `checksum:` key are
+# still reported, because a credential is a leak wherever it is written.
+DIGEST_HEX_LENGTHS = frozenset({64, 128})  # sha256 / sha512, in hex
+SHARED_HEX_LENGTH = 40                     # sha1 — and a git object id, the same shape
+
+# The digest keys, whole. `sha3_256` / `blake2b` / `content_hash` stand alone; the
+# five common ones take a `_`-joined prefix and nothing else.
+_DIGEST_KEY = (
+    r"(?:[A-Za-z0-9_]+_)?(?:sha256|sha1|sha512|digest|checksum)"
+    r"|sha3[_-]?\d+"
+    r"|blake2[bs]?"
+    r"|content_hash"
+)
+
+# The git-id keys, whole and exact — no prefix rule at all. `rev` and `sha` are gone:
+# they are too short to be anything but a substring of something else, and they were
+# how `prev_api_key` and `revoked_key` got their exemption.
+_GIT_ID_KEY = (
+    r"source_commit|git_commit|commit"
+    r"|source_git_blob|git_blob|blob"
+    r"|tree|object_id|oid"
+)
+
+# The anchor: `<key>` then the separator that introduces the value, ending exactly
+# where the token begins. Left side must be a non-identifier character, so the key
+# cannot be the tail of a longer one; the separator on the right means it cannot be
+# the head of one either. Three accepted forms, and no fourth:
+#   `"body_sha256": "`  /  `sha256 = "`   a key and its assignment or mapping
+#   `sha256:`                             the colon form digests are quoted in
+#   `sha256 `                             the prose/Markdown form, whole word adjacent
+_LABEL_ANCHOR = r'(?:^|[^A-Za-z0-9_])(?:%s)(?:["\']?[ \t]*[:=][ \t]*["\']?|[ \t]+)$'
+DIGEST_LABEL_RE = re.compile(_LABEL_ANCHOR % _DIGEST_KEY, re.IGNORECASE)
+GIT_ID_LABEL_RE = re.compile(_LABEL_ANCHOR % _GIT_ID_KEY, re.IGNORECASE)
+
+# Every form above ends in one of these, so the character touching the token decides
+# in O(1) whether the anchor can match at all. Purely a cost guard on long lines — it
+# accepts exactly what the patterns accept.
+_SEPARATOR_TAIL = "\"' \t:="
+
 # Tree-walk skips (never worth scanning at all) and binary/size guards.
 WALK_SKIP_DIRS = ("node_modules", ".git", ".rig", "__pycache__")
 MAX_FILE_BYTES = 1_000_000
@@ -145,6 +222,37 @@ def entropy_allowlisted(rel: str) -> bool:
     return any(parts[:len(prefix)] == prefix for prefix in ALLOW_PATH_PREFIXES)
 
 
+def _key_before(rx: re.Pattern, line: str, start: int) -> bool:
+    """True when the identifier directly before `start` on this line matches `rx`."""
+    if start == 0 or line[start - 1] not in _SEPARATOR_TAIL:
+        return False
+    return rx.search(line[:start]) is not None
+
+
+def digest_under_label(line: str, token: str, start: int) -> bool:
+    """True when `token` is a hex digest whose own key on this line names it as one.
+
+    Entropy-heuristic exemption only (see DIGEST_LABEL_RE): pure hex at 64/128 — or
+    40, shared with the git-id class — under a whole digest key.
+    """
+    if not HEX_RE.fullmatch(token):
+        return False
+    if len(token) not in DIGEST_HEX_LENGTHS and len(token) != SHARED_HEX_LENGTH:
+        return False
+    return _key_before(DIGEST_LABEL_RE, line, start)
+
+
+def git_id_under_label(line: str, token: str, start: int) -> bool:
+    """True when `token` is a 40-hex value whose own key on this line names it a git id.
+
+    Entropy-heuristic exemption only (see GIT_ID_LABEL_RE): exactly 40 hex — the
+    length git addresses content at — under a whole git-id key.
+    """
+    if len(token) != SHARED_HEX_LENGTH or not HEX_RE.fullmatch(token):
+        return False
+    return _key_before(GIT_ID_LABEL_RE, line, start)
+
+
 def _finding(rel: str, lineno: int, kind: str, secret: str) -> dict:
     return {"path": rel, "line": lineno, "kind": kind, "masked_excerpt": mask(secret)}
 
@@ -166,6 +274,10 @@ def scan_line(line: str, rel: str, lineno: int, skip_entropy: bool | None = None
             continue  # already reported by a named pattern
         tok = m.group(0)
         if HEX_RE.fullmatch(tok):
+            if digest_under_label(line, tok, m.start()):
+                continue  # a digest under a digest label is not a credential
+            if git_id_under_label(line, tok, m.start()):
+                continue  # …nor is a git object id under a git-id label
             threshold = HEX_ENTROPY_THRESHOLD
         else:
             threshold = BASE64_ENTROPY_THRESHOLD
