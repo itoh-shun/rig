@@ -344,7 +344,7 @@ WALKS: tuple[Walk, ...] = (
                            "`~/.claude/rig/personas` in the code, at any tier"),
             *_pack_tiers("facets/personas")[1:],
             _shipped(f"{SKILL_DIR}/facets/personas",
-                     note="`orchestrate.providers._load_persona_brief` falls back to this same "
+                     note="`orchestrate.composition._load_persona_brief` falls back to this same "
                           "directory (`config.PERSONAS`) when the walk finds nothing"),
         ),
     ),

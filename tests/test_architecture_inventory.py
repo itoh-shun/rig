@@ -99,13 +99,21 @@ PORT_LAYER_PACKAGE = "ports"
 # The paragraph above is kept because it is the record of how the component came
 # apart, not a description of today's imports.
 #
-# Five components now, and `rig_workbench/packs/` is in none of them — measured
-# after the deletions, not assumed from them. Nothing below may be re-added
-# without the change that adds it saying so here.
+# Stage 3 pillar 5 then removed the fifth component, `orchestrate.providers <->
+# orchestrate.runstate` (§11 T12). It too was held closed by exactly one
+# function-local import — `runstate` reaching into `providers` for
+# `japanese_material_metadata` — but the fix was not an inversion: the whole
+# composition cluster that function belongs to (pack-asset resolution, facet
+# loading, attested style material, and the four prompt composers) moved to
+# `orchestrate/composition.py`, which imports neither of them. `providers` re-exports
+# every moved name, so no caller outside the package had to change.
+#
+# Four components now, and `rig_workbench/packs/` and `rig_workbench/orchestrate/`
+# are in none of them — measured after the move, not assumed from it. Nothing below
+# may be re-added without the change that adds it saying so here.
 BASELINE_RUNTIME_CYCLES: frozenset[tuple[str, ...]] = frozenset(
     {
         ("rig_workbench.cli", "rig_workbench.githooks"),
-        ("rig_workbench.orchestrate.providers", "rig_workbench.orchestrate.runstate"),
         (
             "rig_workbench.workbench.assurance",
             "rig_workbench.workbench.assurance_target",

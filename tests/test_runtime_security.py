@@ -568,7 +568,7 @@ def test_secure_japanese_state_rejects_material_profile_tamper_on_load(
 def test_secure_material_snapshot_is_stable_during_run_and_asset_drift_blocks_resume(
     tmp_path, monkeypatch,
 ):
-    from rig_workbench.orchestrate import providers
+    from rig_workbench.orchestrate import composition, providers
     from rig_workbench.orchestrate.recipes import load_steps, parse_frontmatter, resolve_extends
     from rig_workbench.orchestrate.runstate import load_state, new_state, save_state
     from rig_workbench.orchestrate.secure_fs import atomic_write_bytes
@@ -607,13 +607,13 @@ def test_secure_material_snapshot_is_stable_during_run_and_asset_drift_blocks_re
     state_path = private / "run-state.json"
     save_state(state, state_path)
 
-    original_loader = providers._load_composition_asset
+    original_loader = composition._load_composition_asset
     def changed_material(kind, name, **kwargs):
         if kind == "wiki" and name == "japanese-style-material-technical":
             from rig_workbench.packs.model import PackError
             raise PackError("synthetic material asset swap")
         return original_loader(kind, name, **kwargs)
-    monkeypatch.setattr(providers, "_load_composition_asset", changed_material)
+    monkeypatch.setattr(composition, "_load_composition_asset", changed_material)
     assert providers.compose_step_prompt(state, write) == prompt_before
     repair_prompt = providers.compose_repair_prompt(
         state, write, "初稿", "検証済み修正条件"
@@ -674,7 +674,7 @@ def _valid_japanese_review_output(*, safety="PASS") -> str:
 def test_valid_pinned_fake_claude_to_codex_uses_stdin_and_secure_flags(
     tmp_path, monkeypatch, capsys, explicit_out,
 ):
-    from rig_workbench.orchestrate import commands, providers
+    from rig_workbench.orchestrate import commands, composition
 
     recipe = _independent_recipe(tmp_path / "japanese-writing.md")
     generator = tmp_path / "claude"
@@ -724,7 +724,7 @@ def test_valid_pinned_fake_claude_to_codex_uses_stdin_and_secure_flags(
     monkeypatch.setattr(commands.sys, "stdin", goal_stdin)
     monkeypatch.setattr(commands, "resolve_recipe", lambda _name: recipe)
     monkeypatch.setattr(
-        providers,
+        composition,
         "_generator_facets",
         lambda _step: {
             "persona": [],

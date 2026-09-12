@@ -19,7 +19,8 @@ from ..ports.local import CONSOLE, SUBPROCESS
 from . import config
 from . import dependencies as deps
 from .batch_surface import WORKBENCH_BATCH
-from .providers import _build_prompt, run_provider
+from .composition import _build_prompt
+from .providers import run_provider
 
 
 class BatchSummary(Protocol):

@@ -24,8 +24,9 @@ from .recipes import (_record_trust, auto_orchestrate, git_diff_lines, load_mani
 from .runstate import compute_next, load_state, new_state, save_state, stage_gate_status
 from .providers import metering_note
 from .secure_runtime import JAPANESE_WRITING_RECIPES
-from .providers import (JAPANESE_MATERIAL_PROFILES, JAPANESE_WRITING_REVIEW_CATEGORIES,
-                        record_verdicts, resolve_japanese_material, parse_step_model_spec,
+from .composition import JAPANESE_MATERIAL_PROFILES, resolve_japanese_material
+from .providers import (JAPANESE_WRITING_REVIEW_CATEGORIES,
+                        record_verdicts, parse_step_model_spec,
                         read_result_artifact, run_loop, unknown_step_model_ids)
 from .isolate import setup_isolation, teardown_isolation
 from .gates import validate_executable_recipe

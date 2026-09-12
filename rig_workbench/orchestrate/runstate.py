@@ -13,6 +13,7 @@ from typing import Protocol
 from ..ports import Clock, Env, FileStore
 from ..ports.local import LOCAL_FILES, OS_ENV, SYSTEM_CLOCK
 from . import config
+from .composition import japanese_material_metadata
 from .gates import is_runtime_gate, validate_executable_steps
 from .govern_surfaces import GOVERN_SURFACES
 from .pack_surfaces import PACK_SURFACES
@@ -621,7 +622,6 @@ def _validate_secure_material_profile_binding(state: dict) -> None:
     if write is None:
         raise OSError("secure Japanese material profile binding has no write step")
     try:
-        from .providers import japanese_material_metadata
         expected = japanese_material_metadata(write, profile)
     except Exception as error:
         raise OSError(

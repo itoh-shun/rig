@@ -101,12 +101,12 @@ judge 許可リストが通る資格情報経路の、少なくとも一方を�
 
 | 経路 | 順序を決めているもの | 再現性 |
 |---|---|---|
-| headless（`rig-wb run` ほか） | **コード**：`rig_workbench/orchestrate/providers.py:1882` `_compose_prompt_sections` | 決定論。バイト単位で同じ |
+| headless（`rig-wb run` ほか） | **コード**：`rig_workbench/orchestrate/composition.py:605` `_compose_prompt_sections` | 決定論。バイト単位で同じ |
 | in-session（`/rig:go` などスキル経由） | **散文**：`skills/engine/COMPOSE.md` §5 の表を、オーケストレータ役のモデルが読んで守る | 守った保証は無い |
-| 検証者ファンアウト | **別のコード**：`providers.py:1529` `run_verifiers_parallel` は persona 要約を前置し、facet 合成を通らない | 決定論だが §5 とも別順 |
+| 検証者ファンアウト | **別のコード**：`providers.py:1207` `run_verifiers_parallel` は persona 要約を前置し、facet 合成を通らない | 決定論だが §5 とも別順 |
 
-コード側の順序は次のとおりで、`tests/test_headless_compose.py:55`
-（`test_generator_prompt_composes_resolved_facets_in_canonical_order`）が凍結している。
+コード側の順序は次のとおりで、`tests/test_headless_compose.py:57` が凍結している。
+テスト名は `test_generator_prompt_composes_resolved_facets_in_canonical_order` である。
 
 ```
 ## Persona → ## Knowledge → ## Instruction → ## Task Contract → ## Output Contract → ## Policy
