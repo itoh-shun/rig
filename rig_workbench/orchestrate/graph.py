@@ -6,10 +6,44 @@ import json
 import pathlib
 import re
 
+from typing import Protocol
+
 from ..ports import Presenter
 from ..ports.local import CONSOLE
 from . import config
+from .pack_surfaces import PACK_SURFACES
 from .recipes import parse_frontmatter
+
+
+class PackInventory(Protocol):
+    """What this module needs of the pack machinery to draw the brick graph.
+
+    Three things, all of them the pack pillar's own vocabulary: which packs are installed,
+    where a pack keeps each kind of asset (so a path under a pack root can be turned back
+    into the logical name the resolver would answer to), and what version the built-in
+    `rig-core` pack carries. The graph does no tier scanning and no partial validation of
+    its own — only the resolver-approved records are drawn — which is the whole reason the
+    inventory is borrowed rather than recomputed.
+
+    Stated as a protocol rather than imported, because the import is what
+    `tests/test_layering_contract.py` forbids: a judgement module may reach the standard
+    library, its own pillar and the six ports, and `packs.model`, `packs.resolver` and the
+    package root are none of those. All three were reached from inside function bodies
+    here, which hid the edges rather than removing them. `pack_surfaces.PACK_SURFACES`
+    satisfies this shape and is what every shipped caller passes.
+    """
+
+    #: Where a pack keeps each kind of asset, keyed by asset kind.
+    ASSET_DIRS: dict[str, str]
+
+    #: The version the built-in `rig-core` pack ships as. Recorded on the core pack node
+    #: and consulted for nothing — the reason it can be a value handed over rather than an
+    #: import held, which is what `eval/cases.py` says of `EXECUTOR_VERSION`.
+    CORE_PACK_VERSION: str
+
+    def installed(self, *, project=..., shared=...) -> list:
+        """The one validated, dependency-ordered collection of installed packs."""
+        ...
 
 _WIKI_LINK_RE = re.compile(r"\[\[([a-z0-9-]+)(?:\|[^\]]*)?\]\]")
 _TIER_RANK = {tier: index for index, tier in enumerate(
@@ -31,11 +65,10 @@ def _surface_kind(kind: str) -> str:
     return "contract" if kind == "output-contract" else kind
 
 
-def _asset_name(kind: str, relative: str) -> str:
-    from rig_workbench.packs.model import ASSET_DIRS
-
+def _asset_name(kind: str, relative: str, *,
+                packs: PackInventory = PACK_SURFACES) -> str:
     path = pathlib.PurePosixPath(relative)
-    name = str(path.relative_to(pathlib.PurePosixPath(ASSET_DIRS[kind])).with_suffix(""))
+    name = str(path.relative_to(pathlib.PurePosixPath(packs.ASSET_DIRS[kind])).with_suffix(""))
     if kind == "eval-case" and name.endswith("/case"):
         name = name[:-5]
     return name
@@ -48,6 +81,7 @@ def _owned_asset_id(tier: str, pack_id: str, logical_id: str) -> str:
 
 def build_brick_graph(
     project: pathlib.Path | str | None = None, *, mode: str = "resolved",
+    packs: PackInventory = PACK_SURFACES,
 ) -> dict:
     """Build the active brick graph, or the immutable source-tree core graph.
 
@@ -91,9 +125,7 @@ def build_brick_graph(
 
     pack_records = []
     if mode == "resolved":
-        from rig_workbench.packs.resolver import resolved_collection
-
-        pack_records = resolved_collection(project=project)
+        pack_records = packs.installed(project=project)
         for record in pack_records:
             manifest = record.manifest
             owner = f"pack:{record.tier}:{record.id}"
@@ -143,13 +175,12 @@ def build_brick_graph(
     # are used; graph does no tier scanning or partial validation of its own.
     pack_by_id = {record.id: f"pack:{record.tier}:{record.id}" for record in pack_records}
     if pack_records:
-        from rig_workbench import __version__
-
         core_pack_id = "pack:core:rig-core"
         pack_by_id["rig-core"] = core_pack_id
         nodes[core_pack_id] = {
             "id": core_pack_id, "kind": "pack", "path": "pack://core/rig-core",
-            "tier": "core", "version": __version__, "trust": "verified-bundled",
+            "tier": "core", "version": packs.CORE_PACK_VERSION,
+            "trust": "verified-bundled",
         }
     for record in pack_records:
         pack_id = f"pack:{record.tier}:{record.id}"

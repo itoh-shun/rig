@@ -28,7 +28,6 @@ from .secure_runtime import JAPANESE_WRITING_RECIPES
 from .providers import (JAPANESE_MATERIAL_PROFILES, JAPANESE_WRITING_REVIEW_CATEGORIES,
                         record_verdicts, resolve_japanese_material, parse_step_model_spec,
                         read_result_artifact, run_loop, unknown_step_model_ids)
-from ..packs.model import PackError
 from .isolate import setup_isolation, teardown_isolation
 from .gates import validate_executable_recipe
 from .secure_runtime import (SecureRuntimeError, close_secure_launchers,
@@ -41,6 +40,7 @@ from .secure_fs import (
     release_output_lock,
 )
 from .batch_surface import KNOWN_PROJECTS
+from .pack_surfaces import PackError
 
 
 class ProjectIndex(Protocol):

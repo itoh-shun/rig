@@ -14,15 +14,16 @@ import subprocess
 import concurrent.futures as futures
 import stat as _stat
 from dataclasses import dataclass
+from typing import Protocol
 
 from .. import bench_providers as _bench_provider_patches
-from ..packs.model import PackError
 from ..ports import Env, FileStore, Presenter, ProcessRunner
 from ..ports.local import CONSOLE, LOCAL_FILES, OS_ENV, SUBPROCESS
 from . import config
 from . import perf
 from .gates import is_runtime_gate
 from .adaptive import analyze_diff, invocation_limit
+from .pack_surfaces import PACK_SURFACES, PackError
 from .quarantine import wrap_untrusted
 from .recipes import (git_diff_lines, learned_auto_route, load_manifest,
                       resolve_auto_route, size_class)
@@ -35,6 +36,51 @@ from .secure_runtime import (
     run_secure_provider,
 )
 from .secure_fs import atomic_write_bytes, read_bytes as read_secure_bytes
+
+
+class PackComposition(Protocol):
+    """What this module needs of the pack machinery to compose a step's prompt.
+
+    A step's persona, wiki, instruction, output contract and policies are pack assets, and
+    every question this module asks about them belongs to `packs`: which file the name
+    resolves to across the tiers, whether the recipe's declared owner actually binds it,
+    whether the file has cleared the pack trust gate, and which packs are installed at all.
+    A runner that answered any of them itself would be a second resolver drifting from the
+    one `rig-wb pack` enforces — and the failure mode here is not a wrong answer but a
+    facet silently swapped underneath a prompt.
+
+    Stated as a protocol rather than imported, because the import is what
+    `tests/test_layering_contract.py` forbids: a judgement module may reach the standard
+    library, its own pillar and the six ports, and `packs.resolver`, `packs.trust` and
+    `packs.catalog` are none of those. They were reached from inside three function bodies
+    here, which hid the edges rather than removing them. `pack_surfaces.PACK_SURFACES`
+    satisfies this shape and is what every shipped caller passes.
+
+    Resolved assets and installed-pack records cross as opaque values whose attributes this
+    module reads but never constructs, so the classes are not named: a signature written in
+    another pillar's vocabulary is a design dependency whether or not it costs an import.
+    """
+
+    def resolve(self, kind: str, name: str, *, project=..., shared=...):
+        """The asset this name resolves to, or None."""
+        ...
+
+    def resolve_bound(self, kind: str, name: str, source, *, project=..., shared=...):
+        """The asset this name resolves to for a recipe that declares its owner, or None."""
+        ...
+
+    def trusted_path(self, asset) -> pathlib.Path:
+        """The asset's file, once the pack trust gate has passed it."""
+        ...
+
+    def installed(self, *, project=..., shared=...) -> list:
+        """The one validated, dependency-ordered collection of installed packs."""
+        ...
+
+    def builtin(self) -> dict:
+        """The bundled packs, keyed `(namespace, pack_id)`, with the core ids applied."""
+        ...
+
 
 _BENCH_COUNTER_LOCK = threading.Lock()
 
@@ -1142,7 +1188,8 @@ def _artifact_review_criteria(parsed: dict | None) -> list[dict]:
     return criteria
 
 
-def _load_persona_brief(persona: str) -> str | None:
+def _load_persona_brief(persona: str, *,
+                        assets: PackComposition = PACK_SURFACES) -> str | None:
     """Resolve a persona name (e.g. "security-reviewer", "design/ux-reviewer") to its
     facets/personas/<name>.md body, frontmatter stripped. None when unresolvable — callers
     must fall back to the generic prompt rather than silently injecting nothing.
@@ -1155,11 +1202,9 @@ def _load_persona_brief(persona: str) -> str | None:
     by a live #330 bench run: reviewers disagreed (1/3, 2/3 PASS) on code that was already
     objectively correct — consistent with sampling noise on an undifferentiated prompt, not
     genuine multi-perspective review."""
-    from rig_workbench.packs.resolver import resolve_asset
-    from rig_workbench.packs.trust import ensure_asset_trusted
-    resolved = resolve_asset("persona", persona, project=config.INVOCATION_CWD,
-                             shared=config.STATE_ROOT)
-    path = ensure_asset_trusted(resolved) if resolved is not None else config.PERSONAS / f"{persona}.md"
+    resolved = assets.resolve("persona", persona, project=config.INVOCATION_CWD,
+                              shared=config.STATE_ROOT)
+    path = assets.trusted_path(resolved) if resolved is not None else config.PERSONAS / f"{persona}.md"
     if not path.is_file():
         return None
     text = path.read_text(encoding="utf-8")
@@ -1170,19 +1215,16 @@ def _load_persona_brief(persona: str) -> str | None:
     return text.strip() or None
 
 
-def _recipe_pack_owner(source: str) -> str | None:
+def _recipe_pack_owner(source: str, *,
+                       assets: PackComposition = PACK_SURFACES) -> str | None:
     """Return the validated pack owning a recipe source, if any."""
-    from rig_workbench.packs.catalog import discover_builtin_packs
-    from rig_workbench.packs.resolver import core_reference_ids, resolved_collection
-
     source_path = pathlib.Path(source).resolve()
-    for record in resolved_collection(project=config.INVOCATION_CWD,
-                                      shared=config.STATE_ROOT):
+    for record in assets.installed(project=config.INVOCATION_CWD,
+                                   shared=config.STATE_ROOT):
         root = record.path.resolve()
         if source_path == root or source_path.is_relative_to(root):
             return record.id
-    for (_namespace, pack_id), (path, _manifest) in discover_builtin_packs(
-            core_ids=core_reference_ids()).items():
+    for (_namespace, pack_id), (path, _manifest) in assets.builtin().items():
         root = path.resolve()
         if source_path == root or source_path.is_relative_to(root):
             return pack_id
@@ -1192,6 +1234,7 @@ def _recipe_pack_owner(source: str) -> str | None:
 def _load_composition_asset(
     kind: str, name: str, *, recipe_source: str | None = None,
     recipe_owner: str | None = None, recipe_owner_root: str | None = None,
+    assets: PackComposition = PACK_SURFACES,
 ) -> tuple[dict, str] | None:
     """Resolve one prompt facet through the pack resolver and trust gate.
 
@@ -1199,9 +1242,6 @@ def _load_composition_asset(
     manually-built step without ``recipe_source`` keeps the historical generic
     fallback for backward compatibility.
     """
-    from rig_workbench.packs.model import PackError
-    from rig_workbench.packs.resolver import resolve_asset, resolve_bound_asset
-    from rig_workbench.packs.trust import ensure_asset_trusted
     from .recipes import parse_frontmatter
 
     if not isinstance(name, str) or not name:
@@ -1230,7 +1270,7 @@ def _load_composition_asset(
     pack_owner = recipe_owner or (_recipe_pack_owner(recipe_source) if recipe_source else None)
     if recipe_source:
         for candidate in names:
-            resolved = resolve_bound_asset(
+            resolved = assets.resolve_bound(
                 kind, candidate, recipe_source, project=config.INVOCATION_CWD,
                 shared=config.STATE_ROOT,
             )
@@ -1243,7 +1283,7 @@ def _load_composition_asset(
     if resolved is None:
         resolved = next(
             (asset for candidate in names
-             if (asset := resolve_asset(
+             if (asset := assets.resolve(
                  kind, candidate, project=config.INVOCATION_CWD,
                  shared=config.STATE_ROOT,
              )) is not None),
@@ -1255,7 +1295,7 @@ def _load_composition_asset(
                 f"required {kind} facet '{name}' cannot be resolved for recipe {recipe_source}"
             )
         return None
-    path = ensure_asset_trusted(resolved)
+    path = assets.trusted_path(resolved)
     if not path.is_file():
         if recipe_source:
             raise PackError(f"required {kind} facet '{name}' is not a readable file")

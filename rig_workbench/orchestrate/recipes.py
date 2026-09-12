@@ -7,10 +7,56 @@ import hashlib
 import pathlib
 import threading
 
+from typing import Any, Protocol
+
 from ..ports import Env, Presenter, ProcessRunner
 from ..ports.local import CONSOLE, OS_ENV, SUBPROCESS
 from . import config
+from .pack_surfaces import PACK_SURFACES
 from .yaml_adapter import PyYAMLMissing, require_yaml
+
+
+class PackAssets(Protocol):
+    """What this module needs of the pack machinery.
+
+    Three questions, and not one of them is a judgement this module makes. Which file a
+    recipe name resolves to across the core, org, project and pack tiers is the `packs`
+    resolver's rule; whether the file it landed on may be executed is the pack trust
+    store's record; and whether a consent flag was genuinely passed as an *option* of this
+    invocation — rather than merely appearing somewhere in argv, which used to be enough —
+    is `packs.trust.passed_as_option`, which exists precisely because this module got it
+    wrong once. Re-deriving any of them here would give the runner a private resolver that
+    drifts from the one `rig-wb pack` enforces.
+
+    Stated as a protocol rather than imported, because the import is what
+    `tests/test_layering_contract.py` forbids: a judgement module may reach the standard
+    library, its own pillar and the six ports, and `packs.resolver` and `packs.trust` are
+    neither. They were reached from inside five function bodies here, which hid the edges
+    rather than removing them. `pack_surfaces.PACK_SURFACES` satisfies this shape and is
+    what every shipped caller passes.
+
+    A resolved asset crosses as an opaque value: it is obtained here and handed straight
+    back, never unpacked, so naming its type would be borrowing another pillar's vocabulary
+    for nothing — the half of the rule `conformance.RunRecords` makes explicit.
+    """
+
+    def resolve(self, kind: str, name: str, *, project: Any = ...,
+                shared: Any = ...) -> Any:
+        """The asset this name resolves to, or None."""
+        ...
+
+    def resolve_bound(self, kind: str, name: str, source: Any, *, project: Any = ...,
+                      shared: Any = ...) -> Any:
+        """The asset this name resolves to for a recipe that declares its owner, or None."""
+        ...
+
+    def trusted_path(self, asset: Any) -> pathlib.Path:
+        """The asset's file, once the pack trust gate has passed it."""
+        ...
+
+    def consent_flag_passed(self, flag: str, argv: list[str]) -> bool:
+        """True only where `flag` was passed as an option, not merely present in argv."""
+        ...
 
 # ── Project-recipe trust gate ─────────────────────────────────────────────────
 # A repository can ship `.rig/recipes/*.md` that overlays a shipped recipe of
@@ -34,10 +80,9 @@ from .yaml_adapter import PyYAMLMissing, require_yaml
 # be consent. `rig_workbench.packs.trust.passed_as_option` holds the rule, and
 # spells out what it does and does not catch.
 
-def _consent_flag_passed(flag: str) -> bool:
+def _consent_flag_passed(flag: str, *, assets: PackAssets = PACK_SURFACES) -> bool:
     """True only where `flag` was passed as an option, not merely present in argv."""
-    from rig_workbench.packs.trust import passed_as_option
-    return passed_as_option(flag, sys.argv)
+    return assets.consent_flag_passed(flag, sys.argv)
 
 
 def _trust_store_path(*, env: Env = OS_ENV) -> pathlib.Path:
@@ -258,7 +303,9 @@ EXTENDS_MAX_DEPTH = 5  # inheritance that is too deep collapses cognitive econom
 
 
 def _resolve_extends_chain(fm: dict, recipe_path: pathlib.Path,
-                            warnings: list[str]) -> list[tuple[str | None, dict]]:
+                            warnings: list[str], *,
+                            assets: PackAssets = PACK_SURFACES,
+                            ) -> list[tuple[str | None, dict]]:
     """Walk the extends chain leaf -> root and return [(name, fm), ...].
 
     Cycles (A->B->A etc.) and depth overruns (EXTENDS_MAX_DEPTH) emit a warning and cut off.
@@ -281,8 +328,7 @@ def _resolve_extends_chain(fm: dict, recipe_path: pathlib.Path,
             warnings.append(f"extends: inheritance depth limit {EXTENDS_MAX_DEPTH} exceeded "
                             f"(ignoring '{parent_name}' and beyond). Keep chains shallow for cognitive economy")
             return chain
-        from rig_workbench.packs.resolver import resolve_bound_asset
-        bound_parent = resolve_bound_asset(
+        bound_parent = assets.resolve_bound(
             "recipe", parent_name, current_path, project=config.INVOCATION_CWD,
             shared=config.STATE_ROOT,
         )
@@ -309,9 +355,9 @@ def _resolve_extends_chain(fm: dict, recipe_path: pathlib.Path,
                     parent_path = candidate
                     break
         if bound_parent is None and parent_path is None:
-            from rig_workbench.packs.resolver import resolve_asset
-            resolved = resolve_asset("recipe", parent_name, project=config.INVOCATION_CWD,
-                                     shared=config.STATE_ROOT)
+            resolved = assets.resolve("recipe", parent_name,
+                                      project=config.INVOCATION_CWD,
+                                      shared=config.STATE_ROOT)
             parent_path = resolved.path if resolved is not None else None
         if parent_path is None:
             warnings.append(f"extends: cannot resolve '{parent_name}' (reached via {' → '.join(trail)})")
@@ -319,15 +365,13 @@ def _resolve_extends_chain(fm: dict, recipe_path: pathlib.Path,
         # An installed pack recipe is governed by the pack-asset trust store,
         # including when an `extends` parent is found beside the child.  Do not
         # accidentally send it through the legacy project-recipe consent gate.
-        from rig_workbench.packs.resolver import resolve_asset
-        from rig_workbench.packs.trust import ensure_asset_trusted
-        resolved_parent = bound_parent or resolve_asset(
+        resolved_parent = bound_parent or assets.resolve(
             "recipe", parent_name, project=config.INVOCATION_CWD, shared=config.STATE_ROOT
         )
         if (resolved_parent is not None
                 and resolved_parent.path.resolve() == parent_path.resolve()
                 and resolved_parent.pack_id is not None):
-            ensure_asset_trusted(resolved_parent)
+            assets.trusted_path(resolved_parent)
         else:
             ensure_recipe_trusted(parent_path)
         parent_fm = parse_frontmatter(parent_path)
@@ -921,19 +965,18 @@ def suggest_recipe_names(name: str, bases: list[pathlib.Path]) -> list[tuple[str
 
 
 def resolve_recipe(name: str, *, out: Presenter = CONSOLE,
-                   env: Env = OS_ENV) -> pathlib.Path:
+                   env: Env = OS_ENV,
+                   assets: PackAssets = PACK_SURFACES) -> pathlib.Path:
     """Resolve a recipe.
     Priority: existing absolute/relative path -> cwd/.rig/recipes/<name>.md (project overlay) -> RIG_HOME/skills/engine/recipes/<name>.md (built-in).
     An overlay with the same name as a built-in wins, so project-specific recipes can override."""
     p = pathlib.Path(name)
     if p.exists():
         return ensure_recipe_trusted(p, out=out)
-    from rig_workbench.packs.resolver import resolve_asset
-    from rig_workbench.packs.trust import ensure_asset_trusted
-    resolved = resolve_asset("recipe", name.removesuffix(".md"),
-                             project=config.INVOCATION_CWD, shared=config.STATE_ROOT)
+    resolved = assets.resolve("recipe", name.removesuffix(".md"),
+                              project=config.INVOCATION_CWD, shared=config.STATE_ROOT)
     if resolved is not None:
-        return ensure_asset_trusted(resolved)
+        return assets.trusted_path(resolved)
     fname = name if name.endswith(".md") else f"{name}.md"
     bases = [config.PROJECT_RECIPES]
     org = env.get("RIG_ORG_HOME") or (load_manifest().get("org_dir") or "")

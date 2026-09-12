@@ -8,10 +8,13 @@ import re
 import secrets
 import stat
 
+from typing import Protocol
+
 from ..ports import Clock, Env, FileStore
 from ..ports.local import LOCAL_FILES, OS_ENV, SYSTEM_CLOCK
 from . import config
 from .gates import is_runtime_gate, validate_executable_steps
+from .pack_surfaces import PACK_SURFACES
 from .secure_runtime import JAPANESE_WRITING_RECIPES
 from .secure_fs import atomic_append_line, atomic_write_bytes, read_bytes as read_secure_bytes
 
@@ -131,12 +134,37 @@ def enforce_executable_state(state: dict) -> dict:
     }
     return execution
 
-# ── run-state ────────────────────────────────────────────────────────────────
-def _recipe_owner_provenance(source: str) -> dict | None:
-    """Resolve an installed recipe source to its validated owner identity."""
-    from rig_workbench.packs.catalog import discover_builtin_packs
-    from rig_workbench.packs.resolver import core_reference_ids, resolved_collection
+class PackProvenance(Protocol):
+    """What this module needs of the pack machinery: which packs are installed.
 
+    A resumed run checks that the recipe it is resuming still belongs to the pack that
+    owned it when it started, and "which pack owns this path" is answered by the one
+    validated, dependency-ordered collection `packs.resolver` builds plus the bundled packs
+    `packs.catalog` discovers. Walking the tiers here instead would give the integrity check
+    its own view of what is installed — a check that disagrees with the resolver it is
+    meant to protect.
+
+    Stated as a protocol rather than imported, because the import is what
+    `tests/test_layering_contract.py` forbids: a judgement module may reach the standard
+    library, its own pillar and the six ports, and `packs.resolver` and `packs.catalog` are
+    neither. They were reached from inside a function body here, which hid the edges rather
+    than removing them. `pack_surfaces.PACK_SURFACES` satisfies this shape and is what every
+    shipped caller passes.
+    """
+
+    def installed(self, *, project=..., shared=...) -> list:
+        """The one validated, dependency-ordered collection of installed packs."""
+        ...
+
+    def builtin(self) -> dict:
+        """The bundled packs, keyed `(namespace, pack_id)`, with the core ids applied."""
+        ...
+
+
+# ── run-state ────────────────────────────────────────────────────────────────
+def _recipe_owner_provenance(source: str, *,
+                             assets: PackProvenance = PACK_SURFACES) -> dict | None:
+    """Resolve an installed recipe source to its validated owner identity."""
     try:
         source_path = pathlib.Path(source).resolve(strict=True)
     except OSError:
@@ -148,13 +176,12 @@ def _recipe_owner_provenance(source: str) -> dict | None:
         # no provenance — and the resume-time integrity check has nothing to compare
         # against. It worked from the main checkout and would have stopped working the
         # moment a run started anywhere else.
-        for record in resolved_collection(project=config.INVOCATION_CWD,
-                                          shared=config.STATE_ROOT)
+        for record in assets.installed(project=config.INVOCATION_CWD,
+                                       shared=config.STATE_ROOT)
     ]
     candidates.extend(
         (pack_id, root, manifest)
-        for (_namespace, pack_id), (root, manifest) in discover_builtin_packs(
-            core_ids=core_reference_ids()).items()
+        for (_namespace, pack_id), (root, manifest) in assets.builtin().items()
     )
     for owner, root, manifest in candidates:
         root = root.resolve()
