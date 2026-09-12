@@ -337,8 +337,12 @@ file now — `BRICKS.md`, `RECIPE-SCHEMA.md`, `RESOLVE.md` and `COMPOSE.md` — 
 `PACKS.md` set. SKILL.md keeps each section's heading, a one-line summary and the reference, so the
 numbered outline still reads end to end and every `§4.2`-style cross-reference still lands where it
 says it does. 104,492 B / 742 lines → 53,194 B / 465 lines, and the Agent Skills warning that
-the body exceeded the spec's recommended 500 lines clears at 462. §2 is a parsed contract rather than
-prose, so `--validate`'s three catalogue checks read `BRICKS.md`, named once in
+the body exceeded the spec's recommended 500 lines clears at 462. The japanese-lint pass
+below then split over-long sentences here and in the four new files, and that is the whole of
+the entry document's growth since the move: measured at a31c54c, SKILL.md is 53,531 B / 472
+lines, 469 body lines by the validator's count, still clear of the recommended 500. The 337
+bytes are sentence splits and one fenced block, not a section drifting back in. §2 is a parsed
+contract rather than prose, so `--validate`'s three catalogue checks read `BRICKS.md`, named once in
 `catalog.CATALOG_FILE`; a missing reference file is a FAIL rather than a quietly smaller corpus.
 PASS/WARN/FAIL is unchanged but for that cleared warning.
 
@@ -421,6 +425,20 @@ engine's flows call, and is unaffected by the removal above — the two only eve
 word. Every prose line that spelled it `rig-wb review` is corrected to the form that runs.
 
 ### Fixed
+
+**A `textlint-disable` marker inside a code span no longer switches `rig-wb ja-lint` off.**
+`suppressions()` scanned raw lines, so a document that only showed the marker's syntax in
+backticks suppressed every finding from that line to the end of the file — `BRICKS.md`'s
+japanese-lint row does exactly that, and it is why `skills/engine/SKILL.md` went unchecked
+below its §2 table for a long time, silently. Inline code spans (single and double backtick)
+and fenced code blocks are blanked before the scan now, so only a real HTML comment counts as
+a directive.
+
+**An unclosed `<!-- textlint-disable -->` is reported rather than left silent.** It still
+suppresses to the end of the file, which is textlint's own semantics, but the report names the
+file and the line of the marker that was never closed, carries them under a new
+`unclosed_disable` key (and `summary.unclosed_disable`) in `--json` and `--report`, and
+`--strict` exits 1 on one. `--strict` therefore promotes more than warnings.
 
 **A workbench failure is no longer reported as a judgement: it exits 2, not 1.**
 `rig_workbench/exitcodes.py` has always promised `1 = rig judged this and said no` and

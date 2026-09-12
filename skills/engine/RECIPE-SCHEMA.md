@@ -5,9 +5,6 @@
 recipe を書くとき・読むとき・`extends` を辿るときに要る定義であり、起動の最初の1ターンには要らない。
 SKILL.md 本体は1行要旨とこのファイルへの参照だけを残す。
 
-<!-- textlint-disable -->
-<!-- Moved verbatim from SKILL.md §3.5, where a `textlint-disable` marker inside a §2 table cell (now BRICKS.md) suppressed it unintentionally. The suppression is kept explicitly so the move stays byte-identical on the prose, and a japanese-lint pass still needs to lift it. -->
-
 ## 3.5. Recipe スキーマ（正規定義）
 
 recipe ファイル（`recipes/*.md`）は YAML frontmatter + 本文 Markdown で構成される。以下がエンジンが解釈するキーの全量。
@@ -48,5 +45,5 @@ recipe ファイル（`recipes/*.md`）は YAML frontmatter + 本文 Markdown �
 | `needs` | — | （任意・`orchestrate run` 用）依存する step-id のリスト。**DAG 並列**＝`needs` を満たした独立 step を同時プロセスで実行（依存の無い step は同一 wave で並走）。宣言が無ければ従来どおり直列。`patterns/computational-orchestration` 参照 |
 | `remove` | — | （`extends` 専用）`true` の場合、継承元 recipe からこの `id` の step を**静的に除外**する。`extends` なし recipe での使用は WARN。`--skip`（実行時動的フィルタ）との差異：`remove: true` は recipe 定義の静的除外（毎回同じ）（#144） |
 
-> **省略可能キーは省略してよい。** `review-only` は最小サブセット（`id` / `instruction` / `pattern` / `gate` / `personas` / `output_contract`）だけを使う。`release-flow` / `design-first` は `policies` / `condition` / `gate` / `acceptance` も使う。すべての recipe はこのスキーマに準拠する。
+> **省略可能キーは省略してよい。** `review-only` は最小サブセットだけを使う。内訳は `id` / `instruction` / `pattern` / `gate` / `personas` / `output_contract` である。`release-flow` / `design-first` は `policies` / `condition` / `gate` / `acceptance` も使う。すべての recipe はこのスキーマに準拠する。
 

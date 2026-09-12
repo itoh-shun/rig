@@ -107,6 +107,43 @@ def test_lint_criterion_is_diff_scoped_and_machine_owned(tmp_path):
     assert any("README.md:5" in n for n in notes)
 
 
+def test_an_unclosed_disable_fails_the_lint_criterion_rather_than_passing_quietly(tmp_path):
+    """The gate's own blind spot: a doc that switches the linter off from a line down.
+
+    The sensor read the findings and not the suppression, so a file carrying an unclosed
+    `<!-- textlint-disable -->` produced an empty finding list and `ja_lint_clean` recorded
+    `passed` — the exact silence this criterion exists to catch. It fails now, and the
+    detail names the file and line so the operator can close the marker.
+    """
+    from rig_workbench.workbench import ja_prose
+
+    repo, run, task, acc = _fixture(tmp_path)
+    (repo / "README.md").write_text(
+        "# base\n\nこれは元からある一文で、できないことはない。\n\n"
+        "<!-- textlint-disable -->\n追記した一文は読めないわけではありません。\n",
+        encoding="utf-8")
+    ja_prose.ensure_ja_prose_criteria(repo, task, acc)
+    notes = ja_prose.apply_ja_lint_sensor(repo, run, task, acc)
+    check = _check(acc, ja_prose.LINT_CRITERION)
+    assert check["status"] == "failed", notes
+    assert check["ja_lint_findings"]["unclosed_disable"] == ["README.md:5"]
+    assert check["ja_lint_findings"]["errors"] == 0, "the suppression is why there are none"
+    assert "README.md:5" in check["detail"] and "textlint-enable" in check["detail"]
+    assert any("README.md:5" in n for n in notes)
+
+    # Closing it puts the criterion back on the findings: the double negative below is now
+    # visible, so it fails on the error instead of on the silence.
+    (repo / "README.md").write_text(
+        "# base\n\nこれは元からある一文で、できないことはない。\n\n"
+        "<!-- textlint-disable -->\n<!-- textlint-enable -->\n"
+        "追記した一文は読めないわけではありません。\n",
+        encoding="utf-8")
+    ja_prose.apply_ja_lint_sensor(repo, run, task, acc)
+    assert check["status"] == "failed"
+    assert check["ja_lint_findings"]["unclosed_disable"] == []
+    assert "no-double-negative-ja" in check["ja_lint_findings"]["listed"][0]
+
+
 def test_warnings_leave_the_lint_criterion_at_warning_not_failed(tmp_path):
     from rig_workbench.workbench import ja_prose
 

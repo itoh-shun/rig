@@ -194,10 +194,11 @@ def apply_ja_lint_sensor(root: pathlib.Path, run_d: pathlib.Path, task: dict,
         settings = _settings_for(repo)
         targets = changed_japanese_prose(repo, base)
         findings: list[dict] = []
+        unclosed: list[dict] = []
         for rel in sorted(targets):
             nos = targets[rel]
             source = jt.read_source(str(repo / rel))
-            for f in jt.lint_text(source, settings, rel):
+            for f in jt.lint_text(source, settings, rel, unclosed_out=unclosed):
                 if nos is None or f["line"] in nos:
                     findings.append(f)
     except jt.Unchecked as exc:
@@ -208,9 +209,28 @@ def apply_ja_lint_sensor(root: pathlib.Path, run_d: pathlib.Path, task: dict,
     warnings = [f for f in findings if f["severity"] == "warning"]
     listed = [f"{f['file']}:{f['line']}:{f['column']} [{f['rule']}] {f['message']}"
               for f in errors[:_MAX_LISTED]]
+    unclosed_at = [f"{u['file']}:{u['line']}" for u in unclosed]
     check["ja_lint_findings"] = {"errors": len(errors), "warnings": len(warnings),
-                                 "files": sorted(targets), "listed": listed}
+                                 "files": sorted(targets), "listed": listed,
+                                 "unclosed_disable": unclosed_at}
     notes: list[str] = []
+    # An unclosed `disable` is checked before the findings, because while one is live the
+    # finding list is not an answer: everything below the marker was suppressed, and this
+    # criterion exists to catch exactly that silence. It fails whatever the count says.
+    if unclosed_at:
+        where = ", ".join(unclosed_at[:_MAX_LISTED])
+        record(check, "failed",
+               f"{_LINT_PREFIX} unclosed <!-- textlint-disable --> at {where} — it suppresses "
+               f"every finding from that line to the end of the file, so this criterion cannot "
+               f"answer for the lines below it. Close it with <!-- textlint-enable --> or use "
+               f"<!-- textlint-disable-line -->; `accept --force` records the bypass",
+               _LINT_WRITER, _LINT_PREFIX)
+        notes.append(f"{_LINT_PREFIX} unclosed <!-- textlint-disable --> → "
+                     f"{LINT_CRITERION} failed:")
+        notes.extend(f"  {at}: suppresses to end of file" for at in unclosed_at[:_MAX_LISTED])
+        if len(unclosed_at) > _MAX_LISTED:
+            notes.append(f"  … and {len(unclosed_at) - _MAX_LISTED} more")
+        return notes
     if errors:
         record(check, "failed",
                f"{_LINT_PREFIX} {len(errors)} error(s) on added Japanese lines "
@@ -304,15 +324,19 @@ def cmd_scan_ja_prose(args) -> None:
         print(f"{task_id}: the diff adds no Japanese prose — {LINT_CRITERION} / {SMELL_CRITERION} do not apply")
         return
     errors = warnings = 0
+    unclosed: list[dict] = []
     for rel in sorted(targets):
         nos = targets[rel]
-        for f in jt.lint_text(jt.read_source(str(repo / rel)), settings, rel):
+        for f in jt.lint_text(jt.read_source(str(repo / rel)), settings, rel,
+                              unclosed_out=unclosed):
             if nos is not None and f["line"] not in nos:
                 continue
             errors += f["severity"] == "error"
             warnings += f["severity"] == "warning"
             print(f"{f['file']}:{f['line']}:{f['column']}: {f['severity']} [{f['rule']}] {f['message']}")
-    print(f"{task_id}: {errors} error(s) / {warnings} warning(s) on added Japanese lines in "
+    notes = "".join(f"{u['file']}:{u['line']}: unclosed <!-- textlint-disable --> — suppresses "
+                    f"to end of file; {LINT_CRITERION} fails on it\n" for u in unclosed)
+    print(f"{notes}{task_id}: {errors} error(s) / {warnings} warning(s) on added Japanese lines in "
           f"{len(targets)} file(s)")
     if errors:
         raise SystemExit(1)
