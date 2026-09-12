@@ -324,3 +324,53 @@ def test_detached_base_branch_record_does_not_collapse_the_range(git_repo):
     assert effective_base(git_repo, detached) == (task["base_commit"], None)
     names, _stat, _dirty = _diff_lines(git_repo, detached)
     assert _names(names) == ["task_file.txt"]
+
+
+# ── a squash that conflicts is a base that moved, and says so ────────────────
+#
+# The drift this file is about, arriving as a conflict instead of a silent widening.
+# `accept` used to report every non-zero `git merge --squash` as "squash merge
+# conflicted (divergence from base)" and advise `git rebase <base>` — with no file
+# named, because git prints "CONFLICT (content): …" on *stdout* and the message
+# interpolated stderr, which is empty. The other two ways that merge can fail are not
+# drift at all and are pinned in tests/test_gate_sensor_authority.py, next to the
+# `accept --force` squash that owns the repo-local identity comment.
+
+ERROR = 2  # `die`'s code: rig could not produce an answer (state.py). Not a verdict.
+
+
+def _edit(path, text):
+    path.write_text(text, encoding="utf-8")
+
+
+def test_squash_conflict_names_the_files_and_advises_merging_the_base(git_repo):
+    """(a) A real conflict: both sides edit the same line. The message has to name the
+    file — git printed that on stdout, which the old message never read — and advise
+    merging the base into the task branch. Not rebasing: `effective_base`'s own comment
+    calls a moved base legitimate and common, and a rebase rewrites the history the gate
+    result and the signed provenance record were computed against."""
+    task_id, task = _new_task(git_repo)
+    wt = pathlib.Path(task["worktree_path"])
+    _edit(wt / "f.txt", "branch side\n")
+    sh(["git", "add", "f.txt"], wt)
+    sh(["git", "commit", "-q", "-m", "the task's edit"], wt)
+    _edit(git_repo / "f.txt", "base side\n")
+    sh(["git", "add", "f.txt"], git_repo)
+    sh(["git", "commit", "-q", "-m", "someone else's edit to the same line"], git_repo)
+    _make_acceptable(git_repo, task_id)
+
+    r = run_cli(["accept", task_id], git_repo)
+    out = r.stdout + r.stderr
+    assert r.returncode == ERROR, out
+    assert "squash merge conflicted in 1 file(s)" in out
+    assert "f.txt" in out
+    assert f"git -C {wt} merge master" in out
+    assert "git -C" in out and "rebase master" not in out   # never the bare rebase advice
+    assert "A rebase is allowed too" in out                 # and the reason is the one rig has
+    assert "empty ident name" not in out
+
+    # The rollback the old code did is not allowed to have been lost with it: the main
+    # working tree is clean and holds the base's content, not a conflicted merge.
+    assert sh(["git", "status", "--porcelain"], git_repo) == ""
+    assert (git_repo / "f.txt").read_text(encoding="utf-8") == "base side\n"
+    assert "<<<<<<<" not in (git_repo / "f.txt").read_text(encoding="utf-8")

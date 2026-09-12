@@ -78,6 +78,11 @@ def _git(repo, *args):
                    cwd=repo, check=True, capture_output=True, text=True)
 
 
+def _git_out(repo, *args):
+    return subprocess.run(["git", *args], cwd=repo, check=True,
+                          capture_output=True, text=True).stdout
+
+
 def make_repo(tmp_path):
     """Scratch repo whose base commit holds the surfaces the sensors guard."""
     repo = tmp_path / "repo"
@@ -591,3 +596,92 @@ def test_an_empty_criteria_set_does_not_pass_vacuously(tmp_path):
     assert "PASSED" not in r.stdout
     task = json.loads((repo / ".rig" / "runs" / task_id / "task.json").read_text(encoding="utf-8"))
     assert task["status"] == "running"
+
+
+# ── a squash that never ran is not a conflict ────────────────────────────────
+#
+# `accept --force` above lands its change through `git merge --squash`, and the repo
+# fixture carries a repo-local identity for exactly that reason (see `make_repo`). The
+# two tests below are the cases where that merge returns non-zero *without* a conflict.
+# `accept` used to call every one of them "squash merge conflicted (divergence from
+# base)" and advise a rebase: measured on a runner with no committer identity, an
+# operator was told to rebase a branch whose only problem was an unset `user.name`. The
+# conflict branch itself is drift and is pinned in tests/test_base_drift.py.
+
+
+def _ready_to_accept(repo, wt_root, task_id):
+    """Pass the gate for real and write the diff summary `accept` requires."""
+    everything = ("no_secret_leak", "no_gate_tampering", "no_injection_markers",
+                  "no_destructive_operation", "public_api_changes_documented",
+                  *DECLARATION_ONLY)
+    r = cli(repo, wt_root, "gate", task_id,
+            *(a for n in everything for a in ("--set", f"{n}=passed")))
+    assert r.returncode == 0, r.stdout + r.stderr
+    (repo / ".rig" / "runs" / task_id / "diff.md").write_text(
+        "# diff summary\n\nthe task's own work.\n", encoding="utf-8")
+
+
+def test_a_squash_with_no_committer_identity_says_so_and_advises_git_config(tmp_path):
+    """The measured case, inverted: `make_repo`'s identity line deleted. No repo-local
+    config, an empty HOME and `GIT_CONFIG_GLOBAL=/dev/null`, and a branch that merges
+    cleanly — so git refuses to run the merge at all (exit 128, "Please tell me who you
+    are") and there is nothing whatsoever to resolve in the worktree."""
+    repo, wt_root = tmp_path / "repo", tmp_path / "wt"
+    repo.mkdir()
+    # `_git` carries the identity on the command line, so the setup commits land and the
+    # repository itself still holds none: a CI runner after a bare `git init`.
+    _git(repo, "init", "-q")
+    (repo / "app.py").write_text("x = 1\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "base")
+    task_id, wt = new_task(repo, wt_root)
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "ignore .rig")
+    (wt / "app.py").write_text("x = 2\n", encoding="utf-8")
+    commit(wt, "the task's own work")
+    _ready_to_accept(repo, wt_root, task_id)
+
+    empty_home = tmp_path / "empty-home"
+    empty_home.mkdir()
+    env = dict(os.environ, RIG_WORKTREE_ROOT=str(wt_root), HOME=str(empty_home),
+               GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_SYSTEM="/dev/null")
+    r = subprocess.run([sys.executable, str(WORKBENCH), "accept", task_id],
+                       cwd=repo, capture_output=True, text=True, timeout=60, env=env)
+    out = r.stdout + r.stderr
+    assert r.returncode == ERROR, out
+    assert "no committer identity" in out
+    assert "empty ident name" in out and "Please tell me who you are" in out
+    assert f"git -C {repo} config user.name" in out
+    assert f"git -C {repo} config user.email" in out
+    # Not a conflict, and no trip into the worktree: both were the old message's advice.
+    assert "conflicted" not in out
+    assert "rebase" not in out and "merge master" not in out
+    assert _git_out(repo, "status", "--porcelain") == ""
+
+
+def test_any_other_squash_failure_surfaces_git_stderr_and_the_exit_code(tmp_path):
+    """Neither a conflict nor an identity: a locked index, which is what a crashed git or
+    a second process leaves behind. rig has nothing useful to say about that, so it says
+    what git said and what git returned rather than inventing a third diagnosis."""
+    repo, wt_root = make_repo(tmp_path), tmp_path / "wt"
+    task_id, wt = new_task(repo, wt_root)
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "ignore .rig")
+    (wt / "app.py").write_text("x = 2\n", encoding="utf-8")
+    commit(wt, "the task's own work")
+    _ready_to_accept(repo, wt_root, task_id)
+
+    lock = repo / ".git" / "index.lock"
+    lock.write_text("", encoding="utf-8")
+    try:
+        r = cli(repo, wt_root, "accept", task_id)
+    finally:
+        lock.unlink(missing_ok=True)
+
+    out = r.stdout + r.stderr
+    assert r.returncode == ERROR, out
+    assert "not from a conflict or a missing identity" in out
+    assert "Unable to write index" in out          # git's own words, verbatim
+    assert "git exit 1" in out                     # and the status it exited with
+    assert "conflicted in" not in out and "rebase" not in out
+    assert _git_out(repo, "status", "--porcelain") == ""

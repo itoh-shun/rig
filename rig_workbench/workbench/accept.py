@@ -27,6 +27,23 @@ from . import runtime as runtime_mod
 from .telemetry import record_task_run
 
 
+# The identities git refuses to guess. Two spellings of one condition: "empty ident name"
+# comes from a config with a blank `user.name`, the "Please tell me who you are" block from
+# no config at all (its `fatal:` line names whichever of email/name it could not auto-detect,
+# so match the prose above it rather than that line). Used to tell a squash that could not
+# run from a squash that ran and hit a conflict — see `_cmd_accept_locked`.
+# How much of a failed squash is worth printing. Both are "enough to act on, not a wall":
+# the conflict listing is a cap with the remainder counted, and git's own output is kept
+# from both ends — the first lines say what it was doing, the last say why it stopped.
+_CONFLICT_LIST_MAX = 20
+_STDERR_HEAD_LINES, _STDERR_TAIL_LINES = 4, 12
+
+_MISSING_IDENTITY_RE = re.compile(
+    r"empty ident name|Please tell me who you are|Committer identity unknown"
+    r"|unable to auto-detect email address|no email was given",
+    re.I)
+
+
 def _task_head(root: pathlib.Path, task: dict) -> str | None:
     """The task branch tip. Approvals are bound to it, so a branch that moves after
     an approval stops counting as approved (see govern.approval)."""
@@ -288,12 +305,69 @@ def _cmd_accept_locked(args: argparse.Namespace, root: pathlib.Path, task_id: st
     # (3) Squash merge into the main working tree (no commit = the final decision is an explicit human/model action)
     proc = git(["merge", "--squash", branch], cwd=root, check=False)
     if proc.returncode != 0:
-        # Conflict: squash merge doesn't create MERGE_HEAD so `merge --abort` doesn't work.
-        # Having just guaranteed the working tree was clean, roll back with reset --hard.
+        # Why the squash failed decides what the operator should do next, and git answers
+        # that on two separate channels. A content conflict prints "CONFLICT (content): …"
+        # on *stdout*, leaves stderr empty and exits 1; a refusal to run at all — no
+        # committer identity, an unwritable index — is a "fatal:"/"error:" on stderr,
+        # usually exit 128. Reading stderr alone and calling every failure a conflict is
+        # how a runner with no `user.name` was told "divergence from base, go rebase":
+        # the advice was wrong, and the one line that said why was the empty string.
+        #
+        # The unmerged paths have to be read here, while the failed merge's index is still
+        # in place — the rollback below is what erases the evidence.
+        # `-z` for the paths: without it git C-quotes anything non-ASCII
+        # ("unicode_\343\203\225…"), which is not a path the operator can copy into a
+        # command. The stdout fallback below is the quoted form and is only reached when
+        # the index could not be read at all.
+        unmerged = [p for p in git(["diff", "--name-only", "-z", "--diff-filter=U"],
+                                   cwd=root, check=False).stdout.split("\0") if p.strip()]
+        conflicted = unmerged or re.findall(r"^CONFLICT \([^)]+\): Merge conflict in (.+)$",
+                                            proc.stdout, re.M)
+        # Squash merge doesn't create MERGE_HEAD so `merge --abort` doesn't work. Having
+        # guaranteed above that the working tree was clean, roll back with reset --hard.
+        # This runs on every branch below: whatever went wrong, the tree the operator
+        # started with is the tree they get back.
         git(["reset", "--hard", "HEAD"], cwd=root, check=False)
+        restored = "The working tree was restored to its pre-merge state."
+        if conflicted:
+            paths = sorted(set(conflicted))
+            listed = "".join(f"    {p}\n" for p in paths[:_CONFLICT_LIST_MAX])
+            if len(paths) > _CONFLICT_LIST_MAX:
+                listed += f"    … and {len(paths) - _CONFLICT_LIST_MAX} more\n"
+            die(
+                f"squash merge conflicted in {len(paths)} file(s). {restored}\n"
+                f"{listed}"
+                f"  The base moved under this branch, which is legitimate (see `effective_base`).\n"
+                f"  Merge the base into the task branch and resolve it there:\n"
+                f"    git -C {wt} merge {task['base_branch']}\n"
+                f"  then commit the resolution and retry accept. A rebase is allowed too — accept\n"
+                f"  recomputes the range from the live merge base either way — and is advised\n"
+                f"  against only because a merge keeps the commits the gate was evaluated over\n"
+                f"  reachable instead of replacing them with new shas. Either move shifts the\n"
+                f"  branch tip, so a governance approval bound to the old tip has to be given again."
+            )
+        detail = (proc.stderr.strip() or proc.stdout.strip())
+        if _MISSING_IDENTITY_RE.search(detail):
+            die(
+                f"squash merge could not run: git has no committer identity in this repository "
+                f'("empty ident name" / "Please tell me who you are"). {restored}\n'
+                f"  This is not a conflict and there is nothing to resolve in the worktree. "
+                f"Set an identity and retry:\n"
+                f"    git -C {root} config user.name \"Your Name\"\n"
+                f"    git -C {root} config user.email \"you@example.com\""
+            )
+        # The tail, not the head: git puts the decisive `fatal:`/`error:` line last and
+        # can precede it with pages of per-file noise (a failing smudge filter), so a
+        # head-first cut drops the one line this message exists to carry.
+        lines = detail.splitlines()
+        if len(lines) > _STDERR_HEAD_LINES + _STDERR_TAIL_LINES:
+            omitted = len(lines) - _STDERR_HEAD_LINES - _STDERR_TAIL_LINES
+            lines = [*lines[:_STDERR_HEAD_LINES], f"… {omitted} line(s) omitted …",
+                     *lines[-_STDERR_TAIL_LINES:]]
+        trimmed = "\n".join(f"    {line}" for line in lines) or "    (git said nothing)"
         die(
-            f"squash merge conflicted (divergence from base). The working tree was restored to its pre-merge state:\n{proc.stderr.strip()}\n"
-            f"  Run `git -C {wt} rebase {task['base_branch']}` in the worktree to resolve the conflicts, then retry"
+            f"squash merge failed (git exit {proc.returncode}), and not from a conflict or a "
+            f"missing identity. {restored} git said:\n{trimmed}"
         )
 
     task["status"] = "accepted"
