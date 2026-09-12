@@ -232,8 +232,13 @@ def _refuse(problems: list[str], where: str, why: str) -> None:
     problems.append(f"{where}: {why}")
 
 
-def _number(value: object) -> bool:
+def finite_number(value: object) -> bool:
     """A finite number, and not a bool.
+
+    Public, with `nonempty_text`, because `task_package` asks the same two questions of a
+    figure relayed in a handoff and of the origin stated beside it. A private copy over
+    there would be a second home for "what counts as a number somebody can act on", and the
+    two would part company on the first NaN — which is exactly the reading below.
 
     `bool` first: `isinstance(True, int)` is True, so `true` would arrive as the number 1 and
     become a baseline. `math.isfinite` after: `json.loads` accepts `NaN`, and every comparison
@@ -244,8 +249,11 @@ def _number(value: object) -> bool:
             and math.isfinite(value))
 
 
-def _time(value: object) -> dt.datetime | None:
+def offset_timestamp(value: object) -> dt.datetime | None:
     """An ISO 8601 timestamp *with an offset*, or `None`.
+
+    Public, with `finite_number` and `nonempty_text`: `task_package` dates a relayed figure
+    by the same rule, so a handoff cannot age a measurement past the moment it was taken.
 
     A naive timestamp is refused rather than assumed to be UTC or local: a window bound and an
     observation compared across two different assumptions is a comparison whose answer depends
@@ -260,7 +268,8 @@ def _time(value: object) -> dt.datetime | None:
     return stamp if stamp.tzinfo is not None else None
 
 
-def _text(value: object) -> bool:
+def nonempty_text(value: object) -> bool:
+    """A string with something in it. Public for the reason `finite_number` states."""
     return isinstance(value, str) and bool(value.strip())
 
 
@@ -295,7 +304,7 @@ def _object_id(problems: list[str], where: str, value: object, what: str) -> Non
     Any non-empty string would otherwise be accepted — `main`, `HEAD`, `the tuesday deploy`,
     or a 12-character abbreviation that a longer sha will never compare equal to.
     """
-    if not _text(value):
+    if not nonempty_text(value):
         _refuse(problems, where, f"{what} the immutable change it is about")
     elif not OBJECT_ID.fullmatch(value.strip()):
         _refuse(problems, where,
@@ -327,7 +336,7 @@ def _bound(problems: list[str], where: str, metric: dict) -> None:
                 f"Bounded on no side it holds against every value; bounded on both it is two "
                 f"bars for one number, and rig does not pick between them")
     for bound in named:
-        if not _number(metric.get(bound)):
+        if not finite_number(metric.get(bound)):
             _refuse(problems, where, f"{bound} {metric.get(bound)!r} is not a finite number")
 
 
@@ -355,10 +364,10 @@ def validate_expectation(payload: object) -> list[str]:
                 f"{origin!r} is not one of {', '.join(sorted(DECLARED))} — a conclusion cannot "
                 f"create a requirement; a proposed expectation belongs in the intent contract, "
                 f"which has 'proposed' for it")
-    if not _text(payload.get("source")):
+    if not nonempty_text(payload.get("source")):
         _refuse(problems, "source", "says someone declared this, so it has to say where")
 
-    declared_at = _time(payload.get("declared_at"))
+    declared_at = offset_timestamp(payload.get("declared_at"))
     if declared_at is None:
         _refuse(problems, "declared_at",
                 f"{payload.get('declared_at')!r} is not an ISO 8601 timestamp with an offset. "
@@ -371,7 +380,7 @@ def validate_expectation(payload: object) -> list[str]:
         _refuse(problems, "window", "expected an object with 'opens' and 'closes'")
     else:
         _unknown(problems, "window", window, WINDOW_KEYS, "an observation window")
-        opens, closes = _time(window.get("opens")), _time(window.get("closes"))
+        opens, closes = offset_timestamp(window.get("opens")), offset_timestamp(window.get("closes"))
         if opens is None:
             _refuse(problems, "window.opens",
                     f"{window.get('opens')!r} is not an ISO 8601 timestamp with an offset")
@@ -404,7 +413,7 @@ def validate_expectation(payload: object) -> list[str]:
             _refuse(problems, where, f"expected an object, got {type(metric).__name__}")
             continue
         identifier = metric.get("id")
-        if not _text(identifier):
+        if not nonempty_text(identifier):
             _refuse(problems, where, f"has no id: {identifier!r} names no metric an adapter "
                                      f"could report a value for")
         elif identifier in seen:
@@ -423,7 +432,7 @@ def validate_expectation(payload: object) -> list[str]:
             _unknown(problems, where, metric, ROLE_KEYS[role], f"a {role} metric",
                      ((SUPERSEDED_GUARDRAIL_KEYS, _BOUND_REASON),) if role == GUARDRAIL else ())
 
-        if not _text(metric.get("unit")):
+        if not nonempty_text(metric.get("unit")):
             _refuse(problems, where,
                     "has no unit, and a number without one cannot be compared to another")
 
@@ -440,9 +449,9 @@ def validate_expectation(payload: object) -> list[str]:
                     f"{', '.join(DIRECTIONS)}")
         needed = ("baseline", "target")
         for field in needed:
-            if not _number(metric.get(field)):
+            if not finite_number(metric.get(field)):
                 _refuse(problems, where, f"{field} {metric.get(field)!r} is not a finite number")
-        if (role == OBJECTIVE and all(_number(metric.get(f)) for f in needed)
+        if (role == OBJECTIVE and all(finite_number(metric.get(f)) for f in needed)
                 and metric.get("direction") in DIRECTIONS):
             beyond = (metric["target"] < metric["baseline"]
                       if metric["direction"] == DECREASE else
@@ -491,20 +500,20 @@ def validate_observation(payload: object) -> list[str]:
             continue
         _unknown(problems, where, entry, ENTRY_KEYS, "an observation",
                  ((BAR_KEYS, _BAR_REASON),))
-        if not _text(entry.get("metric")):
+        if not nonempty_text(entry.get("metric")):
             _refuse(problems, where, "names no metric")
-        if not _number(entry.get("value")):
+        if not finite_number(entry.get("value")):
             _refuse(problems, where, f"value {entry.get('value')!r} is not a finite number")
-        if not _text(entry.get("unit")):
+        if not nonempty_text(entry.get("unit")):
             _refuse(problems, where, "has no unit")
         if entry.get("kind") not in KINDS:
             _refuse(problems, where,
                     f"kind {entry.get('kind')!r} is not one of {', '.join(KINDS)}")
-        if _time(entry.get("observed_at")) is None:
+        if offset_timestamp(entry.get("observed_at")) is None:
             _refuse(problems, where,
                     f"observed_at {entry.get('observed_at')!r} is not an ISO 8601 timestamp "
                     f"with an offset")
-        if not _text(entry.get("source")):
+        if not nonempty_text(entry.get("source")):
             _refuse(problems, where, "does not say where the number came from")
     return problems
 
@@ -574,7 +583,7 @@ def compare(expectation: dict, observation: dict, as_of: str) -> dict:
     problems = validate_expectation(expectation) + validate_observation(observation)
     if problems:
         raise ValueError("not a production outcome comparison:\n  " + "\n  ".join(problems))
-    stamp = _time(as_of)
+    stamp = offset_timestamp(as_of)
     if stamp is None:
         raise ValueError(f"--as-of {as_of!r} is not an ISO 8601 timestamp with an offset")
     if expectation["change"] != observation["change"]:
@@ -583,8 +592,8 @@ def compare(expectation: dict, observation: dict, as_of: str) -> dict:
                          f"numbers are not weak evidence, they are evidence about something "
                          f"else")
 
-    opens = _time(expectation["window"]["opens"])
-    closes = _time(expectation["window"]["closes"])
+    opens = offset_timestamp(expectation["window"]["opens"])
+    closes = offset_timestamp(expectation["window"]["closes"])
 
     by_metric: dict[str, list[dict]] = {}
     for entry in observation["observations"]:
@@ -612,7 +621,7 @@ def compare(expectation: dict, observation: dict, as_of: str) -> dict:
             # Partitioned by position rather than by value: two entries can be equal dicts —
             # the same number from the same source twice — and `e not in inside` would then
             # count neither of them as discarded.
-            (inside if opens <= _time(observed["observed_at"]) <= closes else
+            (inside if opens <= offset_timestamp(observed["observed_at"]) <= closes else
              outside).append(observed)
         # Counted and named rather than dropped. A measurement outside the window settles
         # nothing — but a report in which three measured regressions disappeared is
@@ -716,7 +725,7 @@ def change_cross_check(receipt: dict, change: str) -> dict:
     head = target.get("head") if isinstance(target.get("head"), dict) else {}
     commit = head.get("commit")
     source = head.get("source")
-    if not head.get("observed") or not _text(commit):
+    if not head.get("observed") or not nonempty_text(commit):
         return {"outcome": UNOBSERVABLE, "commit": None, "source": source,
                 "reason": head.get("reason") or "the receipt records no commit for this task"}
     commit = str(commit).strip()
