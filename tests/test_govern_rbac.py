@@ -9,7 +9,8 @@ import json
 
 import pytest
 
-from rig_workbench.govern.approval import evaluate, load_approvals, record_decision
+from rig_workbench.govern.approval import (UNKNOWN_HEAD, evaluate, load_approvals,
+                                           make_decision, record_decision)
 from rig_workbench.govern.identity import current_actor, load_org_binding
 from rig_workbench.govern.policy import (SCHEMA, EffectivePolicy, PolicyError,
                                          effective_policy)
@@ -166,6 +167,70 @@ def test_an_approval_still_counts_for_the_commit_it_approved():
     status = evaluate(approving_policy(quorum=1), TASK,
                       approvals(decision("alice", head="a" * 40)), head="a" * 40)
     assert status.satisfied
+
+
+# ── which commit an approval is bound to ─────────────────────────────────────
+#
+# `evaluate`'s `head` is the commit the caller is about to apply — for `accept`, the tip of
+# the task branch resolved in the main tree. The two tests above use the OLD record shape
+# (a `head` and no `branch_tip`), which is what every ledger written before this field
+# existed holds, and they are the proof that such a record is still read: it is compared
+# against the branch tip, which closes the detached-worktree hole for old ledgers too.
+def test_an_old_format_decision_is_held_to_the_branch_tip():
+    """A record with only a worktree `head`. Equal to the tip, it counts; different, it does
+    not — and "different" now includes a worktree that was detached at the approved commit
+    while the branch had moved on, which is the case the old comparison could not see."""
+    old_shape = decision("alice", head="a" * 40)
+    assert "branch_tip" not in old_shape
+    on_the_tip = evaluate(approving_policy(quorum=1), TASK, approvals(old_shape), head="a" * 40)
+    moved_on = evaluate(approving_policy(quorum=1), TASK, approvals(old_shape), head="b" * 40)
+    assert on_the_tip.satisfied
+    assert not moved_on.satisfied
+    assert any(f"approved {'a' * 12}, the branch is now at {'b' * 12}" in why
+               for _d, why in moved_on.ignored)
+
+
+def test_a_decision_records_both_the_tree_read_and_the_tip_approved():
+    d = make_decision(actor="alice", decision="approve", roles=["reviewer"],
+                      head="a" * 40, branch_tip="b" * 40)
+    assert (d["head"], d["branch_tip"]) == ("a" * 40, "b" * 40)
+
+
+def test_a_new_format_decision_is_bound_to_the_tip_not_the_tree_the_approver_stood_in():
+    """Both shas recorded and disagreeing: the worktree was detached at A, the branch was at
+    B. The approval is for B — what `accept` squashes — so B counts and A does not."""
+    detached = decision("alice", head="a" * 40)
+    detached["branch_tip"] = "b" * 40
+    assert evaluate(approving_policy(quorum=1), TASK, approvals(detached), head="b" * 40).satisfied
+    spent_on_a = evaluate(approving_policy(quorum=1), TASK, approvals(detached), head="a" * 40)
+    assert not spent_on_a.satisfied
+    assert any(f"approved {'b' * 12}" in why for _d, why in spent_on_a.ignored)
+
+
+def test_a_decision_with_no_recorded_commit_is_not_held_to_one():
+    """An orchestrator stage gate records no branch, and a rule that was never recorded
+    cannot be applied retroactively. This is not new: a decision with no sha has counted
+    since the freshness rule existed, and `branch_tip` did not change it."""
+    assert evaluate(approving_policy(quorum=1), TASK,
+                    approvals(decision("alice")), head="b" * 40).satisfied
+
+
+def test_a_head_that_could_not_be_resolved_counts_no_approval_at_all():
+    """`UNKNOWN_HEAD`, which is the one thing `None` must not be allowed to mean. A caller
+    whose task branch has been deleted knows there is a commit and cannot name it; reading
+    that as "nothing to compare" is how a missing ref became permission."""
+    status = evaluate(approving_policy(quorum=1), TASK,
+                      approvals(decision("alice", head="a" * 40)), head=UNKNOWN_HEAD)
+    assert not status.satisfied and status.counted == 0
+    assert any("could not be resolved" in why for _d, why in status.ignored)
+
+
+def test_an_unknown_head_is_not_silently_equal_to_a_missing_one():
+    """The two answers have to stay distinguishable at the call site, or the sentinel is
+    decoration: same decisions, same rule, opposite verdicts."""
+    same = approvals(decision("alice", head="a" * 40))
+    assert evaluate(approving_policy(quorum=1), TASK, same, head=None).satisfied
+    assert not evaluate(approving_policy(quorum=1), TASK, same, head=UNKNOWN_HEAD).satisfied
 
 
 def test_an_expired_approval_stops_counting():

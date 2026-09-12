@@ -397,3 +397,185 @@ def test_govern_rollup_renders_the_team_view(tmp_path, repo):
     result = run_govern(["rollup", str(repo), str(other)], repo)
     assert "## rig govern rollup: acme" in result.stdout
     assert "| team-a |" in result.stdout and "| team-b |" in result.stdout
+
+
+# ── an approval is bound to the commit accept will squash ────────────────────
+#
+# The gate's half of this is `tests/test_gate_sensor_authority.py`
+# (`…detached_worktree…`, `…branch_moved…`). The approval's half is here, and it is the
+# half that still mattered after the gate's was closed: `--force` is the one door past
+# the gate, and behind it the approval quorum is the *only* human check left. An approval
+# bound to the worktree's HEAD is not bound to what `accept` squashes.
+def _git(repo, *args):
+    return subprocess.run(["git", *args], cwd=repo, check=True,
+                          capture_output=True, text=True).stdout.strip()
+
+
+@pytest.fixture
+def worktree_root(repo):
+    """Task worktrees live OUTSIDE the repository. `repo` is `tmp_path` itself, so a
+    worktree root under it would be an untracked directory and `accept` — which requires a
+    clean main tree it can roll a failed squash back in — would refuse before governance ran."""
+    return repo.parent / f"{repo.name}-worktrees"
+
+
+def _worktree_task(repo, wt_root, slug="bind"):
+    """A task with a real worktree, one commit of its own, and nothing but governance
+    left to decide. `--force` covers the gate, so the approval is what is being tested."""
+    (repo / ".gitignore").write_text(".rig/\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "ignore .rig")
+    made = run_cli(["new", "add a thing", "--type", "feature", "--slug", slug], repo,
+                   env={"RIG_WORKTREE_ROOT": str(wt_root)})
+    assert made.returncode == 0, out(made)
+    task_id = sorted(p.name for p in (repo / ".rig" / "runs").iterdir())[-1]
+    wt = wt_root / task_id
+    (wt / "app.py").write_text("x = 2\n", encoding="utf-8")
+    _git(wt, "add", "-A")
+    _git(wt, "commit", "-q", "-m", "the task's own work")
+    (repo / ".rig" / "runs" / task_id / "diff.md").write_text("## Summary\nx\n", encoding="utf-8")
+    return task_id, wt
+
+
+def test_an_approval_cannot_be_spent_on_a_branch_tip_the_approver_never_saw(repo, worktree_root):
+    """The reproduction. Approve at A, park the worktree back on A, leave the branch at B.
+
+    Measured before the fix: `govern approve grant` recorded the WORKTREE's HEAD and
+    `check_accept` compared it against the worktree's HEAD again, which goes vacuous exactly
+    here — the worktree is detached at the approved commit. `accept --force` reported
+    `approvals: 1/1  ✓ satisfied`, exited 0, and squash-merged B, a commit bob never
+    approved, into the main tree.
+    """
+    wt_root = worktree_root
+    govern(repo, approvals={"feature": {"quorum": 1, "roles": ["reviewer"]}})
+    task_id, wt = _worktree_task(repo, wt_root)
+    approved = _git(wt, "rev-parse", "HEAD")
+
+    granted = run_govern(["approve", "grant", task_id, "--note", "read every line"], repo,
+                         env={"RIG_ACTOR": "bob"})
+    assert granted.returncode == 0, out(granted)
+
+    (wt / "evil.py").write_text("# never approved by anyone\n", encoding="utf-8")
+    _git(wt, "add", "-A")
+    _git(wt, "commit", "-q", "-m", "a commit the approver never saw")
+    evil = _git(wt, "rev-parse", "HEAD")
+    _git(wt, "checkout", "--detach", approved)
+    _git(repo, "branch", "-f", f"rig/{task_id}", evil)
+    assert _git(wt, "rev-parse", "HEAD") == approved          # what the old check compared
+    assert _git(repo, "rev-parse", f"rig/{task_id}") == evil  # what accept squashes
+
+    result = run_cli(["accept", task_id, "--force"], repo,
+                     env={"RIG_ACTOR": "olivia", "RIG_WORKTREE_ROOT": str(wt_root)})
+    assert result.returncode != 0, out(result)
+    assert (f"approved {approved[:12]}, the branch is now at {evil[:12]} "
+            f"(the branch moved after this approval); re-approve at {evil[:12]}") in out(result)
+    assert "approval requirement not met (0/1)" in out(result)
+    # Nothing reached the main tree, and no forced accept was recorded.
+    assert not (repo / "evil.py").exists()
+    assert _git(repo, "status", "--porcelain") == ""
+    assert not (repo / ".rig" / "audit.jsonl").exists()
+
+
+def test_an_approval_granted_on_the_branch_is_still_spent_on_it(repo, worktree_root):
+    """The other half, and the one that has to be boring: a worktree sitting on its own
+    branch approves and accepts exactly as it did. `head` and `branch_tip` are the same
+    commit there, which is every ordinary run."""
+    wt_root = worktree_root
+    govern(repo, approvals={"feature": {"quorum": 1, "roles": ["reviewer"]}})
+    task_id, wt = _worktree_task(repo, wt_root, slug="ok")
+    approved = _git(wt, "rev-parse", "HEAD")
+
+    granted = run_govern(["approve", "grant", task_id, "--note", "read every line"], repo,
+                         env={"RIG_ACTOR": "bob"})
+    assert granted.returncode == 0, out(granted)
+    # Both shas land in the record, and here they agree.
+    stored = json.loads((repo / ".rig" / "runs" / task_id / "approvals.json")
+                        .read_text(encoding="utf-8"))["decisions"][0]
+    assert stored["head"] == stored["branch_tip"] == approved
+
+    result = run_cli(["accept", task_id, "--force"], repo,
+                     env={"RIG_ACTOR": "olivia", "RIG_WORKTREE_ROOT": str(wt_root)})
+    assert result.returncode == 0, out(result)
+    assert "approvals: 1/1  ✓ satisfied" in result.stdout
+    assert (repo / "app.py").is_file()
+
+
+def test_approve_status_reports_a_stale_approval_the_same_way_accept_does(repo, worktree_root):
+    """The preview and the gate read one sha. An approver who runs `approve status` after
+    the branch moved must not be told the quorum is met by an approval accept will ignore."""
+    wt_root = worktree_root
+    govern(repo, approvals={"feature": {"quorum": 1, "roles": ["reviewer"]}})
+    task_id, wt = _worktree_task(repo, wt_root, slug="status")
+    approved = _git(wt, "rev-parse", "HEAD")
+    run_govern(["approve", "grant", task_id], repo, env={"RIG_ACTOR": "bob"})
+
+    (wt / "later.py").write_text("y = 1\n", encoding="utf-8")
+    _git(wt, "add", "-A")
+    _git(wt, "commit", "-q", "-m", "a later commit")
+    later = _git(wt, "rev-parse", "HEAD")
+    _git(wt, "checkout", "--detach", approved)
+
+    shown = run_govern(["approve", "status", task_id], repo)
+    assert "approvals: 0/1" in shown.stdout
+    assert f"approved {approved[:12]}, the branch is now at {later[:12]}" in shown.stdout
+
+
+def test_a_task_branch_that_no_longer_resolves_is_refused_before_governance(repo, worktree_root):
+    """The behavioural review's measurement. Delete the task branch and every check that
+    reads it gets `None`, which each of them read as "nothing to compare": `--force` covered
+    the gate, governance was handed no head and counted every approval, `approvals: 1/1  ✓
+    satisfied` printed, an `accept_force` line was appended to `.rig/audit.jsonl`, and only
+    then did a raw `git rev-list` failure end the run — a weakened check and a false ledger
+    entry for an accept that never reached the squash.
+    """
+    wt_root = worktree_root
+    govern(repo, approvals={"feature": {"quorum": 1, "roles": ["reviewer"]}})
+    task_id, wt = _worktree_task(repo, wt_root, slug="gone")
+    approved = _git(wt, "rev-parse", "HEAD")
+    run_govern(["approve", "grant", task_id], repo, env={"RIG_ACTOR": "bob"})
+
+    (wt / "later.py").write_text("y = 1\n", encoding="utf-8")
+    _git(wt, "add", "-A")
+    _git(wt, "commit", "-q", "-m", "a later commit")
+    _git(wt, "checkout", "--detach", "HEAD")
+    _git(repo, "branch", "-D", f"rig/{task_id}")
+
+    result = run_cli(["accept", task_id, "--force"], repo,
+                     env={"RIG_ACTOR": "olivia", "RIG_WORKTREE_ROOT": str(wt_root)})
+    assert result.returncode != 0, out(result)
+    assert f"branch 'rig/{task_id}' does not resolve" in out(result)
+    # Refused before governance ran, so nothing claimed the approval was satisfied...
+    assert "approvals: 1/1" not in out(result)
+    assert "✓ satisfied" not in out(result)
+    # ...and nothing was written: no audit line for an accept that never reached the squash.
+    assert not (repo / ".rig" / "audit.jsonl").exists()
+    assert _git(repo, "status", "--porcelain") == ""
+    assert "forced" not in json.loads(
+        (repo / ".rig" / "runs" / task_id / "task.json").read_text(encoding="utf-8"))
+
+    # The preview reads the missing branch the same way the gate does.
+    shown = run_govern(["approve", "status", task_id], repo)
+    assert "approvals: 0/1" in shown.stdout
+    assert "could not be resolved" in shown.stdout
+    assert approved  # the approval is on file; it is the branch that is gone
+
+
+def test_the_ledger_records_which_commit_an_approval_was_for(repo, worktree_root):
+    """`approvals.json` is unsigned and writable; the ledger is neither. An entry that said
+    only "alice approved something" could not contradict a hand-written decision naming a
+    commit nobody read, so the chain now attests the verdict and both shas."""
+    wt_root = worktree_root
+    govern(repo, approvals={"feature": {"quorum": 1, "roles": ["reviewer"]}})
+    task_id, wt = _worktree_task(repo, wt_root, slug="chain")
+    approved = _git(wt, "rev-parse", "HEAD")
+    run_govern(["approve", "grant", task_id, "--note", "read every line"], repo,
+               env={"RIG_ACTOR": "bob"})
+
+    entry = next(json.loads(line) for line
+                 in (repo / ".rig" / "ledger.jsonl").read_text(encoding="utf-8").splitlines()
+                 if json.loads(line)["action"] == "approval.grant")
+    assert entry["actor"] == "bob" and entry["subject"] == task_id
+    assert entry["data"]["decision"] == "approve"
+    assert entry["data"]["head"] == entry["data"]["branch_tip"] == approved
+    # And the chain still verifies with the wider record in it.
+    assert run_govern(["audit", "verify"], repo).returncode == 0

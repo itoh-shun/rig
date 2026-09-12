@@ -34,6 +34,28 @@ from .rbac import roles_of
 VALID_DECISIONS = ("approve", "deny")
 
 
+class _UnknownHead:
+    """The type of `UNKNOWN_HEAD`. One instance, compared with `is`."""
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "UNKNOWN_HEAD"
+
+
+#: "There is a commit this accept is about, and I could not resolve it."
+#:
+#: `evaluate`'s `head=None` means *there is no such commit* — an orchestrator stage gate
+#: has none, and neither does a `--no-worktree` run — and it correctly holds no approval to
+#: one. A caller that cannot tell git what its task branch points at is in the opposite
+#: situation, and passing `None` for it turns the freshness rule off by omission: a deleted
+#: task branch made every approval count, which is the strongest a missing ref can possibly
+#: be read as. This value says *unknown*, and unknown is not a match: every approval is
+#: ignored with its own line, and the caller refuses for want of a quorum rather than
+#: proceeding on approvals it could not check.
+UNKNOWN_HEAD = _UnknownHead()
+
+
 def approvals_path(root: pathlib.Path, task_id: str) -> pathlib.Path:
     return root / ".rig" / "runs" / task_id / "approvals.json"
 
@@ -60,10 +82,19 @@ def save_approvals(root: pathlib.Path, task_id: str, data: dict, *,
 
 
 def make_decision(*, actor: str, decision: str, roles: list[str],
-                  head: str | None = None, note: str = "",
+                  head: str | None = None, branch_tip: str | None = None, note: str = "",
                   clock: Clock = SYSTEM_CLOCK) -> dict:
     """One decision record. Pure — the caller decides where it is stored, which is
-    what lets a workbench task and an orchestrator stage share this arithmetic."""
+    what lets a workbench task and an orchestrator stage share this arithmetic.
+
+    **Two shas, and the ledger schema keeps both meanings.** `head` is what it has always
+    been — the HEAD of the tree the approver was standing in — and it is left alone so that
+    a decision written by an older rig still says what it said. `branch_tip` is the commit
+    the task branch pointed at, resolved in the main tree, which is what `accept` squashes;
+    it is `None` for a decision that has no branch to resolve (an orchestrator stage gate)
+    and absent from every record written before this field existed. `_bound_to` below is
+    the one place that decides which of the two an approval is held to.
+    """
     if decision not in VALID_DECISIONS:
         raise ValueError(f"decision must be one of {', '.join(VALID_DECISIONS)}")
     return {
@@ -71,6 +102,7 @@ def make_decision(*, actor: str, decision: str, roles: list[str],
         "decision": decision,
         "roles": list(roles),
         "head": head,
+        "branch_tip": branch_tip,
         "note": note,
         "ts": clock.stamp(),
     }
@@ -84,11 +116,12 @@ def upsert(decisions: list[dict], entry: dict) -> list[dict]:
 
 
 def record_decision(root: pathlib.Path, task_id: str, *, actor: str, decision: str,
-                    roles: list[str], head: str | None = None, note: str = "",
-                    clock: Clock = SYSTEM_CLOCK, files: FileStore = LOCAL_FILES) -> dict:
+                    roles: list[str], head: str | None = None, branch_tip: str | None = None,
+                    note: str = "", clock: Clock = SYSTEM_CLOCK,
+                    files: FileStore = LOCAL_FILES) -> dict:
     """Append one decision to a workbench task's approval file."""
-    entry = make_decision(actor=actor, decision=decision, roles=roles, head=head, note=note,
-                          clock=clock)
+    entry = make_decision(actor=actor, decision=decision, roles=roles, head=head,
+                          branch_tip=branch_tip, note=note, clock=clock)
     data = load_approvals(root, task_id, files=files)
     data["decisions"] = upsert(data["decisions"], entry)
     save_approvals(root, task_id, data, files=files)
@@ -127,6 +160,19 @@ class ApprovalStatus:
         return out
 
 
+def _bound_to(decision: dict) -> str | None:
+    """The commit one approval approved, in the terms `evaluate`'s `head` is given in.
+
+    `branch_tip` wins where a decision has one: it is the commit `accept` squashes. A record
+    written before that field existed carries only `head`, the HEAD of the tree the approver
+    stood in, and it is compared against the branch tip too — the safer of the two readings,
+    because the alternative compared a worktree HEAD against a worktree HEAD, so a detached
+    worktree made the check vacuous. No sha at all is neither a match nor a mismatch:
+    `evaluate` leaves such a decision counting, exactly as it always has.
+    """
+    return decision.get("branch_tip") or decision.get("head")
+
+
 def _age_hours(ts: str, *, clock: Clock = SYSTEM_CLOCK) -> float | None:
     try:
         then = datetime.datetime.fromisoformat(ts)
@@ -136,13 +182,23 @@ def _age_hours(ts: str, *, clock: Clock = SYSTEM_CLOCK) -> float | None:
 
 
 def evaluate(eff: EffectivePolicy, task: dict, approvals: dict,
-             *, head: str | None = None, rule: dict | None = None,
+             *, head: str | _UnknownHead | None = None, rule: dict | None = None,
              author: str | None = None, clock: Clock = SYSTEM_CLOCK) -> ApprovalStatus:
     """Decide whether this approval requirement is met right now.
 
-    `head` is the tip as it stands at evaluation time. When a decision recorded a
-    different head, the branch moved after the approval and that approval no
-    longer applies to the code being accepted.
+    `head` is **the commit the caller is about to apply**, as the caller resolves it —
+    for `accept` that is the tip of the task branch read in the main tree, because that is
+    what `git merge --squash` is handed, and for an orchestrator stage gate it is the head
+    that stage ran on. When a decision was bound to a different commit, the branch moved
+    after the approval and that approval no longer applies to the code being accepted.
+    `UNKNOWN_HEAD` is the third answer, and it is not `None`: see the constant.
+
+    This module never resolves a ref itself, and that is a layering fact as much as a
+    design one: govern's judgement layer may import the six ports and nothing else that
+    touches the outside, and `workbench.state.task_branch_tip` — the one resolver that
+    knows the branch tip is read in the MAIN tree — lives in the other pillar. So the sha
+    arrives as this parameter, from the caller that already holds all three
+    (`accept.py`: `evaluated_head`, `branch_tip`, `worktree_head`).
 
     `rule` / `author` override what would be read from the task, so an
     orchestrator stage gate can reuse the same arithmetic with the rule that
@@ -177,9 +233,16 @@ def evaluate(eff: EffectivePolicy, task: dict, approvals: dict,
             ignored.append((d, f"role(s) {', '.join(sorted(held)) or '(none)'} do not include "
                                f"{' or '.join(sorted(needed_roles))}"))
             continue
-        if head and d.get("head") and d["head"] != head:
-            ignored.append((d, f"approved {d['head'][:12]}, the branch is now at {head[:12]} "
-                               "(the branch moved after this approval)"))
+        approved_sha = _bound_to(d)
+        if head is UNKNOWN_HEAD:
+            ignored.append((d, "the commit this would be spent on could not be resolved "
+                               "(the task's branch does not exist), so no approval can be "
+                               "matched to it"))
+            continue
+        if head and approved_sha and approved_sha != head:
+            ignored.append((d, f"approved {approved_sha[:12]}, the branch is now at {head[:12]} "
+                               "(the branch moved after this approval); re-approve at "
+                               f"{head[:12]}"))
             continue
         if expires:
             age = _age_hours(d.get("ts") or "", clock=clock)

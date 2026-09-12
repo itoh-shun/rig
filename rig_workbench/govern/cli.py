@@ -74,7 +74,7 @@ from rig_workbench.workbench.reporting import read_all_tasks
 
 from . import conformance as conf
 from . import ledger, waiver
-from .approval import evaluate, load_approvals, record_decision
+from .approval import UNKNOWN_HEAD, evaluate, load_approvals, record_decision
 from .identity import ORG_SCHEMA, current_actor, load_org_binding, org_binding_path
 # `PERMISSIONS` left with it: the only thing this module used it for was the
 # `govern can` help line ("one of: …"), and that argument's help now comes from the
@@ -149,7 +149,15 @@ def _repo_root() -> pathlib.Path:
 
 
 def _head(root: pathlib.Path, task: dict, *, runner: ProcessRunner = SUBPROCESS) -> str | None:
-    """The task branch tip, used to bind approvals to the code they approved.
+    """The HEAD of the tree the approver is standing in — the task's worktree, or the main
+    one when it has none.
+
+    Not what an approval is bound to, and the docstring used to say it was. `_branch_tip`
+    below answers that, and the difference between the two is where the bug lived: a
+    detached worktree sits on one commit while the branch it was cut for points at another.
+    Kept, and still recorded as the decision's `head`, because it is a true fact about the
+    approval — which tree the approver read — and because a field that changed meaning
+    underneath an existing ledger would be worse than a new one.
 
     `ProcessRunner` and deliberately not `GitRepo.head`, which asks the same question. The
     git port routes through `gitroot._git`, which strips `GIT_DIR`/`GIT_WORK_TREE` first;
@@ -162,6 +170,32 @@ def _head(root: pathlib.Path, task: dict, *, runner: ProcessRunner = SUBPROCESS)
     wt = task.get("worktree_path")
     cwd = wt if wt and pathlib.Path(wt).is_dir() else str(root)
     proc = runner.run(["git", "rev-parse", "HEAD"], cwd=cwd)
+    return proc.stdout.strip() or None if proc.returncode == 0 else None
+
+
+def _branch_tip(root: pathlib.Path, task: dict, *,
+                runner: ProcessRunner = SUBPROCESS) -> str | None:
+    """The commit `accept` will squash: the tip of the task's own branch, resolved in the
+    MAIN tree. This is what an approval is bound to.
+
+    `None` when the task records no branch (a `--no-worktree` run has none, and so does an
+    orchestrator stage gate) or when the name no longer resolves — both "unknown", never a
+    match.
+
+    `workbench.state.task_branch_tip` asks this same question and is the authority for it:
+    it is what `accept` resolves and hands to `git merge --squash`, and what it passes to
+    `enforce.check_accept` as the sha every approval is compared against. This is not a
+    second authority and must not become one — it records the tip *at approval time*, into
+    the decision, so the ledger says which commit was approved. It is spelled out here
+    rather than imported because govern may not import that module: `govern` is a migrated
+    pillar and `workbench/state.py` is the hub `tests/test_architecture_inventory.py` holds
+    at a ceiling it has already reached. The shell's own `ProcessRunner`, for the reason
+    `_head` gives directly above.
+    """
+    branch = task.get("branch")
+    if not branch:
+        return None
+    proc = runner.run(["git", "rev-parse", "--verify", f"{branch}^{{commit}}"], cwd=str(root))
     return proc.stdout.strip() or None if proc.returncode == 0 else None
 
 
@@ -498,17 +532,31 @@ def cmd_approve(args: argparse.Namespace, out: Presenter, clock: Clock) -> Verdi
             if rule.get("separation_of_duties", True):
                 out.out(f"[WARN] {actor} authored this task; separation of duties means this "
                         "decision will not count toward the quorum")
-        record_decision(root, task_id, actor=actor,
-                        decision="approve" if args.action == "grant" else "deny",
-                        roles=roles_of(eff, actor), head=_head(root, task), note=args.note or "",
-                        clock=clock)
+        verdict_word = "approve" if args.action == "grant" else "deny"
+        tree_head, tip = _head(root, task), _branch_tip(root, task)
+        record_decision(root, task_id, actor=actor, decision=verdict_word,
+                        roles=roles_of(eff, actor), head=tree_head, branch_tip=tip,
+                        note=args.note or "", clock=clock)
+        # WHICH COMMIT WAS APPROVED, INSIDE THE HASH CHAIN. `approvals.json` is plain
+        # unsigned JSON in a tree the task's own author can write, so a decision that was
+        # never granted — any actor, any pair of shas — reads back as a real one and meets
+        # the quorum. The ledger is the tamper-evident half, and it carried only the task
+        # type and the note: enough to say an approval happened, not enough to say what it
+        # was for. Recording the verdict and both shas here does not stop the file being
+        # edited; it makes the edit *visible*, because a decision claiming a commit no
+        # chain entry ever attested is now a difference somebody can find.
         ledger.append(root, f"approval.{args.action}", actor=actor, subject=task_id,
                       org=eff.org, team=eff.team,
-                      data={"task_type": task.get("task_type"), "note": args.note or ""},
+                      data={"task_type": task.get("task_type"), "note": args.note or "",
+                            "decision": verdict_word, "head": tree_head, "branch_tip": tip},
                       clock=clock)
 
-    status = evaluate(eff, task, load_approvals(root, task_id), head=_head(root, task),
-                      clock=clock)
+    # Reported against the same sha `accept` will compare against, and with the same reading
+    # of a branch that does not resolve, so `approve status` and the accept preview cannot
+    # disagree about whether an approval still counts.
+    head = ((_branch_tip(root, task) or UNKNOWN_HEAD) if task.get("branch")
+            else _head(root, task))
+    status = evaluate(eff, task, load_approvals(root, task_id), head=head, clock=clock)
     out.out(f"## rig govern approve: {task_id} ({task.get('task_type')})\n")
     if not eff.active:
         out.out("(no policy in effect — decisions are recorded but nothing is required)")

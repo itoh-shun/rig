@@ -1177,7 +1177,7 @@ team C ─┘        (a downstream layer can only tighten it)
 |---|---|---|
 | `.rig/gates.json` is per-repo, so a criterion team A adds never reaches team B | **policy** (`.rig/policy/*.json`) | **monotonic tightening** — a team/project layer may add criteria, raise a quorum, shorten a waiver, narrow a role; it can never drop, lower, extend or widen one |
 | `.rig/access.json` is an allowlist for exactly one permission | **permissions** | roles over a fixed 11-permission vocabulary; a denial always names who *does* hold it |
-| "someone reviewed it" cannot be checked afterwards | **approvals** | quorum + qualifying roles + **separation of duties** (the author's own approval never counts) + **freshness** (bound to the approved commit; a force-push invalidates it) |
+| "someone reviewed it" cannot be checked afterwards | **approvals** | quorum + qualifying roles + **separation of duties** (the author's own approval never counts) + **freshness** (bound to the branch tip `accept` squashes, resolved in the main tree — not to the worktree's HEAD; move the branch and the approval stops counting) |
 | a `--force` record cannot tell a sign-off from a bad evening | **waivers** | a named, reasoned, **expiring** exception; `non_waivable` criteria are beyond any waiver |
 | an append-only JSONL log can be edited with a text editor | **ledger** (`.rig/ledger.jsonl`) | hash-chained and HMAC-signed; edits, deletions, reordering and forged appends are all detected |
 | "we run a common policy" stays a claim | **conformance** | nine checks per repo, rolled up per team — including the **force rate**, the one number that separates a gate being met from a gate being routed around |

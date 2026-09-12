@@ -898,6 +898,14 @@ gate は、accept_requirements の `acceptance_gate_not_failed` を満たさな�
 accept 側の head 判定が branch の先端を見るようになった後も、そちらは worktree の HEAD のままである。
 detached worktree の抜け道は承認にも残る。本 run より前からある問題で、本 run では直していない。
 
+**この 1 件は閉じた（`91e4cac`）。** accept が squash 用に解決した branch の先端を
+`check_accept` に渡すようになり、承認は worktree の HEAD ではなくそのコミットに束ねられる。
+sha を解決するのは accept 側である。govern の判定層は `workbench.state` を import できない
+（`tests/test_layering_contract.py`）。その hub も上限に達している
+（`tests/test_architecture_inventory.py`）。決定は `head` を残したまま `branch_tip` を
+併記するので、既存の `approvals.json` の意味は変わらない。`head` しか持たない古い決定も
+branch の先端と突き合わせる。
+
 #### CLI の答えになっていなかった 3 件
 
 上表とは出どころが違う。レビューが残した先送りではなく、本節と §7 が散文の中に書いたまま

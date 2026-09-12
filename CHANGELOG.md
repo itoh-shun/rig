@@ -575,9 +575,67 @@ was closed.**
   author can write, so the recorded head is *reported*, not measured: the check catches a branch
   that moved under a gate, not an author who edited the record. The `accept_force` audit entry
   names all three refs (`evaluated_head` as reported, `branch_tip` and `worktree_head` as read
-  from git at accept time) so a later reader can tell which is which. Known debt, predating this
-  run: `govern.check_accept` binds approvals to the worktree HEAD, so the detached-worktree gap
-  still applies to approvals.
+  from git at accept time) so a later reader can tell which is which.
+
+**An approval is bound to the commit `accept` squashes, not to the worktree's HEAD.** The
+same detached-worktree hole as the entry above, one layer up, and it outlived the fix for
+it: `govern approve grant` recorded the worktree's HEAD and `check_accept` read the
+worktree's HEAD again, so the rule went vacuous exactly when the worktree was detached.
+Measured on a scratch `feature` task with a live policy: approve at A, `git checkout
+--detach A` in the worktree, `git branch -f rig/<task> B`, and `accept --force` printed
+`approvals: 1/1  ✓ satisfied`, exited 0 and squash-merged B — a commit the approver never
+saw — into the main tree. `--force` is where it bit, because it is the one door past
+`gate_judged_this_head` and the approval quorum is the only human check behind it.
+
+`accept` now hands `check_accept` the branch tip it resolved for the squash
+(`state.task_branch_tip`, read in the main tree) rather than the worktree's HEAD, and a
+decision bound to any other commit is ignored with the line it always had, now carrying
+the next move — `approved <a>, the branch is now at <b> (the branch moved after this
+approval); re-approve at <b>` — after which accept refuses exactly as it does for a
+missing approval. The sha is resolved by `accept`, which already holds all three, and
+passed in: govern's judgement layer may not import `workbench.state`
+(`tests/test_layering_contract.py`), and the hub it lives in is at its ceiling
+(`tests/test_architecture_inventory.py`). A decision now records `branch_tip`
+**alongside** `head` rather than redefining it, so an existing `approvals.json` still says
+what it said; a decision carrying only `head` is compared against the branch tip too — one
+taken on the branch (every ordinary approval) still counts, one taken from a detached
+worktree no longer does. `govern approve status` reports against the same sha, so the
+preview and the gate cannot disagree.
+
+**A task branch that no longer resolves is refused, not treated as unconstrained.** The
+same review measured the other half: delete the task branch and every check that reads it
+gets `None`, which each of them read as "nothing to compare". `--force` covered the gate,
+governance was handed `head=None` and counted every approval, `approvals: 1/1  ✓
+satisfied` printed, an `accept_force` line was appended to `.rig/audit.jsonl`, and only
+then did a raw `git rev-list` failure end the run at exit 2 — a weakened check and a false
+ledger entry for an accept that never reached the squash, where the unfixed base had
+refused 0/1. `accept` now stops on the missing ref before the checklist and long before
+anything is written — "branch '<name>' does not resolve, so neither the acceptance gate
+nor an approval can be about it and there is nothing to squash", followed by the two ways
+back (restore the ref with `git branch`, or start the work again with `workbench.py new`).
+And `approval.evaluate` grows `UNKNOWN_HEAD`, a named third answer: `head=None` means *no
+such commit exists* (a `--no-worktree` run, an orchestrator stage gate) and rightly holds
+no approval to one, while `UNKNOWN_HEAD` means *there is one and it could not be
+resolved*, under which every approval is ignored with its own line. A caller can no
+longer switch the binding off by omission. `govern approve status` reads a missing branch
+the same way, so it and the gate still agree.
+
+**The audit ledger records which commit an approval was for.** `approvals.json` is plain
+unsigned JSON in a tree the task's own author can write, so a decision that was never
+granted reads back as a real one and meets the quorum; the `approval.grant` chain entry
+carried only the task type and the note, which says an approval happened and not what it
+was for. The entry's `data` now carries the verdict, the `head` and the `branch_tip`. It
+does not stop the file being edited — it makes the edit visible, because a decision
+claiming a commit no chain entry ever attested is now a difference somebody can find.
+
+**Known debt, recorded and not fixed here.** The `accept_force` audit line is written
+before the squash can fail, so the ledger can still record a forced accept that never
+applied. A refused force writes nothing anywhere, so repeated probing of a governance
+boundary leaves no trace; a blocked-accept ledger entry would show it. `govern/ledger.py`'s
+`_key` reads the signing key with `read_bytes` rather than the `read_secret_bytes` the
+`FileStore` port offers, and `govern audit` has no `--verify` of its own. Stage-gate
+decisions carry `head` and no `branch_tip` by design — a stage has no task branch — and
+nothing asserts that intent, so a later reader cannot tell the design from an omission.
 
 **Three CLI commands answered a predictable absence with a traceback, a full validation
 run, or the whole module docstring.** Each was recorded as a debt in

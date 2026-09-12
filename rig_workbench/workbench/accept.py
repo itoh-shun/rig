@@ -133,9 +133,16 @@ def _is_untracked_state(entry: str) -> bool:
 
 
 def _task_head(root: pathlib.Path, task: dict) -> str | None:
-    """The task branch tip. Approvals are bound to it, so a branch that moves after
-    an approval stops counting as approved (see govern.approval), and the acceptance
-    gate's verdict is bound to it for the same reason (`state.task_head`)."""
+    """The task WORKTREE's HEAD — the commit the tree in front of the operator sits on.
+
+    Named for what `state.task_head` answers, not for what a reader might hope it answers.
+    It said "the task branch tip" and approvals were bound to it on that description, which
+    is exactly the confusion this pair of names exists to prevent: a worktree can be
+    detached at one commit while the branch it was cut for points at another, and only
+    `state.task_branch_tip` resolves the second. The gate's verdict is bound to this one
+    (it is the tree the sensors measured); the squash and the approval are bound to the
+    branch tip.
+    """
     return task_head(root, task)
 
 
@@ -356,6 +363,19 @@ def _cmd_accept_locked(args: argparse.Namespace, root: pathlib.Path, task_id: st
     # (`--no-worktree`) has nothing to squash and nothing to compare, so it keeps the
     # worktree-HEAD comparison alone and is stopped further down by its own message.
     branch_tip = task_branch_tip(root, task) if task.get("branch") else None
+    # A RECORDED BRANCH THAT DOES NOT RESOLVE IS UNKNOWN, NEVER UNCONSTRAINED. Deleting the
+    # task branch left `branch_tip` None, which every downstream check read as "nothing to
+    # compare": `gate_judged_this_head` failed but `--force` covers it, and governance was
+    # handed `head=None`, under which every approval counts. Measured: `approvals: 1/1 ✓
+    # satisfied`, an `accept_force` line appended to `.rig/audit.jsonl`, and only then a raw
+    # `git rev-list` failure — a weakened check and a false ledger entry, for a run that
+    # never reached the squash. Refused here, before the checklist and long before anything
+    # is written, because there is no verdict to give: the commits are gone.
+    if task.get("branch") and branch_tip is None:
+        die(f"branch '{task['branch']}' does not resolve, so neither the acceptance gate nor "
+            f"an approval can be about it and there is nothing to squash. Restore it "
+            f"(`git branch {task['branch']} <sha>`) or start the work again with "
+            f"`workbench.py new`")
     head_ok = bool(evaluated_head) and (
         evaluated_head == branch_tip == worktree_head if task.get("branch")
         else evaluated_head == worktree_head)
@@ -440,8 +460,27 @@ def _cmd_accept_locked(args: argparse.Namespace, root: pathlib.Path, task_id: st
     unmet_criteria = sorted({c["name"] for c in acc["checks"] if c["status"] in ("failed", "pending")}
                             | {name for name in ("no_unrelated_diff", "gate_judged_this_head")
                                if name in soft_fail})
-    gov = govern_enforce.check_accept(root, task, bypassed=unmet_criteria,
-                                      force=bool(soft_fail), head=_task_head(root, task))
+    # WHICH COMMIT AN APPROVAL IS SPENT ON. The same distinction the head check above
+    # makes, made once more for the human half of it. `check_accept` was handed the
+    # worktree's HEAD and `govern approve grant` recorded the worktree's HEAD, so the
+    # comparison held a worktree HEAD against a worktree HEAD and went vacuous exactly when
+    # the worktree was detached: detach it at the approved commit, point the branch at
+    # another, and an approval nobody granted for that commit counted for it. `--force` is
+    # where it bit — it is the one door past `gate_judged_this_head`, and the approval
+    # quorum is the only human check behind it.
+    #
+    # The sha is resolved here and passed in rather than read inside govern: `branch_tip`
+    # is `state.task_branch_tip`, which knows the tip is read in the MAIN tree, and govern's
+    # judgement layer may not import it (tests/test_layering_contract.py). A task with no
+    # branch (`--no-worktree`) has no tip to resolve and keeps the head it always had.
+    # `UNKNOWN_HEAD` rather than `None` for a branch that stopped resolving, even though the
+    # refusal above already covers it today: the two are a hundred lines apart, a ref can
+    # move or vanish in between (which is the lesson of the squash-race this file already
+    # carries), and the value that arrives here decides whether approvals are checked at all.
+    gov = govern_enforce.check_accept(
+        root, task, bypassed=unmet_criteria, force=bool(soft_fail),
+        head=(branch_tip or govern_enforce.UNKNOWN_HEAD) if task.get("branch")
+        else worktree_head)
     for line in gov.lines:
         print(line)
     if gov.blocked:

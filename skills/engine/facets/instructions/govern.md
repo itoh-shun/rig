@@ -70,5 +70,5 @@ steps:
 ガバナンスは開発フローの外側ではなく、**accept の内側**にある。`/rig:go` の accept は、ポリシーがあれば①accept 権限 ②承認 quorum（職務分離・鮮度つき）③force 権限 ④例外の有効性 を通ってから squash merge に入る。したがって：
 
 - 「accept できない」と言われたら、まず `rig-wb govern whoami` と `rig-wb govern approve status <task-id>` を読む（権限か承認かで手が違う）。
-- 承認は `rig-wb govern approve grant <task-id>`（**著者本人の承認は数えない**・ブランチが動くと失効）。
+- 承認は `rig-wb govern approve grant <task-id>`（**著者本人の承認は数えない**）。束縛先は **accept が squash する branch の先端**であり、worktree の HEAD ではない。worktree を承認済みコミットに detach したまま branch を動かしても、その承認は数えない。
 - `--force` が要るときは、例外を先に取る（`rig-wb govern waiver grant`）。**理由と期限が必須**＝恒久例外はポリシー改定として扱う。
