@@ -398,11 +398,13 @@ lock は `pack lock drift: invalid metadata` で拒まれる。列を落とせ�
 
 #### 発端 — 3.0.0 は rig 自身のゲートを 1 度も通っていない
 
-台帳を読んだ。`.rig/runs.jsonl` は 3,571 件。backend は 1 件残らず `orchestrate`。recipe の上位は
-adaptive-bugfix 1,843 / writing 690 / japanese-writing 593（次いで dag 204・bugfix 112）。窓は
-`2026-09-09T15:52:13Z` から `2026-09-12T03:22:07Z` の 4 日。`invoker` は 3,450 件が `direct` で、
-`rig-wb/2.13.0` が 111、`rig-wb/3.0.0` が 10。pack を引いた記録は 0 件。**テスト用の走行が
-そのまま残った台帳であって、人が `/rig:go` を打った記録ではない。**
+台帳を読んだ。台帳は走行のたびに伸びるので、`ts` が `2026-09-12T07:26:48Z` 以前の記録だけを
+数える。その切り口で `.rig/runs.jsonl` は 4,119 件、うち 4,114 件の backend が `orchestrate`。
+recipe の上位は adaptive-bugfix 2,167 / writing 767 / japanese-writing 644（次いで dag 248・
+bugfix 144）。窓は `2026-09-09T15:52:13Z` から `2026-09-12T07:26:48Z`。`invoker` は 3,985 件が
+`direct` で、`rig-wb/2.13.0` が 111、`rig-wb/3.0.0` が 18。pack を引いた記録は 0 件。**テスト用の
+走行がそのまま残った台帳であって、人が `/rig:go` を打った記録ではない。** 残る 5 件は backend も
+`invoker` も `workbench`。下の「rig を rig に通した 5 本」がその 5 件にあたる。
 
 V3 の作業そのものがどう回ったかは、この台帳の外にある。調整役は各レーンを生の Agent ツールで
 直接ばらまいた。`go` も worktree も受け入れゲートも、1 度も走っていない。**自分のゲートを
@@ -410,11 +412,11 @@ V3 の作業そのものがどう回ったかは、この台帳の外にある�
 
 **決定: 3.x の残りは全部 `/rig:go` とゲートを通す。**
 
-この決定は既に効き始めている。本節を書いている時点で `.rig/runs/` は存在し、中身は 1 件、
+この決定は既に効き始めている。`.rig/runs/` の最初の 1 本は
 `rig-20260912-052246-sessionstart-hook-hooks-inject-t` である。task.json の `recipe` は
 `refactor`、`recipe_reason` は "task type `refactor` maps to the trusted core `refactor` workflow"。
-下の決定 1（hook の訂正）が、いま隔離 worktree の中で走っている run である。
-「`.rig/runs/` が無い」は測った時点では正しく、いまは正しくない。**この 1 件が、rig が rig を
+下の決定 1（hook の訂正）はこの run で走り、`71280de` として着地した。
+「`.rig/runs/` が無い」は測った時点では正しく、いまは正しくない。**この 1 本が、rig が rig を
 通した最初の run である。**
 
 退けた案: 3.x のあいだは今までどおり直接ばらまき、5 段が終わってから自分に掛ける案。ゲートに
@@ -429,13 +431,39 @@ V3 の作業そのものがどう回ったかは、この台帳の外にある�
 （`additionalContext` に載る指示文そのものは 851 バイト）を注入する。その文が名指すのは
 `rig:rig` が 1 回、`rig:talk` が 2 回、そして `SKILL.md` を読めという指示が 1 回。**`/rig:go` は
 0 回である。** README が最初に覚えろと言う名前が、常時前段にいる入口の文に 1 度も出てこない。
-さらに `skills/engine/SKILL.md` は 741 行 103,869 バイトで、hook はそれを読み終えるまで
+さらに `skills/engine/SKILL.md` は 742 行 104,492 バイトで、hook はそれを読み終えるまで
 読み手に何も言わせない。入口の名前が最初の 1 分で 4 つ（`rig:rig`・`rig:talk`・`/rig:go`・
 `SKILL.md`）現れる。
 
 訂正は 2 点。名指すのを `/rig:go` にすること、入口に要る分だけを先に読ませること。
 **talk 常時起動そのものは残す。** これは持ち主の実際の使い方であり、§6 のとおり talk は判定を
 持たないので determinism-by-gate とも衝突しない。直す対象は入口の名前と読ませる量である。
+
+読ませる量も測った。数え方は、見出しからその次の見出しの直前までを UTF-8 のバイトで数える。
+分母は SKILL.md 全体の 104,492 バイト。
+
+| 前倒しする | 範囲 | バイト |
+|---|---|---|
+| frontmatter | 先頭の `---` 囲み | 601 |
+| `NON-INTERACTIVE-STOP` | タグから `## 1. Overview` の直前まで | 1,061 |
+| §1 の入口 | `## 1. Overview` から `### 仕組み` の直前まで | 1,685 |
+| §6 の run-continuity | `### run-continuity` から `### **red flags` の直前まで | 8,696 |
+| **計** | | **12,043（全体の 11.5%）** |
+
+| 後回しにできる | 範囲 | バイト |
+|---|---|---|
+| §2 | `## 2. ブリック目録` から `## 3. PARSE` の直前まで | 25,235 |
+| §3.5 | `## 3.5.` から `## 4.` の直前まで | 7,671 |
+| §4 | `## 4.` から `## 5.` の直前まで | 8,482 |
+| §5 | `## 5.` から `## 6.` の直前まで | 11,727 |
+| **計** | | **53,115（全体の 50.8%）** |
+
+分けられない理由は Skill ツールの側ではない。`rig_workbench/validation/catalog.py` は
+SKILL.md を 3 か所で読む（`:57`・`:508`・`:633`）。§2 の切り出しは 2 か所。`:58` の
+`index("## 2.")` と、`:417` の `CATALOG_SECTION`。`grep -rl "SKILL.md" tests/*.py` は
+21 モジュールを返す。それを `xargs grep -l "read_text\|open("` に通すと 16 本、SKILL.md と
+同じ行で読むものに絞ると 5 本。中継された「14 本」は、どちらの数え方でも出ない。**だから前倒しは
+hook の 1 行では終わらず、T14 という別の run になる。**
 
 **2. workbench の assurance 一族は、消さずに単独のパッケージへ分ける。**
 
@@ -601,10 +629,10 @@ max-parallel の既定 3 は `orchestrate/queueing.py:519`——`:696` ではな
 
 | # | 目的（1 行） | 触るファイル | 検証 | 依存 | バケツ | 並列 |
 |---|---|---|---|---|---|---|
-| T0 | hook の指示文を `/rig:go` 名指しに直し、入口に要る分だけ先に読ませる | `hooks/inject-talk-mode.sh`・`skills/engine/SKILL.md` | `sh hooks/inject-talk-mode.sh` に `rig:rig` が出ず `/rig:go` が出る ＋ `pytest tests/test_first_run_cost.py -q` | — | 決 | 単独（実行中） |
-| T1 | `compose()` に「中継した測定値」節を足し、3 値を必須にする（検証テストは新設） | `rig_workbench/workbench/task_package.py`・`tests/test_task_package_provenance.py` | `pytest tests/test_task_package_provenance.py -q` | — | 足 | **P1** |
-| T2 | 並列 dispatch 前に「触るファイル」列を parse して重なりを拒む（parser と dispatch 前検査を `orchestrate/` に置き、検証テストは新設） | `rig_workbench/orchestrate/`・`facets/output-contracts/task-plan.md`・`tests/test_disjoint_dispatch.py` | `pytest tests/test_disjoint_dispatch.py -q` | — | 足 | **P1** |
-| T3 | recipe 26 枚の `acceptance:` 行を 34 基準に束ね、束ねられない行を `unobserved` と印す（検証テストは新設） | `skills/engine/recipes/*.md`・`tests/test_recipe_acceptance_binding.py` | `pytest tests/test_recipe_acceptance_binding.py -q` | — | 足 | **P1** |
+| T0 | hook の指示文を `/rig:go` 名指しに直し、入口に要る分だけ先に読ませる | `hooks/inject-talk-mode.sh`・`skills/engine/SKILL.md` | `sh hooks/inject-talk-mode.sh` に `rig:rig` が出ず `/rig:go` が出る ＋ `pytest tests/test_first_run_cost.py -q` | — | 決 | 単独（着地済み） |
+| T1 | `compose()` に「中継した測定値」節を足し、3 値を必須にする（検証テストは新設） | `rig_workbench/workbench/task_package.py`・`tests/test_task_package_provenance.py` | `pytest tests/test_task_package_provenance.py -q` | — | 足 | **P1**（着地済み） |
+| T2 | 並列 dispatch 前に「触るファイル」列を parse して重なりを拒む（parser と dispatch 前検査を `orchestrate/` に置き、検証テストは新設） | `rig_workbench/orchestrate/`・`facets/output-contracts/task-plan.md`・`tests/test_disjoint_dispatch.py` | `pytest tests/test_disjoint_dispatch.py -q` | — | 足 | **P1**（着地済み） |
+| T3 | recipe 26 枚の `acceptance:` 行を 34 基準に束ね、束ねられない行を `unobserved` と印す（検証テストは新設） | `skills/engine/recipes/*.md`・`tests/test_recipe_acceptance_binding.py` | `pytest tests/test_recipe_acceptance_binding.py -q` | — | 足 | **P1**（着地済み） |
 | T4 | `rig-wb list` / `review` をディスパッチ表から落とす | `rig_workbench/cli.py`・`tests/test_capability_registry_vs_cli.py` | `pytest tests/test_capability_registry_vs_cli.py tests/test_cli_surface_contract.py -q` | T1–T3 | 削 | **P2** |
 | T5 | `agents/` 固有の 2 枚を `facets/personas/` へ移し、残り 10 枚を落とす | `agents/*.md`・`skills/engine/facets/personas/`・`facets/instructions/parallel-review.md` | `pytest tests/test_brick_resolution_declaration.py -q` ＋ 31＋2 枚の解決を確認 | T1–T3 | 削 | **P2** |
 | T6 | `max-bugfix` を `bugfix` ＋ `checks:` のフラグに畳む | `skills/engine/recipes/max-bugfix.md`・`skills/engine/recipes/bugfix.md` | `pytest -q -k recipe` ＋ `wb route --type bugfix --json` が同じ recipe を返す | T3 | 削 | **P2** |
@@ -614,6 +642,8 @@ max-parallel の既定 3 は `orchestrate/queueing.py:519`——`:696` ではな
 | T10 | ヘルプに出ない 15 動詞を 1 本ずつ監査する（`approve`/`next`/`check`/`verdict` は人のゲートに触るので最後） | `rig_workbench/cli.py`・`tests/test_capability_registry_vs_cli.py` | `pytest tests/test_capability_registry_vs_cli.py -q` | T4 | 削 | 単独 |
 | T11 | D の 16 ファイル 7,872 行を `rig_workbench/workbench/` から単独パッケージへ切り出し、`pyproject.toml` の台帳を直す（切り出し先のパッケージ名は本ブリーフでは決めていない） | `rig_workbench/workbench/`・`pyproject.toml` | `pytest tests/test_architecture_inventory.py tests/test_layering_contract.py -q` ＋ 140 本の `--help` 差分 0 | T1–T3, T4 | 決 | 単独 |
 | T12 | 合成クラスタを `orchestrate/composition.py`（新設）へ出し、`providers ↔ runstate` の循環を落とす | `rig_workbench/orchestrate/providers.py`・`runstate.py`・`rig_workbench/orchestrate/composition.py` | `pytest tests/test_architecture_inventory.py -q` で循環 5→4 ＋ 全件緑 | T1–T3 | 決 | 単独 |
+| T13 | センサー付き基準の判定をセンサーに戻し、`--set` は測定と一致するときだけ受け付ける | `rig_workbench/workbench/lifecycle.py`・`rig_workbench/workbench/secrets.py`・`rig_workbench/workbench/hardening.py`・`rig_workbench/workbench/injection.py`・`rig_workbench/workbench/destructive.py`・`rig_workbench/workbench/anchors.py`・`rig_workbench/workbench/ja_prose.py`・`tests/test_gate_sensor_authority.py`・`tests/test_secret_scan.py`・`tests/test_tamper_sensor.py`・`tests/test_injection_scan.py`・`tests/test_destructive_scan.py`・`tests/test_anchor_sensor.py`・`tests/test_ja_prose_gate.py` | `pytest tests/test_gate_sensor_authority.py tests/test_first_run_cost.py -q` | — | 足 | 単独（着地待ち） |
+| T14 | `SKILL.md` の後回しにできる 4 節を参照ファイルへ出し、切り出す側と本文を読むテストを追随させる（T0 の後半） | `skills/engine/SKILL.md`・`rig_workbench/validation/catalog.py`・`tests/` | `pytest tests/test_skills_spec.py tests/test_docs_registry.py -q` ＋ 再測した行数とバイト数 | T0 | 決 | 単独（実行中） |
 
 **並列に置けるのは P1 の 3 本（T1・T2・T3）と P2 の 3 本（T4・T5・T6）である。** P1 は
 `workbench/task_package.py` / `orchestrate/` / `recipes/*.md` で 1 ファイルも重ならない。P2 は
@@ -621,6 +651,85 @@ max-parallel の既定 3 は `orchestrate/queueing.py:519`——`:696` ではな
 `lifecycle.py` を、T0 と T9 は `SKILL.md` を共有するので、直列に置く。**この表そのものが T2 の
 入力である。** 「触るファイル」列を書いておいて parse しないのでは、上で数えた `task-plan.md:17`
 と同じことを繰り返す。
+
+**T13 と T14 は、表を書いたあとに足した行である。** T13 は `workbench/` の 7 モジュールと
+その 7 本のテストに触り、P1 の 3 本とも T0 とも 1 ファイルも重ならない。T14 は `SKILL.md` を
+T0 と共有するので T0 に続ける。**id を `T0b` と書かなかったのは、T2 の読み手が `T<n>` 以外の
+id を読めないためである。** `orchestrate/plan_dispatch.py:142` の `^T\d+$` に外れた行は、
+読めなかった行として表ごと refuse される。番号を振り直すか読み手を広げるかは第 4 段で決める。
+
+#### rig を rig に通した 5 本
+
+T0・T1・T2・T3 と本ブリーフ自身の改稿は、`/rig:go` の workbench で走った。どれも隔離 worktree
+で実装し、ゲートを通してから base branch へ着地した。`.rig/runs.jsonl` に backend も `invoker` も
+`workbench` の記録が入ったのが、この 5 本。台帳の `backend` と `invoker` を引けば、この 5 件と
+残り 4,114 件を、いま初めて別々に数えられる。
+
+| run | 中身 | 着地 | ゲート |
+|---|---|---|---|
+| `rig-20260912-052246` | T0（hook の名指しを `/rig:go` に） | `71280de` | passed_with_warnings |
+| `rig-20260912-060330` | docs（3.x の表の触るファイル列を経路だけに） | `c5a8c8e` | passed |
+| `rig-20260912-053306` | T2（並列 dispatch の重なり検査） | `e85ab87` | passed_with_warnings |
+| `rig-20260912-053307` | T3（acceptance 行の束ね） | `0ce14a3` | failed。`--force` で着地 |
+| `rig-20260912-053305` | T1（`compose()` の中継測定値） | `dfdcf64` | passed |
+
+T3 が束ねたのは 152 項目。26 枚 29 ブロックの `acceptance:` が持つ項目数で、行に直すと 136 行
+（うち 8 行は inline list で、24 項目を載せる）。内訳は 78 項目が基準に束ね、74 項目が
+`unobserved`。いま数え直しても同じ数が出る。6 本目の run `rig-20260912-053818` は T13 で、
+commit は自分の branch に積まれたまま base branch には未着地。run の status は `running` で、
+台帳にも載っていない。
+
+**`--force` で着地したのは T3 だけである。** `prompt_regression_passed` は `--set` を受け付けない
+唯一の基準で、合否は機械 eval ゲートが決める。T3 の diff は `skills/engine/SKILL.md` に触れる。
+affected case は `style-persona-qiita-tech-writer` の 1 件。その case の `provider_policy` が
+要求する `min_isolation: os-enforced` を、この箱は満たさない。証拠は `rig-wb hostcheck` の
+`[MISS] process_isolation` の行。`.rig/audit.jsonl` に残ったのは 1 行で、action は
+`accept_force`、bypassed は `acceptance_gate_not_failed`、gate_status は `failed`。落ちた基準は
+`prompt_regression_passed` の 1 件、ts は `2026-09-12T07:26:47Z`。task.json と台帳の同じ run
+にも `forced: true` が載る。
+
+同じ run は、T13 の塞ぐ穴も使っている。T3 の acceptance.json では `no_secret_leak` が
+`secret_override: true` のまま passed で、検出 4 件はそこに残っている。センサーが見つけたものを
+宣言が上書きした形であり、T13 が止めるのはこれである。
+
+**変異テストをするレビューは、共有 worktree では他のレビューを騙す。** T3 では、同時に
+読んでいた側が変異を本物と見て REJECT を出した。スナップショットから読み直して撤回されている。
+run が残した diff.md に記録されている数は 2 本。3 本という中継された数は、run の記録からは
+裏が取れない。以後レビューは worktree を直接読まず、スナップショットから読む。
+
+**機械 eval ゲートの言葉を分けているのは、呼び方ではなく diff である。** 同じ base
+`5732531` から 3 通りに呼んだ。CLI の `--head <sha>`、CLI の `--head working`、そして
+in-process の `evaluate_gate`。3 つ目は `prompt_regression.py` が呼ぶ経路そのものを叩いている。
+3 つとも `infra_error` の exit 2 で、差は出ない。分かれるのは head の側だった。
+`71280de`（hook の 1 行）は `noop`、`e85ab87`（`task-plan.md`）は `debt`。
+`dfdcf64`（`SKILL.md` を含む）は `infra_error` を返す。そして `failed` は report の状態ではない。
+`prompt_regression.py:123` が exit code 非 0 のときチェックに書く語である（`debt` のときは
+warning に落とす）。**「呼び方で 3 通りに出る」は再現しない。**
+
+今日の `infra_error` の理由は `trusted attestation key is unavailable` で、accept 時に記録された
+provider 隔離とは別の理由。case を走らせられない点は変わらない。
+
+#### 各 run のレビューが残した先送り
+
+レビューは、直さずに残すと決めたものを名指しで残した。
+
+| run | 先送り | 実測 |
+|---|---|---|
+| T1 | `offset_timestamp` が末尾 `Z` の timestamp を拒む | `production_outcome.py:252` は `datetime.fromisoformat` のまま。python3.10.20 は `2026-09-12T07:00:00Z` を `ValueError`、3.11.15 は通す。`pyproject.toml:10` は `>=3.10` |
+| T1 | backtick 拒否が `reported` に過剰 | `task_package.py:161` は `source` 全体を拒むが、inline code span に入るのは `measured` の source だけで、`reported` の source は素の文に出る |
+| T2 | runtime の呼び出し元が無い | `plan_dispatch` を import するのは `tests/` だけで、production からは 0 件 |
+| T2 | glob 対 glob を比較しない | `plan_dispatch.py:72` が限界として明記している |
+| T3 | 経路の無いレシピは全プリセット語彙で判定される | `acceptance:` を持つ 26 枚のうち 17 枚が `ROUTED_GATE_CRITERIA` に無い（中継された 15 枚は再現しない）。語彙は 34 基準 |
+| T3 | `extends` の継承 step は親の経路で判定される | `recipes.py:716` が `ROUTED_GATE_CRITERIA.get(path.stem)` を渡す。該当は design-first → release-flow の 1 組だけ |
+| T3 | pack のレシピは `check_recipe` を通らない | `validation/cli.py:97` が見るのは `RECIPES.glob("*.md")` だけ。`packs/` 配下は 12 枚、うち `acceptance:` 持ちは 3 枚 |
+| T13 | `accept.py:156` の `gate_ok` が `skipped` を充足として数える | `status in ("passed", "passed_with_warnings", "skipped")` |
+| T13 | 退役した `--set` 迂回を案内する散文が残る | 6 ファイル 12 行。`README.md:234,236`・`README.ja.md:233,235`・`PACKS.md:31`・`workbench-ops.md:402,409,423,467,481`・`acceptance-check.md:68`・`japanese-textlint-rules.md:191` |
+
+**決定: 9 件を 2 / 5 / 2 に分ける。** `accept.py:156` の `gate_ok` が `skipped` を充足に数える穴は、
+T13 の着地直後に 1 run で塞ぐ。退役した `--set` 迂回を案内する 12 行も、続けて 1 run で塞ぐ。
+3.x の後段へ持ち越すのは 5 件。`offset_timestamp` の末尾 `Z`・backtick の過剰拒否・経路の無い
+17 枚・`extends` の継承 step・pack レシピの未検査である。runtime の呼び出し元が無い
+`plan_dispatch` と glob 対 glob の 2 件は、限界として記録したまま残す。
 
 #### 本節で直した、本ブリーフ自身の数値
 
@@ -630,7 +739,7 @@ max-parallel の既定 3 は `orchestrate/queueing.py:519`——`:696` ではな
 |---|---|---|
 | ゲート基準の数 | 34 | 宣言は 35 エントリ、異なり名は 34。差の 1 は `no_unrelated_refactor` が `bugfix` と `refactor` の両方に書かれているため。§4 の内訳の表（6 / 2 / 26）は異なり名で数えた 34 のままで正しい |
 | `README.md` | 1,270 行超 | 1,385 行 |
-| `skills/engine/SKILL.md` | 720 行 | 741 行 / 103,869 バイト |
+| `skills/engine/SKILL.md` | 720 行 | 742 行 / 104,492 バイト（T3 が §3.5 に 1 行足したあとの再測） |
 
 「`providers.py` は 3,645 行のまま触られていない」という記述は本ブリーフには無い。§3 と
 「前提・制約」の 3,644 行は着手時の値として正しく、今日の値 3,747 は上表に書いた。
