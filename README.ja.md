@@ -9,6 +9,8 @@
 
 > 🇬🇧 English version: [README.md](./README.md)
 
+> ⬆️ **2.x から上げる方は。** 3.0.0 は publisher 署名をまるごと削除しました。移行4パターンのうち3つは大きく失敗し、1つは黙って動きます——どれがどれかは [3.0.0 への移行](#300-への移行) にあります。
+
 ## 1. rig とは何か
 
 自然文でタスクを頼むだけでいい。rig がタスクの種類（バグ修正/機能追加/リファクタ/レビュー/ドキュメント/…）を判定し、必要なブリック（persona / instruction / pattern — LEGO 式の部品）を組み合わせてハーネスを合成し、**現在の作業ツリーとは隔離された git worktree**で作業し、明示的な**受け入れ基準**（意図の充足・無関係な差分がないか・リスク要約・テスト・型エラー・secret 漏洩がないか等）で検証し、`accept` が呼ばれるまで本体には一切触れない。「できました」という自己申告は完了の根拠にならない——根拠は常にゲートの合否。
@@ -42,20 +44,62 @@ rig は二つの考え方を、知ったうえで採用している。どちら�
 
 rig がその上に足しているのは**受け入れの判定**だ。決定論センサーを一次に置くこと、`accept` をコードが拒否すること、レビュアーの検出率を `/rig:drill` で測ること、失敗を型で記録すること。`docs/landscape.md` の一文で言えば、オーケストレータが「どう回すか」を決め、rig は「回った結果を受け入れてよいか」を決める。TAKT のようなオーケストレータと競合するのではなく、その後ろに置く層として設計している。
 
-## 2. インストール
+## 2. まず、やりたいことを言う
 
-入口は2つあり、用途が違います。多くの場合は1つ目です。
+rig の入口は1文です。Claude Code の中で：
 
-**Claude Code の中では、プラグイン。** `/rig:go` をはじめとするスラッシュコマンドはここから来ます。
+```bash
+/rig:go "ログインバグを直して"
+/rig:go "このPRを厳しめにレビューして"
+/rig:go "今の変更が安全か確認して"
+```
+
+最初はこれだけでいい——**設定ゼロ**：manifest も gates.json も persona 設定も不要、CLI のインストールも不要、結果が出る前にあなたが承認を求められることもない（すべて後から足す opt-in）。安全フローは箱から出してすぐ動く。裏側では、タスクを分類 → 対応する recipe を選択 → 隔離 worktree を作成（レビュー等の読み取り専用タスクは省略）→ 実装・テスト → acceptance-gate 判定 → 次アクションつきのサマリを返す:
+
+```
+/rig:go diff       # 何が変わったか、なぜ安全か（あるいは危ういか）を確認
+/rig:go accept     # 作業ツリーへ反映（gate が未達なら拒否される）
+/rig:go discard    # 試みを破棄（作業ツリーは最初から一切触れられていない）
+```
+
+**最初の1回のコストは、実測してあります。** `tests/test_first_run_cost.py` は
+`python3 scripts/workbench.py new "<task>" --type bugfix` を素の `git init` リポジトリで
+走らせます。条件は、`.claude/rig.md` なし、PATH のどこにも `rig-wb` なし、`RIG_ALLOW_*` の
+consent 変数はすべて除去、stdin は `/dev/null`。stdin を閉じるのは、人間への問いかけが
+待ちぼうけにならずその場で失敗するようにするためです。そのうえで exit 0 であること・
+何も聞かないこと・run がディスクに残ることを要求します。
+
+何も要求されない理由は、3本の随伴テストが固定しています。既定の `bugfix` ルートは同梱
+`core` tier の中で解決するので、承認すべき pack 信頼がそもそもありません。`rig-wb hostcheck`
+は助言的（exit 0 か 3）でゲートではありません。一度も承認していない `.claude/rig.md` は
+run を止めず、stderr の警告1行に縮退します。測っているのは **run を作るコマンド**であって、
+その後に続く全 step ではありません——後段の step がここで測っていないものを要求することは
+あり得ます。
+
+残っている前提は2つだけです：git リポジトリであること、`python3` があること。
+
+モデルに直接頼む場合と実際に何が変わるか：
+
+| | 直接頼む | rig 経由 |
+|---|---|---|
+| 失敗した変更 | 作業ツリーに残る | worktree ごと破棄——本体は無傷 |
+| 「できました」 | 信じるしかない | acceptance-gate の合否が根拠 |
+| レビューの質 | 不明 | `/rig:drill` が各 reviewer の検出率を実測 |
+| 何が起きたか | チャットログ | run log・監査証跡・再検証できる来歴 |
+
+## 3. インストール——プラグインは今、CLI は Claude Code の外が必要になったとき
+
+`/rig:go` をはじめとするスラッシュコマンドは Claude Code のプラグインから来ます。最初に2コマンドだけ：
 
 ```bash
 /plugin marketplace add itoh-shun/sito-plugins
 /plugin install rig@sito-plugins
 ```
 
-**それ以外の場所では、`rig-wb` CLI。** 同じ決定論エンジンを Claude Code のセッション外から
-動かすためのものです——CI、スクリプト、あるいは別のアシスタント（Codex / Cursor / Copilot）。
-`/rig:setup` が入れてくれるのもこれで、プラグインが計算的経路で委譲する先もこれです。
+**`rig-wb` CLI は2つ目の入口であって、入り方ではありません。** 同じ決定論エンジンを
+Claude Code のセッション外から動かすためのものです——CI、スクリプト、あるいは別の
+アシスタント（Codex / Cursor / Copilot）。入れるのは、セッションの外にあるものが同じ
+recipe とゲートに届く必要が出たときであって、始めるためではありません。
 
 ```bash
 pipx install git+https://github.com/itoh-shun/rig.git     # uv tool install / pip install でも可
@@ -67,35 +111,13 @@ rig-wb version
 比べ、黙って入れ替えることはしません。`/rig:setup --check` は何も入れずに検出だけします。
 
 両方は要りません。プラグインだけで安全フローは一通り動き、CLI だけで CI から回せます。
-2つ目が要るのは、Claude Code の外にあるものが同じ recipe とゲートに届く必要があるときです。
+
+**manifest（`.claude/rig.md`）も後の手順です。** プロジェクト既定値・知識層・CLAUDE.md の
+"Compact Instructions" が欲しくなったら `/rig:init` が scaffold します。それまでは manifest が
+無いリポジトリでも、一度も承認していない manifest があるリポジトリでも動きます（上の実測を参照）。
 
 その他の導入経路——このリポジトリ自身の marketplace から、ダウンロードから、開発用の
 `--plugin-dir`、Codex、MCP アダプタ——は §16 にあります。
-
-## 3. 30秒で使う
-
-```bash
-/rig:go "ログインバグを直して"
-/rig:go "このPRを厳しめにレビューして"
-/rig:go "今の変更が安全か確認して"
-```
-
-最初はこれだけでいい——**設定ゼロ**：manifest も gates.json も persona 設定も不要（すべて後から足す opt-in）。安全フローは箱から出してすぐ動く。裏側では、タスクを分類 → 対応する recipe を選択 → 隔離 worktree を作成（レビュー等の読み取り専用タスクは省略）→ 実装・テスト → acceptance-gate 判定 → 次アクションつきのサマリを返す:
-
-```
-/rig:go diff       # 何が変わったか、なぜ安全か（あるいは危ういか）を確認
-/rig:go accept     # 作業ツリーへ反映（gate が未達なら拒否される）
-/rig:go discard    # 試みを破棄（作業ツリーは最初から一切触れられていない）
-```
-
-モデルに直接頼む場合と実際に何が変わるか：
-
-| | 直接頼む | rig 経由 |
-|---|---|---|
-| 失敗した変更 | 作業ツリーに残る | worktree ごと破棄——本体は無傷 |
-| 「できました」 | 信じるしかない | acceptance-gate の合否が根拠 |
-| レビューの質 | 不明 | `/rig:drill` が各 reviewer の検出率を実測 |
-| 何が起きたか | チャットログ | run log・監査証跡・署名付き来歴 |
 
 ## 4. メイン入口
 
@@ -1111,6 +1133,86 @@ rig は人よりも**別のハーネス**から起動されることが増えて
 - **深さには答えません** — Claude Code は subagent のシェルに親と同じ変数を渡すため、rig は「どのハーネスが呼んだか」は言えても「どの深さから呼んだか」は言えません。フィールド自体を置いていません。`rig-wb wb context` が dispatch 率を報告しないのと同じ理由です
 
 **これは hint です。** runtime と reviewer の選択には使ってよく、**品質ルールを分岐させることは決してありません**。あるハーネスに対してだけ緩むゲートはゲートではなく、しかも誰も見ていない場所で緩みます。ゲートや acceptance の経路がこれを読んでいないことを、テストが構造的に検査します。
+
+## 3.0.0 への移行
+
+**3.0.0 は publisher 署名の仕組みをまるごと削除しました。** `pack sign`・`pack keygen`・署名検証・
+trust root・鍵生成・失効・`cryptography` 依存、そして install 時の署名必須とその逃げ道
+`--allow-unverified` は、すべて無くなっています。
+
+### この移行はあなたに影響するか
+
+4つの状況を、推論ではなくこのブランチで実測しました。効く区別は
+**大きく失敗する**（すぐ気づく）か、**黙って動く**（何も壊れず、何も知らされない）かです。
+
+| あなたの状況 | 3.0.0 の挙動 | 大きく失敗 / 黙って動く |
+|---|---|---|
+| 署名済み pack が install 済みで、`pack.lock.json` が `verified-publisher` と publisher 2列の両方を持つ | 従来どおり解決も install もできる。status は読み戻され `pack list` / `pack info` に出続けるが、それを検証するものはもう無い | **黙って動く** |
+| lock が `verified-publisher` なのに `publisher_key_id` と `signed_digest` が null | `PackError: pack lock drift: invalid publisher trust for <id>` が**解決経路から**上がり、`pack` 系コマンドに留まらず tier 全体が落ちる。ただし **2.x はこの組み合わせを書きません**——status と2列は一緒に作られるか、どちらも作られないかのどちらかなので、この状態の lock は手で編集されたもの | **大きく失敗する** |
+| スクリプトや CI ジョブの `--allow-unverified` | exit 2、`rig-wb pack: error: unrecognized arguments: --allow-unverified` | **大きく失敗する** |
+| パイプラインの `pack sign` / `pack keygen` | exit 2、`rig-wb pack: error: argument command: invalid choice: 'sign'` | **大きく失敗する** |
+
+4つのうち3つは自分から名乗ります。名乗らない1つは、何も壊れていない場合です——pack は
+install でき、解決でき、記録したラベルを報告し続ける。だからこそ「見つけてもらう」のではなく
+ここに書いてあります。
+
+**やること。** スクリプトと CI から `--allow-unverified` を消す（「それでも install する」という
+意味の指定であり、それが今では唯一の挙動です）。`pack sign` / `pack keygen` の step を消す
+（作るものがもうありません）。`pack.lock.json` は触らなくて構いません——移行は不要です。
+
+### 新規 install が記録するもの
+
+install が書く `verification_status` は `verified-local` か `unverified` の2値で、pack 自身の
+証拠から決まります。prompt 資産を持たない pack はそれだけで `verified-local`。持つ pack が
+`verified-local` になるのは、所有する全 eval case について attest 済みの `current` 結果が
+ちょうど1本あり、その provider が `mock` / `command` ではない実 provider で、case に対する
+failure が無いときだけです。それ以外は `unverified`。3段目が無いのは、3段目が署名だったからです。
+
+`verification_status` と、受け付ける3値（`verified-publisher` を含む）と、publisher 2列は、
+**意図して** `pack.lock.json` に残してあります。解決経路は **fail-closed** です：`verified-publisher`
+を受理集合から外すと古い lock が `invalid metadata` で拒否され、2列のどちらかを落とすと
+**すべての** lock が `invalid entry` で拒否される。しかもその失敗は `pack` 系コマンドに留まらず、
+persona・recipe・wiki の解決が通る経路から出ます。死んだフィールドを3つ抱えるコストはゼロで、
+消せば pack と無関係な run で既存ユーザーが壊れます。
+
+### 何を手放したのか
+
+pack のバイトを著者に結びつけるものは、もう何もありません。その結びつきは、**最初の入手時**——
+見たことのない pack を手にして、走らせてよいか決める瞬間——に効く唯一の保護でした。ハッシュ鎖は
+その代わりにはなりません。ハッシュ鎖が証明するのは install の**あと**に何も変わっていないことで、
+問いが別だからです。最初に何を install したかについては何も言いません。失効に至っては、
+仕組みそのものが残っていません——失効させる鍵も、失効リストを参照する経路もありません。
+
+残っているものは、あった頃より少ないからこそ正確に名指しておきます。
+
+- **trust-on-first-use（初回使用時の同意）** — project / user tier の資産は、その command / recipe
+  の本文が走る前に同意される。資産ごと・tier ごと・内容ハッシュに紐づけて記録される
+  （`--allow-project-packs`、`RIG_ALLOW_PROJECT_PACKS=1`）。検証する署名ではなく、読める素材に対して
+  あなたが下す判断です
+- **ハッシュ鎖** — 各資産のハッシュを install 時に記録し解決時に再検査するので、承認したあとに
+  編集された pack は拒否される（`hash mismatch` / `lock drift`）
+- **宣言ドリフトの検証** — lock の構造・pack の同一性・manifest digest・宣言された資産ハッシュを、
+  解決のたびに構造的に検査する
+
+### そのほかの利用者から見える変更
+
+- **`rig-wb ja-lint` と `rig-wb wb scan-ja-prose` が増えました。** 前者は stdlib のみの
+  textlint-ja 相当センサーで日本語の散文を検査し、後者は acceptance gate が追加行に対して
+  見ている所見を表示します
+- **workbench の失敗は exit 1 ではなく exit 2 になりました。** `exitcodes.py` は以前から
+  `1 = rig が判定して否と言った` / `2 = rig が答えを出せなかった` と約束していましたが、
+  `wb …` の失敗はすべて 1 を返していました。実測：`wb route --type <未知>` と、壊れた
+  `.rig/gates.json` に対する `wb gates` が、いずれも 1 → 2 へ動いています。exit 1 は
+  **判定**（acceptance gate 不合格・ガバナンスのブロック・スキャナの所見）だけになりました。
+  **exit 1 を「rig が拒否した」として分岐していた CI ジョブは 2 を期待し直す必要があります。**
+  （壊れた `pack.yaml` に対する `rig-wb pack validate` は本リリース以前から exit 2 で、
+  これは動いていません）
+- **`govern policy show --json` に `schema` フィールドが増えました**（値は `rig.effective-policy/v1`）
+- **consent フラグは、本当にそのプロセス自身のオプションである場所でしか効かなくなりました。**
+  以前の判定は `"--allow-project-packs" in sys.argv` で、argv にはタスク題名・`--goal` の本文・
+  pack へ転送される引数までが載ります。`--allow-project-packs` を含むタスク題名は——裸の `--` の
+  後ろに置かれた同じフラグや、自由記述オプションの値として現れた同じフラグも——project tier の
+  資産に信頼を与えなくなりました
 
 ## ドキュメント
 

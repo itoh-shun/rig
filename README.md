@@ -9,6 +9,8 @@
 
 > 🇯🇵 日本語版は [README.ja.md](./README.ja.md) を参照。
 
+> ⬆️ **Coming from 2.x?** 3.0.0 removes publisher signing entirely. Three of the four upgrade situations fail loudly and one works silently — [Upgrading to 3.0.0](#upgrading-to-300) says which is which.
+
 ## 1. What is rig?
 
 You describe a task in plain language. rig figures out what kind of task it is (bugfix / feature / refactor / review / docs / …), composes the harness it needs (`facets/personas/instructions/patterns` — LEGO-style bricks), runs the work in a **git worktree isolated from your working tree**, checks it against explicit **acceptance criteria** (build/lint/tests, no unrelated diff, no secret leak, findings labeled with severity, …), and only touches your real branch when you explicitly `accept`. "It says it's done" is never the bar — the gate is.
@@ -42,21 +44,60 @@ Two ideas in rig are adopted knowingly, and both are [nrslib](https://zenn.dev/n
 
 What rig adds on top is the **acceptance decision**: deterministic sensors first, an `accept` that code can refuse, reviewer detection rates measured by `/rig:drill`, failures recorded as typed codes. In the words of `docs/landscape.md`: an orchestrator decides how work runs, rig decides whether the result is trustworthy enough to accept. It is designed to sit behind an orchestrator such as TAKT, not to compete with one.
 
-## 2. Install
+## 2. Start by saying what you want
 
-Two entry points, for two different jobs. Most people want the first one.
+rig's front door is a sentence. In Claude Code:
 
-**In Claude Code — the plugin.** This is what `/rig:go` and every other slash command come
-from.
+```bash
+/rig:go "fix the login bug"
+/rig:go "review this PR strictly"
+/rig:go "check my current changes are safe"
+```
+
+That is the whole of a first run — **zero configuration**: no manifest, no gates.json, no persona setup, no CLI install, and no approval asked of you before you see a result. Those are all later opt-ins; the safety flow works out of the box. Behind the scenes: rig classifies the task, picks the matching recipe, opens an isolated worktree (skipped for read-only tasks like reviews), implements + tests, runs the acceptance-gate, and hands you back a summary with next steps:
+
+```
+/rig:go diff       # see what changed, and why it's safe (or not)
+/rig:go accept     # bring the change into your working tree (blocked if the gate hasn't passed)
+/rig:go discard    # throw the attempt away — your working tree was never touched
+```
+
+**What a first run actually costs, measured.** `tests/test_first_run_cost.py` drives
+`python3 scripts/workbench.py new "<task>" --type bugfix` in a plain `git init` repository —
+no `.claude/rig.md`, no `rig-wb` anywhere on PATH, every `RIG_ALLOW_*` consent variable
+removed, stdin at `/dev/null` so a question meant for a human fails loudly instead of
+hanging — and requires that it exit 0, ask nothing, and leave a run on disk. Three companion
+tests pin why nothing is demanded: the default `bugfix` route resolves inside the shipped
+`core` tier, where there is no pack trust to approve; `rig-wb hostcheck` is advisory
+(exit 0 or 3), never a gate; and a `.claude/rig.md` you have never consented to degrades to
+one warning on stderr rather than stopping the run. What it measures is the command that
+creates a run, not every step that can follow one — a later step may still want something
+this does not cover.
+
+The prerequisites left are two: be a git repository, and have `python3`.
+
+What actually changes versus asking the model directly:
+
+| | asking directly | through rig |
+|---|---|---|
+| a failed attempt | litters your working tree | discarded with its worktree — your tree untouched |
+| "it's done" | you take the model's word | the acceptance-gate's verdict is the evidence |
+| review quality | unknown | measured — `/rig:drill` scores each reviewer's real detection rate |
+| what happened | a chat log | run log, audit trail, a provenance record you can re-verify |
+
+## 3. Install — the plugin now, the CLI when something outside Claude Code needs it
+
+`/rig:go` and every other slash command come from the Claude Code plugin. Two commands, once:
 
 ```bash
 /plugin marketplace add itoh-shun/sito-plugins
 /plugin install rig@sito-plugins
 ```
 
-**Everywhere else — the `rig-wb` CLI.** The same deterministic engine, driven from outside a
-Claude Code session: CI, a script, or another assistant (Codex, Cursor, Copilot). It is what
-`/rig:setup` installs for you, and what the plugin delegates to for the computational path.
+**The `rig-wb` CLI is the second entry point, and it is not the way in.** It is the same
+deterministic engine driven from outside a Claude Code session: CI, a script, or another
+assistant (Codex, Cursor, Copilot). Install it when something outside the session has to
+reach the same recipes and gates — not to get started.
 
 ```bash
 pipx install git+https://github.com/itoh-shun/rig.git     # or: uv tool install / pip install
@@ -69,36 +110,15 @@ rather than merely checking that something is there, and never swaps one for the
 silently. `/rig:setup --check` detects and reports without installing anything.
 
 You do not need both. The plugin alone runs the whole safety flow; the CLI alone drives it
-from CI. Install the second when something outside Claude Code has to reach the same recipes
-and gates.
+from CI.
+
+**The project manifest (`.claude/rig.md`) is also a later step.** `/rig:init` scaffolds it
+when you want project defaults, a knowledge layer, or the CLAUDE.md "Compact Instructions"
+section — and until then a repository without one, or with one you have never consented to,
+still runs (see the measurement above).
 
 Other install routes — installing directly from this repo's own marketplace, from a
 download, `--plugin-dir` for development, Codex, and the MCP adapters — are in §16.
-
-## 3. 30-second start
-
-```bash
-/rig:go "fix the login bug"
-/rig:go "review this PR strictly"
-/rig:go "check my current changes are safe"
-```
-
-That's the whole surface for a first run — **zero configuration**: no manifest, no gates.json, no persona setup. Those are all later opt-ins; the safety flow works out of the box. Behind the scenes: rig classifies the task, picks the matching recipe, opens an isolated worktree (skipped for read-only tasks like reviews), implements + tests, runs the acceptance-gate, and hands you back a summary with next steps:
-
-```
-/rig:go diff       # see what changed, and why it's safe (or not)
-/rig:go accept     # bring the change into your working tree (blocked if the gate hasn't passed)
-/rig:go discard    # throw the attempt away — your working tree was never touched
-```
-
-What actually changes versus asking the model directly:
-
-| | asking directly | through rig |
-|---|---|---|
-| a failed attempt | litters your working tree | discarded with its worktree — your tree untouched |
-| "it's done" | you take the model's word | the acceptance-gate's verdict is the evidence |
-| review quality | unknown | measured — `/rig:drill` scores each reviewer's real detection rate |
-| what happened | a chat log | run log, audit trail, signed provenance |
 
 ## 4. Main entrypoint
 
@@ -1254,6 +1274,92 @@ Three properties, because a hint that overstates itself is worse than none:
 - **Depth is not answered.** Claude Code hands a subagent's shell the same variables as the parent's, so rig can say *which* harness invoked it and not *at what depth*. There is no field for one, for the same reason `rig-wb wb context` reports no dispatch rate.
 
 **It is a hint.** It may inform runtime and reviewer selection; it never branches the quality rules. A gate that softens for one harness is not a gate, and it would soften exactly where nobody is watching — so the test suite checks structurally that no gate or acceptance path reads it.
+
+## Upgrading to 3.0.0
+
+**3.0.0 removes publisher signing entirely.** `pack sign`, `pack keygen`, signature
+verification, trust roots, key generation, revocation, the `cryptography` dependency, and
+the install-time signature requirement with its `--allow-unverified` escape hatch are all
+gone.
+
+### Does this upgrade touch you?
+
+Four situations, each one measured against this branch rather than reasoned about. The
+distinction that matters is **fails loudly** (you find out immediately) versus **works
+silently** (nothing breaks, and nothing tells you anything changed).
+
+| your situation | what 3.0.0 does | loud or silent |
+|---|---|---|
+| a signed pack is installed, and `pack.lock.json` says `verified-publisher` with both publisher columns filled in | resolves and installs exactly as before. The status is still read back and still reported by `pack list` / `pack info` — but nothing verifies it any more | **works silently** |
+| the lock says `verified-publisher` with `publisher_key_id` and `signed_digest` null | `PackError: pack lock drift: invalid publisher trust for <id>`, raised out of the resolve path, so the whole tier fails — not just `pack` verbs. **2.x never wrote this combination**: the status and the two columns were produced together or not at all, so a lock that has it was hand-edited | **fails loudly** |
+| `--allow-unverified` in a script or CI job | exit 2, `rig-wb pack: error: unrecognized arguments: --allow-unverified` | **fails loudly** |
+| `pack sign` or `pack keygen` in a pipeline | exit 2, `rig-wb pack: error: argument command: invalid choice: 'sign'` | **fails loudly** |
+
+Three of the four announce themselves. The one that does not is the one where nothing is
+broken — the pack still installs, still resolves, still reports the label it recorded —
+which is why it is stated here rather than left to be discovered.
+
+**What to do.** Delete `--allow-unverified` from scripts and CI (it was only ever a way of
+saying "install this anyway", which is now the only behaviour). Delete `pack sign` /
+`pack keygen` steps; there is nothing for them to produce. Leave `pack.lock.json` alone —
+it needs no migration.
+
+### What new installs record
+
+An install now writes `verification_status` as `verified-local` or `unverified`, computed
+from the pack's own evidence: a pack carrying no prompt assets is `verified-local` outright,
+and one that does carry them is `verified-local` only when every owned eval case has exactly
+one attested `current` result, from a real provider rather than `mock`/`command`, with no
+failures against the case. Anything else is `unverified`. No third rung remains, because the
+third rung was the signature.
+
+`verification_status`, its three accepted values — `verified-publisher` included — and both
+publisher columns stay in `pack.lock.json` on purpose. The resolve path is **fail-closed**:
+dropping `verified-publisher` from the accepted set refuses an older lock as
+`invalid metadata`, and dropping either column refuses *every* lock as `invalid entry`, and
+neither failure is confined to `pack` verbs — it comes out of the resolve path that persona,
+recipe and wiki lookup all go through. Keeping three dead fields costs nothing; removing
+them would break existing users on a run that has nothing to do with packs.
+
+### What you give up, stated plainly
+
+Nothing binds pack bytes to an author any more. That binding was the only protection that
+worked at **first acquisition** — the moment you have a pack you have never seen before and
+have to decide whether to run it. The hash chain does not replace it: it proves nothing
+changed *after* install, which is a different question, and it has nothing to say about what
+you installed in the first place. Revocation has no mechanism left at all — there is no key
+to revoke and nothing that would consult a revocation list.
+
+What is left, and it is worth naming exactly because it is less than what was there:
+
+- **Trust on first use.** A project- or user-tier asset is consented to before its
+  command/recipe body runs — per asset, per tier, recorded against the content hash
+  (`--allow-project-packs`, `RIG_ALLOW_PROJECT_PACKS=1`). Consent is a decision you make
+  about material you can read, not a signature you check.
+- **The hash chain.** Every asset's hash is recorded at install and re-checked on resolve, so
+  a pack edited after you accepted it is refused (`hash mismatch` / `lock drift`).
+- **Declaration-drift validation.** The lock's structure, the pack's identity, its manifest
+  digest and its declared asset hashes are all checked structurally on every resolve.
+
+### Smaller user-visible changes
+
+- **`rig-wb ja-lint` and `rig-wb wb scan-ja-prose` are new.** The first lints Japanese prose
+  with the stdlib-only textlint-ja-equivalent sensor; the second shows the findings the
+  acceptance gate sees on added lines.
+- **A workbench failure exits 2, not 1.** `exitcodes.py` has always promised
+  `1 = rig judged this and said no` and `2 = rig could not produce an answer`, but every
+  `wb …` failure took 1. Measured: `wb route --type <unknown>` and `wb gates` on a malformed
+  `.rig/gates.json` both moved 1 → 2. Exit 1 is now only a verdict — a failed acceptance
+  gate, a governance block, a scanner finding. **A CI job branching on exit 1 as "rig
+  refused" must now expect 2.** (`rig-wb pack validate` on a broken `pack.yaml` was exit 2
+  before this release and still is — that one did not move.)
+- **`govern policy show --json` gains a `schema` field**, carrying
+  `rig.effective-policy/v1`.
+- **A consent flag is honoured only where it is genuinely an option of the process.** The
+  check used to be `"--allow-project-packs" in sys.argv`, and argv carries task titles,
+  `--goal` bodies and arguments forwarded to a pack. A task title that happens to contain
+  `--allow-project-packs` — or the flag after a bare `--`, or as the value of a free-text
+  option — no longer grants trust to a project-tier asset.
 
 ## Docs
 

@@ -19,6 +19,27 @@ run は何も行わないまま終わる。与えられたタスクを、それ�
 
 ## 1. Overview
 
+### 入口——まず、やりたいことを言う
+
+rig の入口は1文である。**`/rig:go "<やりたいこと>"`**（Codex では `$rig "<やりたいこと>"`）。
+会話からの起動が base であり、CLI はその下にある実行系であって入口ではない。
+
+自然文を受け取ったら、まずこの経路に載せる。**`rig-wb` のインストールや `/rig:setup` を
+先に要求してはならない**——CLI が要るのは Claude Code の外（CI・スクリプト・別アシスタント）から
+同じ recipe とゲートに届く必要が出たときであって、最初の1回ではない。manifest
+（`.claude/rig.md`・`/rig:init`）と pack 信頼の承認も同じく後から足す opt-in である。
+
+最初の1回に要るのは **git リポジトリであることと `python3` があること**の2つだけ。これは主張では
+なく測定で、`tests/test_first_run_cost.py` が固定している：素の `git init` リポジトリ
+（manifest なし・PATH に `rig-wb` なし・`RIG_ALLOW_*` なし・stdin は `/dev/null`）で
+`python3 scripts/workbench.py new "<task>" --type bugfix` が exit 0 を返し、人に何も聞かず、
+run をディスクに残すこと。併せて、既定 `bugfix` ルートが同梱 `core` tier で解決すること
+（承認すべき pack 信頼が無い）・`hostcheck` が助言的でゲートではないこと・未承認 manifest が
+警告1行に縮退することも固定されている。**測っているのは run を作るコマンドであって、
+後続の全 step ではない**——後段が別のものを要求することはあり得る。
+
+### 仕組み
+
 ブリック（facet / pattern / step / agent / recipe）を**起動時に組み合わせて**タスク専用のエージェント・ハーネスを engineering する、レゴ式ハーネス・コンポーザ。固定ワークフローではなく **PARSE → RESOLVE → COMPOSE → RUN** の4段で都度ハーネスを合成する。intake→design→implement→verify→review→pr→merge の「3-Stage フルフロー」は数ある recipe の1つにすぎない。
 
 **determinism-by-gate**: 非決定的な agent 実行を決定的な受け入れゲート（`patterns/acceptance-gate`）で挟み、経路は変動しても**毎回同じ品質**へ収束させる。これが rig の品質保証の核。
