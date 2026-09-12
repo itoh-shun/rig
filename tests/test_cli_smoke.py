@@ -66,10 +66,14 @@ def run_cli(args, tmp_path):
     )
 
 
-def run_rig_wb(args, tmp_path):
+def run_rig_wb(args, tmp_path, first_on_path=None):
+    """`rig-wb` as a process. `first_on_path` goes in front of the repo on PYTHONPATH,
+    which is how a test shadows a module the child would otherwise import."""
     env = dict(
         os.environ,
-        PYTHONPATH=os.pathsep.join(filter(None, [str(REPO_ROOT), os.environ.get("PYTHONPATH")])),
+        PYTHONPATH=os.pathsep.join(filter(None, [
+            str(first_on_path) if first_on_path else None,
+            str(REPO_ROOT), os.environ.get("PYTHONPATH")])),
     )
     return subprocess.run(
         [sys.executable, "-m", "rig_workbench.cli", *args],
@@ -884,6 +888,85 @@ def test_bench_help_precedes_paid_provider_validation(tmp_path):
     assert "--allow-paid-provider" in result.stdout
 
 
+# ── `validate --help` answers instead of validating ──────────────────────────
+
+
+#: A module named `yaml` that cannot be imported, to put in front of the real one. The
+#: validator's first act is `require_yaml()`, so a child with this on its path cannot run
+#: a validation at all — which is what makes "it answered anyway" a measurement rather
+#: than an inference. Pointing the cwd somewhere empty proves nothing on its own: the
+#: tree the validator reads is resolved from the package's own location
+#: (`validation/config.py`'s ROOT), not from where it was run.
+_NO_PYYAML = 'raise ImportError("no PyYAML on this path")\n'
+
+
+@pytest.mark.parametrize("flag", ["--help", "-h"])
+def test_validate_help_prints_usage_without_running_the_validator(flag, tmp_path):
+    """Measured before it was fixed: `rig-wb validate --help` ignored the flag as an
+    unrecognised argument and ran the whole validator — 92 lines of report, `PASS: 71 /
+    WARN: 15 / FAIL: 0`, about 1.3 seconds of walking the tree, and an exit 0 that meant
+    "no FAIL" rather than "here is how to use this".
+
+    The control arm is the point of the shape: the same command without `--help`, in the
+    same environment, exits 1 because it cannot even reach a check. So the usage this
+    prints was not produced by a validation run that happened to be quiet — the absence
+    of the report header and of any `[PASS]` line is what a *not-run* validator looks
+    like, and here it is the only thing that could have happened."""
+    sabotage = tmp_path / "no-pyyaml"
+    sabotage.mkdir()
+    (sabotage / "yaml.py").write_text(_NO_PYYAML, encoding="utf-8")
+
+    result = run_rig_wb(["validate", flag], tmp_path, first_on_path=sabotage)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.startswith("usage: rig-wb validate"), result.stdout
+    assert "rig --validate report" not in result.stdout
+    assert "[PASS]" not in result.stdout and "PASS: " not in result.stdout
+    assert result.stderr == "", result.stderr
+    # Short enough to read where it is printed: the manual is the point of the defect.
+    assert len(result.stdout.splitlines()) <= 15, result.stdout
+
+    blocked = run_rig_wb(["validate"], tmp_path, first_on_path=sabotage)
+    assert blocked.returncode == 1, (
+        "the control arm was supposed to be unable to validate in this environment, and "
+        f"it exited {blocked.returncode}. Without that, the assertions above say only "
+        f"that `--help` printed usage.\n{blocked.stdout}{blocked.stderr}")
+    assert "PyYAML not found" in blocked.stdout, blocked.stdout
+
+
+def test_validate_help_wins_over_the_verb_beside_it(tmp_path):
+    """`validate selftest --help` asks for usage and gets it, not the golden run."""
+    result = run_rig_wb(["validate", "selftest", "--help"], tmp_path)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.startswith("usage: rig-wb validate"), result.stdout
+
+
+def test_validate_help_reads_nothing_and_needs_nothing(monkeypatch):
+    """The same claim in process, where it can be checked rather than inferred.
+
+    Every check the validator runs appends to `validation.state.results`, so an empty
+    list after the call is "no check ran". The tripwire on `require_yaml` is the other
+    half: `--help` is answered before the pillar's one optional dependency is even
+    asked for, so it still answers on a machine that cannot import PyYAML."""
+    from rig_workbench.validation import cli as validation_cli
+    from rig_workbench.validation import state as validation_state
+
+    def unreachable():
+        raise AssertionError("`--help` reached the validator's dependency guard")
+
+    monkeypatch.setattr(validation_cli, "require_yaml", unreachable)
+    validation_state.results.clear()
+
+    said = []
+    status = validation_cli.cmd_validate(
+        ["--help"], out=type("R", (), {"out": lambda _s, text="": said.append(text)})())
+
+    assert status == 0
+    assert said[0].startswith("usage: rig-wb validate")
+    assert validation_state.results == []
+
+
 def test_duplicate_provider_options_are_rejected_before_benchmark(monkeypatch):
     from rig_workbench import bench
 
@@ -1033,6 +1116,34 @@ def test_no_args_prints_usage_and_exits_zero(tmp_path):
     assert r.stdout.strip()  # usage text emitted (wording not asserted)
 
 
+# ── a run-state that is not there ────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("command", ["status", "resume"])
+def test_a_missing_run_state_is_one_line_on_the_shim_only_verbs(command, tmp_path):
+    """The two verbs `rig-wb` does not dispatch, driven through the shim that does.
+
+    `status` and `resume` are not in `rig_workbench/cli.py`'s `_orch_delegates`, so
+    `rig-wb status` answers "Unknown sub-command" and always did; nothing here changes
+    that, and fixing a crash is no reason to widen the advertised surface. They reach
+    the same `_state_path` through `scripts/orchestrate.py`, where they crashed the same
+    way as the four `rig-wb` does dispatch — a `FileNotFoundError` traceback out of
+    `load_state`, exit 1 on this entry point.
+
+    `tests/test_exit_code_surface.py` pins the `rig-wb` spellings; this pins the two that
+    have only this one, or the two entry points disagree about what an absent file
+    means."""
+    result = run_cli([command], tmp_path)
+
+    assert "Traceback" not in result.stderr, result.stderr
+    assert result.returncode == 2, result.stdout + result.stderr
+    said = [line for line in result.stdout.splitlines() if line.strip()]
+    assert len(said) == 1 and said[0].startswith("[ERROR]"), result.stdout
+    # Reached through the shim, so the remedy naming a verb rather than `rig-wb init`
+    # is the half of the refusal this entry point is the reason for.
+    assert "init <recipe.md>" in said[0], result.stdout
+
+
 # ── `--help` has to answer, on every command ─────────────────────────────────
 
 
@@ -1058,74 +1169,80 @@ def test_help_answers_instead_of_dying_on_a_filename(command, tmp_path):
     assert result.stdout.strip(), "--help printed nothing"
 
 
-@pytest.mark.parametrize("command", ["verdict", "approve", "next", "check"])
+@pytest.mark.parametrize("command", _orchestrator_commands())
 def test_help_prints_that_command_and_not_the_whole_manual(command, tmp_path):
     """Sliced out of the module docstring, which is the only place this usage is written. A
     second copy would be a second thing to keep true — and the reason `--help` was worth
-    fixing is that nobody had checked the first copy against the code."""
+    fixing is that nobody had checked the first copy against the code.
+
+    Parametrised over the whole dispatch table since `models`, `probe` and `queue` were
+    given the docstring entries they had never had; before that, four commands were named
+    here because they were the only ones this could be asserted of."""
     result = run_cli([command, "--help"], tmp_path)
 
     assert result.stdout.lstrip().startswith(command)
     assert "computational orchestrator" not in result.stdout
 
 
-# Commands `_usage_for` (rig_workbench/orchestrate/cli.py) has nothing to slice for,
-# because the module docstring it slices never listed them. Each answers `--help` with the
-# whole ninety-line docstring instead of its own usage. Measured through the process, not
-# read off the source.
-#
-# `queue` is what makes this a defect rather than a curiosity: it is advertised in
-# `rig-wb --help`, so a person is invited to type it and then handed the manual. The fix
-# owed is to `_usage_for`, or to the docstring it slices, and it is owed to all three names
-# equally. Until it is paid this test says so out loud — the previous shape of this
-# knowledge was a comment treating the fallback as a reason to keep `models` and `probe`
-# out of the help text, and `queue` had been standing in the help text the whole time
-# disproving it.
-COMMANDS_WHOSE_HELP_IS_STILL_THE_WHOLE_MANUAL = frozenset({"models", "probe", "queue"})
+#: The longest usage any one verb has, in lines: `plan`, whose entry carries `--json`,
+#: `--with`, `--diff-lines` and `--diff-git` with a sentence each. Measured through the
+#: process over all twenty-one verbs — the next longest are `otel` at 7 and `queue` and
+#: `run` at 6. The number is here so that a verb answering with a page again fails, which
+#: is what `models`, `probe` and `queue` did at 89 lines apiece.
+LONGEST_USAGE_LINES = 9
 
 
-def test_the_commands_the_usage_slicer_cannot_slice_are_exactly_the_three_it_misses(
-        tmp_path):
-    """The known defect, pinned as a set so it cannot grow or shrink unnoticed.
+def test_every_registered_verb_has_a_usage_entry_to_slice():
+    """The table `_usage_for` reads is the module docstring, and it has to cover the
+    dispatch table. It did not: `models`, `probe` and `queue` were registered in `COMMANDS`
+    and never listed, so `_usage_for` returned None and `main()` fell back to printing all
+    ninety lines of the manual.
 
-    Not an assertion that this is right — an assertion that this is what happens. A fourth
-    command falling into the fallback fails here on the commit that adds it, and fixing any
-    of the three fails here too, which is when the literal above and the comments citing it
-    come out together.
-    """
-    fell_back = set()
-    for command in _orchestrator_commands():
-        result = run_cli([command, "--help"], tmp_path)
-        assert result.returncode == 0, result.stderr
-        if "computational orchestrator" in result.stdout:
-            fell_back.add(command)
+    In process and statically, so the gap is visible without spawning anything: a verb
+    registered tomorrow without a docstring entry fails here on that commit. The fallback
+    itself stays for an unknown verb — this asserts no *known* one reaches it."""
+    from rig_workbench.orchestrate.cli import COMMANDS, _usage_for
 
-    assert fell_back == COMMANDS_WHOSE_HELP_IS_STILL_THE_WHOLE_MANUAL, (
-        "which orchestrator commands answer `--help` with the module docstring has "
-        "changed.\n"
-        f"  now sliced properly (delete them from the literal): "
-        f"{sorted(COMMANDS_WHOSE_HELP_IS_STILL_THE_WHOLE_MANUAL - fell_back)}\n"
-        f"  newly falling back (a command was registered without a docstring entry): "
-        f"{sorted(fell_back - COMMANDS_WHOSE_HELP_IS_STILL_THE_WHOLE_MANUAL)}"
+    unsliceable = sorted(command for command in COMMANDS if not _usage_for(command))
+    assert unsliceable == [], (
+        "these verbs are in orchestrate's COMMANDS with no entry in the module docstring "
+        f"`_usage_for` slices: {unsliceable}. Each answers `--help` with the whole manual. "
+        "Add the verb's usage to the docstring rather than a second table."
     )
 
 
-def test_the_advertised_verb_among_them_is_why_this_counts_as_a_defect(tmp_path):
-    """`rig-wb queue --help` is reached from the help text and answers with the manual.
+@pytest.mark.parametrize("command", _orchestrator_commands())
+def test_no_registered_verb_answers_help_with_the_whole_manual(command, tmp_path):
+    """The same claim through the process, where a person meets it, plus a ceiling.
+
+    This replaces a test that pinned the defect as a set — `models`, `probe`, `queue` —
+    and said out loud that fixing any of the three would fail here. It did."""
+    result = run_cli([command, "--help"], tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    assert "computational orchestrator" not in result.stdout, result.stdout[:200]
+    printed = len(result.stdout.rstrip().splitlines())
+    assert printed <= LONGEST_USAGE_LINES, (
+        f"`{command} --help` printed {printed} lines; the longest usage in the docstring "
+        f"is {LONGEST_USAGE_LINES} (`plan`). A number this far out means the slicer missed "
+        "and the fallback answered."
+    )
+
+
+def test_the_verb_the_help_text_advertises_answers_with_its_own_usage(tmp_path):
+    """`rig-wb queue --help` is reached from `rig-wb --help`, which is what made this a
+    defect rather than a curiosity: a person was invited to type it and handed the manual.
 
     Spelled `rig-wb` rather than through the shim, because that is the spelling
-    `rig-wb --help` hands a person: this is only user-facing on that path.
-    """
+    `rig-wb --help` hands a person: this is only user-facing on that path."""
     result = run_rig_wb(["queue", "--help"], tmp_path)
 
     assert result.returncode == 0, result.stderr
-    assert "computational orchestrator" in result.stdout, (
-        "`rig-wb queue --help` no longer prints the orchestrator's module docstring. If "
-        "`_usage_for` learned to slice it, take `queue` out of "
-        "COMMANDS_WHOSE_HELP_IS_STILL_THE_WHOLE_MANUAL and out of the comments in "
-        "rig_workbench/cli.py and tests/test_capability_registry_vs_cli.py that cite it."
-    )
-    assert not result.stdout.lstrip().startswith("queue"), result.stdout[:200]
+    assert result.stdout.lstrip().startswith("queue "), result.stdout[:200]
+    assert "computational orchestrator" not in result.stdout
+    # The verbs it dispatches are the substance of its usage; without them it is a label.
+    for verb in ("add", "list", "go", "done", "retry", "cancel"):
+        assert verb in result.stdout, result.stdout
 
 
 def test_the_same_help_comes_back_through_rig_wb(tmp_path):

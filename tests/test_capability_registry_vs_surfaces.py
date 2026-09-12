@@ -245,32 +245,74 @@ def _named_exit_codes(module: ast.Module) -> dict[str, int]:
     }
 
 
-def _loop_argvs(function) -> dict[str, list[tuple[str, ...]]]:
-    """Loop variables bound to a literal sequence of literal argvs.
+def _argv_sequence(node) -> list[tuple[str, ...]]:
+    """A literal sequence of literal argvs, or `[]` if it is anything else."""
+    if not isinstance(node, (ast.Tuple, ast.List)):
+        return []
+    argvs = []
+    for element in node.elts:
+        if not isinstance(element, (ast.Tuple, ast.List)):
+            return []
+        words = _leading_string_constants(element)
+        if not words:
+            return []
+        argvs.append(tuple(words))
+    return argvs
 
-    Two tests drive several commands from one `for argv in ((...), (...)):` — the pair of
-    `state.die()` conditions, and the seven orchestrator steps that lead to the parked run.
-    Skipping that shape would drop `wb status`, `init`, `check` and `verdict` out of the
-    comparison entirely.
+
+def _module_argv_constants(module: ast.Module) -> dict[str, list[tuple[str, ...]]]:
+    """Module-level names assigned a literal sequence of literal argvs.
+
+    A `for` loop or a `parametrize` may name one of these rather than spell the argvs
+    inline, and both shapes are in that file now. Without this the scan reads the name,
+    finds no literal, and drops every command in it — silently, because the loop still
+    parses.
     """
+    return {
+        node.targets[0].id: argvs
+        for node in module.body
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and (argvs := _argv_sequence(node.value))
+    }
+
+
+def _loop_argvs(function, constants: dict[str, list[tuple[str, ...]]] | None = None,
+                ) -> dict[str, list[tuple[str, ...]]]:
+    """Names bound to a literal sequence of literal argvs, by a loop or by `parametrize`.
+
+    Three shapes reach the same place. `for argv in ((...), (...)):` — the pair of
+    `state.die()` conditions and the seven orchestrator steps that lead to the parked run.
+    `for argv in NAME:` and `@pytest.mark.parametrize("argv", NAME)`, where `NAME` is a
+    module-level tuple of argvs: the missing-run-state verbs are written that way, one
+    test per verb so a failure on the first cannot hide the other four. Skipping any of
+    the three would drop `wb status`, `init`, `check`, `verdict` and `approve` out of the
+    comparison entirely, and the guard test above would be the only thing to say so.
+    """
+    constants = constants or {}
     found: dict[str, list[tuple[str, ...]]] = {}
     for node in ast.walk(function):
-        if not isinstance(node, ast.For) or not isinstance(node.target, ast.Name):
+        if isinstance(node, ast.For) and isinstance(node.target, ast.Name):
+            argvs = (constants.get(node.iter.id, []) if isinstance(node.iter, ast.Name)
+                     else _argv_sequence(node.iter))
+            if argvs:
+                found[node.target.id] = argvs
+    for decorator in getattr(function, "decorator_list", []):
+        if not (isinstance(decorator, ast.Call) and len(decorator.args) == 2):
             continue
-        if not isinstance(node.iter, (ast.Tuple, ast.List)):
+        target = decorator.func
+        if not (isinstance(target, ast.Attribute) and target.attr == "parametrize"):
             continue
-        argvs = []
-        for element in node.iter.elts:
-            if not isinstance(element, (ast.Tuple, ast.List)):
-                argvs = []
-                break
-            words = _leading_string_constants(element)
-            if not words:
-                argvs = []
-                break
-            argvs.append(tuple(words))
+        names, values = decorator.args
+        if not (isinstance(names, ast.Constant) and isinstance(names.value, str)):
+            continue
+        if "," in names.value:  # several parameters: the values are not argvs
+            continue
+        argvs = (constants.get(values.id, []) if isinstance(values, ast.Name)
+                 else _argv_sequence(values))
         if argvs:
-            found[node.target.id] = argvs
+            found[names.value.strip()] = argvs
     return found
 
 
@@ -283,11 +325,12 @@ def observed_exit_codes() -> dict[str, set[int]]:
     module = ast.parse(EXIT_CODE_SURFACE.read_text(encoding="utf-8"),
                        filename=str(EXIT_CODE_SURFACE))
     named = _named_exit_codes(module)
+    constants = _module_argv_constants(module)
     observed: dict[str, set[int]] = {}
     for function in ast.walk(module):
         if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
-        loops = _loop_argvs(function)
+        loops = _loop_argvs(function, constants)
         bound: dict[str, list[tuple[str, ...]]] = {}
         for node in ast.walk(function):
             if (isinstance(node, ast.Assign) and len(node.targets) == 1

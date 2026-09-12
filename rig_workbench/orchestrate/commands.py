@@ -321,7 +321,65 @@ def cmd_plan(args, *, out: Presenter = CONSOLE):
 
 
 def _state_path(args, default="run-state.json") -> pathlib.Path:
-    return pathlib.Path(args[0]) if args else pathlib.Path(default)
+    """The run-state this invocation reads — refused here when it is not there.
+
+    Every command that reads a run-state resolves its path through this one function, so
+    the absence is answered once, in the place that already knows the default and the
+    path the caller typed. Before this, the absence reached `load_state`'s `os.open` and
+    surfaced as a `FileNotFoundError` traceback: eleven frames of rig's internals for a
+    condition rig can predict (`check`, `next`, `verdict`, `status`, `resume` and
+    `approve`, all of them one `init` away from being right).
+
+    The remedy names the verb and not the command line: this function is reached from
+    `rig-wb`, from `scripts/orchestrate.py`, and from an in-process caller, and printing
+    `rig-wb init` to somebody who reached it through the shim prescribes an entry point
+    they may not have installed.
+
+    A leading flag is not a path. `rig-wb --help` advertises
+    `verdict [<state.json>] --by N --pass|--fail`, brackets and all, and the bracketed
+    form was unreachable: `verdict --by alice --pass` took `--by` as the filename and
+    opened `./--by`. The default applies whenever the first token starts with `-`, which
+    is what the brackets in the help text have always claimed.
+
+    `Refusal` rather than a print: this is the judgement layer, and the line goes out
+    through the `Presenter` the shell built (see `_reports_refusals`). Code 2 because
+    the command could not produce an answer at all, which is what
+    `tests/test_exit_code_surface.py` pins 2 to mean — a 1 here would read as a verdict.
+    """
+    typed = args[0] if args and not args[0].startswith("-") else None
+    path = pathlib.Path(typed) if typed else pathlib.Path(default)
+    if not path.exists():
+        creates = ("init <recipe.md>" if path == pathlib.Path(default)
+                   else f"init <recipe.md> --out {path}")
+        raise Refusal([f"[ERROR] no run-state at {path}: `{creates}` creates one"], code=2)
+    return path
+
+
+def _read_state(path: pathlib.Path) -> dict:
+    """`load_state`, with the ways a file that *is* there can still be unusable refused.
+
+    The absence is `_state_path`'s; these are its neighbours, and they crashed the same
+    way after it was fixed: an empty or truncated file reached `json.loads` and printed a
+    `JSONDecodeError` traceback, a directory (or a symlink, or a file owned by somebody
+    else) reached `load_state`'s own guard and printed its `OSError` as one. Both exited
+    1 through `scripts/orchestrate.py`. They are the same kind of answer as the absence —
+    rig could not read the state, and says which of the three reasons it was — so they
+    take the same shape and the same code 2.
+
+    The messages stay one line and say what is wrong with the file rather than repeat the
+    exception: `load_state`'s own `OSError` text (the ownership and link-count rule, the
+    secure-state checks) is the sentence, prefixed, because it already reads as a
+    refusal.
+    """
+    try:
+        return load_state(path)
+    except json.JSONDecodeError as broken:
+        raise Refusal(
+            [f"[ERROR] run-state {path} is not JSON: {broken.msg} (line {broken.lineno})"],
+            code=2) from broken
+    except OSError as unreadable:
+        raise Refusal([f"[ERROR] run-state {path} cannot be read: {unreadable}"],
+                      code=2) from unreadable
 
 
 def _locked_secure_state_mutation(path_from_args):
@@ -332,7 +390,7 @@ def _locked_secure_state_mutation(path_from_args):
             state_path = path_from_args(args)
             if state_path is None:
                 return command(args, **kwargs)
-            initial = load_state(state_path)
+            initial = _read_state(state_path)
             if not initial.get("secure_runtime"):
                 return command(args, **kwargs)
             try:
@@ -352,6 +410,11 @@ def _locked_secure_state_mutation(path_from_args):
 
 @_reports_refusals
 def cmd_init(args, *, out: Presenter = CONSOLE):
+    if not args:
+        # The same predictable absence one argument earlier: `init` with nothing after it
+        # used to reach `args[0]` and die with an IndexError traceback.
+        raise Refusal(
+            ["[ERROR] usage: init <recipe.md> [--goal G] [--out <state.json>]"], code=2)
     path = resolve_recipe(args[0])
     fm, _warns = resolve_extends(parse_frontmatter(path, out=out), path)
     execution = _require_executable_recipe(fm, fm.get("name", path.stem))
@@ -418,7 +481,7 @@ def _run_checks(checks: list[str]) -> list[dict]:
 @_locked_secure_state_mutation(_state_path)
 def cmd_check(args, *, out: Presenter = CONSOLE):
     sp = _state_path(args)
-    state = load_state(sp)
+    state = _read_state(sp)
     _refuse_blocked_state(state)
     step, st = _current_running(state)
     if not step:
@@ -462,7 +525,7 @@ def cmd_resume(args, *, out: Presenter = CONSOLE, clock: Clock = SYSTEM_CLOCK):
     `check` + `next` (state is written the same way); idempotent.
     """
     sp = _state_path(args)
-    state = load_state(sp)
+    state = _read_state(sp)
     _refuse_blocked_state(state)
     steps = state["steps"]
     total = len(steps)
@@ -534,7 +597,7 @@ def cmd_resume(args, *, out: Presenter = CONSOLE, clock: Clock = SYSTEM_CLOCK):
 @_locked_secure_state_mutation(_state_path)
 def cmd_verdict(args, *, out: Presenter = CONSOLE):
     sp = _state_path(args)
-    state = load_state(sp)
+    state = _read_state(sp)
     _refuse_blocked_state(state)
     step, st = _current_running(state)
     if not step:
@@ -548,7 +611,9 @@ def cmd_verdict(args, *, out: Presenter = CONSOLE):
         out.out(f"[ERROR] {message}")
         sys.exit(1)
 
-    i = 1
+    # The state path is optional (`_state_path`), so the flags start at 0 when it was
+    # left out — `verdict --by alice --pass` used to lose `--by` to the path slot.
+    i = 0 if (args and args[0].startswith("-")) else 1
     while i < len(args):
         if args[i] == "--by":
             if i + 1 >= len(args) or args[i + 1].startswith("--"):
@@ -603,7 +668,7 @@ def cmd_verdict(args, *, out: Presenter = CONSOLE):
 @_locked_secure_state_mutation(_state_path)
 def cmd_next(args, *, out: Presenter = CONSOLE):
     sp = _state_path(args)
-    state = load_state(sp)
+    state = _read_state(sp)
     _refuse_blocked_state(state)
     action, msg = compute_next(state)
     save_state(state, sp)
@@ -619,9 +684,10 @@ def cmd_next(args, *, out: Presenter = CONSOLE):
         sys.exit(3)     # parked on a person, not failed
 
 
+@_reports_refusals
 def cmd_status(args, *, out: Presenter = CONSOLE):
     sp = _state_path(args)
-    state = load_state(sp)
+    state = _read_state(sp)
     out.out(f"## run: {state['recipe']}  cursor={state['cursor']}/{len(state['steps'])}  "
             f"done={state['done']}  stopped={bool(state['stopped'])}")
     for s in state["steps"]:
@@ -708,7 +774,7 @@ def cmd_approve(args, *, out: Presenter = CONSOLE,
         else:
             i += 1
     sp = _state_path(positional)
-    state = load_state(sp)
+    state = _read_state(sp)
     step = next((s for s in state["steps"] if s["id"] == sid), None)
     if step is None:
         out.out(f"[ERROR] no step `{sid}` in this run (steps: "

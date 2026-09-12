@@ -579,6 +579,49 @@ was closed.**
   run: `govern.check_accept` binds approvals to the worktree HEAD, so the detached-worktree gap
   still applies to approvals.
 
+**Three CLI commands answered a predictable absence with a traceback, a full validation
+run, or the whole module docstring.** Each was recorded as a debt in
+`docs/v3-architecture-design-brief.ja.md` and measured through the real process before it
+was touched.
+
+- **A run-state that is not there is refused in one line, exit 2.** `check`, `next`,
+  `verdict`, `approve`, `status` and `resume` reached `load_state`'s `os.open` with a path
+  that does not exist and printed a `FileNotFoundError` traceback — exit 1 through
+  `scripts/orchestrate.py`, exit 2 through `rig-wb` only because the entry point's guard
+  caught the crash. All six now print `[ERROR] no run-state at <path>: ...` and exit 2,
+  naming the `init` that creates one. The first four are the ones reachable both ways;
+  `status` and `resume` are not in `rig-wb`'s delegate set and answer on
+  `scripts/orchestrate.py` only, as before — no verb was added to `rig-wb` here. `init`
+  with no recipe after it exited on an `IndexError` traceback and is refused the same
+  way. A file that is present and unusable joins the absence rather than crashing behind
+  it: an empty or truncated state (a `JSONDecodeError` traceback before) and a path that
+  is a directory or fails `load_state`'s ownership guard (a bare `OSError`) each say
+  which of the three it was, in one line, at 2.
+
+- **The state path `rig-wb --help` advertises as optional is optional.** The help text
+  has always written `verdict [<state.json>] --by N --pass|--fail`, and the brackets did
+  not work: the first token became the filename, so `verdict --by alice --pass` opened
+  `./--by` and died there. A leading `-` now falls back to `run-state.json` like every
+  other verb's default, and `verdict`'s own flag scan starts at the right index, so the
+  advertised form runs. Passing the path explicitly is unchanged.
+
+- **`rig-wb validate --help` prints usage instead of running the validator.** The flag
+  was not recognised and not rejected: it fell through to the check loop, so `--help`
+  produced the 92-line report (`PASS: 71 / WARN: 15 / FAIL: 0`) in about 1.3 seconds and
+  exited 0 meaning "no FAIL". It now prints ten lines of usage in about 0.1 seconds and
+  exits 0 meaning "here is how to use this", before the PyYAML guard and without reading
+  the tree. `-h` and `validate selftest --help` answer the same way; every other
+  invocation of `validate` is unchanged. `python3 scripts/validate.py --help` too — it is
+  the same function behind both.
+
+- **`models --help`, `probe --help` and `queue --help` print a usage block, not the
+  manual.** All three were registered in orchestrate's dispatch table and never listed in
+  the module docstring `_usage_for` slices, so each answered with all 89 lines of it —
+  `queue` while being advertised in `rig-wb --help`. The docstring now carries an entry
+  for each, so `_usage_for` finds one: `models` 4 lines, `probe` 4, `queue` 6. Every one
+  of the 21 registered verbs now has a usage entry, and none answers `--help` with more
+  than 9 lines (`plan`, the longest). The fallback stays for a verb nobody registered.
+
 **A `textlint-disable` marker inside a code span no longer switches `rig-wb ja-lint` off.**
 `suppressions()` scanned raw lines, so a document that only showed the marker's syntax in
 backticks suppressed every finding from that line to the end of the file — `BRICKS.md`'s

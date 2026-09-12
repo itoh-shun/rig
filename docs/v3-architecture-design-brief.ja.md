@@ -218,7 +218,8 @@ talk は意図を作るだけで、判定はしない。
    印字する。第 1 パスはその印字を `print` から `Presenter` へ替えた。それでも 140 本の出力は
    分岐点と 1 バイトも違わない。`eval`・`packs`・`validation` も同じく 0 ページで
    ある。なお `usage` と `validate` の 2 本は比較から外した。`--help` を解さずコマンドを実行して
-   しまうためで、これは移行ではなくこの 2 本の argparse の形の話である。
+   しまうためで、これは移行ではなくこの 2 本の argparse の形の話である。`validate` はその後
+   `581e869` で直した。`usage` は開いたままである。
 
    つまり「変わったのは `--help` の文面 7 行だけ」は柱の移行について言うかぎり実測どおりで、
    §10 の削除分がその外に 2 種類ある。**追加された動詞は無い。** `ja-lint` と
@@ -896,6 +897,25 @@ gate は、accept_requirements の `acceptance_gate_not_failed` を満たさな�
 **新しい債務を 1 件記録する。** `govern.check_accept` は承認を worktree の HEAD に束ねている。
 accept 側の head 判定が branch の先端を見るようになった後も、そちらは worktree の HEAD のままである。
 detached worktree の抜け道は承認にも残る。本 run より前からある問題で、本 run では直していない。
+
+#### CLI の答えになっていなかった 3 件
+
+上表とは出どころが違う。レビューが残した先送りではなく、本節と §7 が散文の中に書いたまま
+置いていた 3 件である。どれも「予測できる不在」に対して traceback や 89 行の manual を
+返していた。3 件とも閉じた。実測は直す前と後の両方を実プロセスで取っている。
+
+| 先送り | 実測（直す前） | いま |
+|---|---|---|
+| run-state が無いと 6 動詞が traceback を出す | 空のディレクトリで `check`・`next`・`verdict`・`status`・`resume`・`approve` が `FileNotFoundError: [Errno 2] No such file or directory: '<cwd>/run-state.json'` で落ちる。`scripts/orchestrate.py` 経由は exit 1、`rig-wb` 経由は `cli.py` の guard が拾って exit 2。`init` は引数無しで `IndexError`、`verdict --by alice` は `./--by` を開いて同じ形で落ちる | 閉じた。`399a60e` が `_state_path` の 1 箇所で `Refusal` に替えた。6 動詞とも `[ERROR] no run-state at run-state.json: ` + 作り方 1 行で exit 2 になる。両経路で打てるのは `check`・`next`・`verdict`・`approve` の 4 本で、`status` と `resume` は `_orch_delegates` に無く `scripts/orchestrate.py` 専用のまま——動詞は 1 本も増やしていない |
+| `rig-wb validate --help` が usage を出さず検証を走らせる（§7 が「比較から外した」と書いた 2 本の片方） | `--help` は未知の引数として素通りし、92 行の報告と `PASS: 71 / WARN: 15 / FAIL: 0` を出して exit 0。1.29 秒。`python3 scripts/validate.py --help` も同じで 1.05 秒 | 閉じた。`581e869` が `cmd_validate` の先頭で答えるようにした。usage 10 行、0.10 秒、exit 0。木は読まない。もう 1 本の `usage` は開いたまま |
+| `_usage_for` が `models`・`probe`・`queue` で module docstring に落ちる | 3 本とも 89 行を印字する。ほかの 18 本は 1〜9 行。落ちる原因は slicer ではなく、slicer が読む docstring に 3 本の記載が無いこと | 閉じた。`fa65ef3` が docstring に 3 本を足した。`models` 4 行・`probe` 4 行・`queue` 6 行になり、登録済み 21 動詞すべてに usage がある。最長は `plan` の 9 行。未知の動詞への fallback は残した |
+
+**直さずに記録した 4 件。** どれもレビューが本 run の外だと判断したもので、実測だけ置く。
+
+- `rig-wb validate --bogus` は未知の flag を黙って捨てる。92 行の検証を最後まで走らせ、exit 0 を返す。本 run が先回りして答える形にしたのは `--help` だけで、ほかの未知語はいま素通りである。
+- `orchestrate/cli.py:103` の Exit code の行に 2 が無い。書いてあるのは `0=success / 1=error or ESCALATE / 3=run parked at a human gate` である。本 run が足した拒否はすべて 2 で終わる。行のほうが実装に追いついていない。
+- `_state_path` は先頭が `-` の token を flag と見て既定値へ落とす。`-state.json` という名前のファイルは指定できなくなった。実在しない形なので直していない。
+- `scripts/orchestrate.py` 側でこの拒否を固定しているのは `status` と `resume` の 2 本だけである（`tests/test_cli_smoke.py`）。ほかの 4 本は `rig-wb` の綴りで固定してある。同じ関数に同じ引数で入るので、経路ごとの二重掛けはしていない。
 
 #### 本節で直した、本ブリーフ自身の数値
 

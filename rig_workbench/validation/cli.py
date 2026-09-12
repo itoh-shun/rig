@@ -66,6 +66,25 @@ from .state import _emit
 from .yaml_adapter import PyYAMLMissing, require_yaml
 
 
+#: `validate`'s whole surface, as `--help` prints it. Written out rather than derived
+#: from the registry: this module is loaded by `importlib` from `scripts/validate.py`
+#: with `rig_workbench` on `sys.path` and nothing else assumed, and a `--help` that
+#: imports the capability table to answer would be a second thing that can fail before
+#: it can tell anybody how to use the first.
+USAGE = (
+    "usage: rig-wb validate [selftest]",
+    "",
+    "Mechanically check the shipped tier — recipe frontmatter, step references, extends",
+    "chains, persona/command/agent schemas, catalogs, the graph, and the manifest — and",
+    "print a PASS / WARN / FAIL report. Reads the tree; writes nothing.",
+    "",
+    "  selftest    run the golden self-verification of the orchestrator instead",
+    "  -h, --help  print this and exit, without running any check",
+    "",
+    "exit: 0 = no FAIL (there may be WARNs) / 1 = at least one FAIL",
+)
+
+
 # ── main ─────────────────────────────────────────────────────────────
 def cmd_validate(argv: list[str], *, out: Presenter = ConsolePresenter(),
                  proc: ProcessRunner = SubprocessRunner(), env: Env = OsEnv(),
@@ -78,6 +97,17 @@ def cmd_validate(argv: list[str], *, out: Presenter = ConsolePresenter(),
     working unchanged. Each is forwarded to every call below whose signature declares it,
     which is the rule the module docstring states and the tripwire checks.
     """
+    if any(arg in ("-h", "--help") for arg in argv):
+        # Answered before anything else this function does, including `require_yaml`:
+        # `validate --help` used to be ignored as an unrecognised argument and run the
+        # whole validator — 92 lines of report and about a second of filesystem walking
+        # where usage belonged, and a 0 that said "no FAIL" rather than "here is how to
+        # use this". Nothing below this line is reached, so `--help` answers on a machine
+        # without PyYAML and reads nothing off the disk.
+        for line in USAGE:
+            out.out(line)
+        return 0
+
     try:
         # The pillar's one optional dependency. This used to be a `try/except ImportError`
         # at the top of `state.py` that printed and called `sys.exit(1)` during the import

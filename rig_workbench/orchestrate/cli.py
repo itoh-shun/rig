@@ -60,6 +60,20 @@ The model does each step's "work", but this runner decides "what happens next":
                                      Bound into run-state; missing, unknown, or changed values fail before providers.
   run ... --material-profile P       Optional style material for secure Japanese writing: none (default), technical,
                                      or conversation. Bound into run-state; never inferred from goal text.
+  queue <add|list|go|done|retry|cancel> [--backend local|github|gitlab] [--repo owner/repo]
+        [--provider P] [--verifier-provider P] [--provider-cmd C] [--max-parallel N]
+        [--depends-on ID] [--dependency-policy accepted]
+                                     Line several tasks up and work through them without babysitting each
+                                     one. add / list / done / retry / cancel are bookkeeping; `go` runs each
+                                     task for real — its own worktree, a provider, and the gate
+  models [--save] [--base-url URL] [--json]
+                                     Which providers and models this machine can actually drive right now.
+                                     Asks localhost unless --base-url names somewhere else; --save writes
+                                     the cache that `run --auto-model` reads next time
+  probe --provider P [--role verifier|generator] [--model M] [--base-url URL] [--provider-cmd C]
+                                     Call one provider once and show the actual command, its raw output, and
+                                     whether the contract parsed — the way to see *why* a provider keeps
+                                     coming back unusable. Everything but `--provider mock` leaves the machine
   ab <recipe1> <recipe2> ...          Run the same goal through multiple recipe variants concurrently and compare
     --provider <name> --goal G        speed/retries/results (#291). Each variant runs in its own isolated worktree
                                      (same path as --isolate), so variants never conflict.

@@ -275,17 +275,15 @@ _orch_delegates = {
     "graph",
     # `models`: it configures the `orchestrate` surface for `run --auto-model`, which reads
     # what `models --save` wrote. No document spells it `rig-wb models`, and that is the
-    # whole reason. Its `--help` also answers with the orchestrator's whole ninety-line
-    # docstring, but that is `_usage_for`'s fallback for a command the docstring never
-    # listed, not a property of this verb — the advertised `queue` does exactly the same
-    # (pinned in tests/test_cli_smoke.py), so it argues for fixing `_usage_for`, not for
-    # keeping anything hidden.
+    # whole reason. It used to be read alongside a second observation — that its `--help`
+    # answered with the orchestrator's whole ninety-line docstring — which was never about
+    # this verb: the docstring simply had no entry to slice. It has one now, for all three
+    # of `models`, `probe` and `queue`, and being hidden is the only thing left here.
     "models",
     # `probe`: every citation of it — README ×4 in each language, and the command's own
     # printed examples — says `scripts/orchestrate.py probe`, because the claim being
     # evidenced is about that process. `selftest` covers the same ground on this surface and
-    # is advertised. Its `--help` falls back the same way `models` does, and for the same
-    # reason: `_usage_for`, not the verb.
+    # is advertised.
     "probe",
     # `install-shim`: it installs an entry point for people who have none. Anybody able to
     # type `rig-wb install-shim` already has the entry point it provides, so a top-level

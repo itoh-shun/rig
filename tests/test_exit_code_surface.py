@@ -308,6 +308,142 @@ def test_generic_a_workbench_command_that_cannot_find_its_task_exits_two(
         assert "not found" in result.stderr
 
 
+#: The orchestrator verbs that read a run-state before they can do anything, each with
+#: the argv a person actually types, and each spelled the way `rig-wb` dispatches it.
+#: `status` and `resume` read the same file through the same function but are reachable
+#: only through `scripts/orchestrate.py`, so they are pinned in tests/test_cli_smoke.py
+#: instead — this file drives the installed CLI. `init` is here because it is the verb
+#: the other four are told to run: with no recipe after it, it had the same crash.
+_ORCHESTRATOR_VERBS_THAT_NEED_A_RUN_STATE = (
+    ("check",),
+    ("next",),
+    ("verdict", "run-state.json", "--by", "tester", "--pass"),
+    ("approve", "implement"),
+    ("init",),
+)
+
+
+@pytest.mark.parametrize("argv", _ORCHESTRATOR_VERBS_THAT_NEED_A_RUN_STATE)
+def test_generic_a_missing_run_state_is_refused_in_one_line_and_exits_two(
+        argv, rig_cli, rig_git_repo):
+    """A run-state that is not there is the plainest predictable absence rig has, and
+    every one of these verbs used to answer it with a `FileNotFoundError` traceback out
+    of `load_state`'s `os.open` — exit 1 through `scripts/orchestrate.py`, exit 2 here
+    only because `rig_workbench/cli.py`'s guard caught the crash on the way out.
+
+    Pinned as 2, and pinned as *one line*: the assertion that the stdout is a single
+    `[ERROR]` line is what separates "rig refused" from "rig fell over and something
+    caught it". A caller reading `$?` cannot tell those apart, which is the whole reason
+    this file spends a subprocess per assertion.
+
+    One test per verb rather than one loop over five: a loop stops at the first failure
+    and says nothing about the other four, and these five fail independently — they share
+    a function, not a code path from argv to it."""
+    result = rig_cli(*argv, cwd=rig_git_repo)
+    context = (f"`rig-wb {' '.join(argv)}` exited {result.returncode}\n"
+               f"--- stdout ---\n{result.stdout}\n--- stderr ---\n{result.stderr}")
+    assert result.returncode == ERROR, context
+    assert result.returncode != REJECTED
+    assert "Traceback" not in result.stderr, context
+    said = [line for line in result.stdout.splitlines() if line.strip()]
+    assert len(said) == 1, context
+    assert said[0].startswith("[ERROR]"), context
+    # The refusal has to name the way out, or it is a shorter crash. The verb alone, not
+    # `rig-wb init`: the same function answers `scripts/orchestrate.py`, whose caller may
+    # have no `rig-wb` on PATH to run.
+    assert "init <recipe.md>" in said[0], context
+
+
+def test_generic_a_leading_flag_is_not_taken_for_the_state_path(rig_cli, rig_git_repo):
+    """`verdict --by alice --pass` — the optional path left out, as the help text says.
+
+    `rig-wb --help` has always written `verdict [<state.json>] --by N --pass|--fail`,
+    brackets and all, and the brackets were a lie: the first token became the filename,
+    so this opened `./--by` and died with a `FileNotFoundError` naming a path nobody
+    typed. The default applies now, so what is left is the ordinary absence — same line,
+    same 2 — and the run-state, not the flag, is what the message is about."""
+    result = rig_cli("verdict", "--by", "tester", "--pass", cwd=rig_git_repo)
+    context = f"--- stdout ---\n{result.stdout}\n--- stderr ---\n{result.stderr}"
+
+    assert result.returncode == ERROR, context
+    assert "Traceback" not in result.stderr, context
+    said = [line for line in result.stdout.splitlines() if line.strip()]
+    assert len(said) == 1 and said[0].startswith("[ERROR]"), context
+    assert "run-state.json" in said[0], context
+    assert "--by" not in said[0], context
+
+
+#: A file that is there and cannot be a run-state, and what each condition is. The
+#: absence above is one of three ways `check <path>` cannot get a state; these are the
+#: other two, and they crashed after the absence was fixed — a `JSONDecodeError`
+#: traceback and `load_state`'s own `OSError`, both exit 1 on the shim.
+_UNUSABLE_RUN_STATES = (
+    ("truncated.json", "", "is not JSON"),
+    ("half.json", '{"recipe": "demo", "steps": [', "is not JSON"),
+    (".", None, "cannot be read"),
+)
+
+
+@pytest.mark.parametrize("name, content, expected", _UNUSABLE_RUN_STATES)
+def test_generic_a_run_state_that_cannot_be_read_exits_two_like_an_absent_one(
+        name, content, expected, rig_cli, rig_git_repo):
+    """Present and unusable is the same answer as absent: rig could not read the state.
+
+    Three conditions, one shape. A file the writer was killed halfway through, an empty
+    one, and a path that is a directory (which is also how `load_state`'s ownership and
+    link-count guard reports every other thing wrong with the file). Each says which of
+    the three it was, in one line, and none of them is a verdict."""
+    if content is not None:
+        (rig_git_repo / name).write_text(content, encoding="utf-8")
+    result = rig_cli("check", name, cwd=rig_git_repo)
+    context = f"--- stdout ---\n{result.stdout}\n--- stderr ---\n{result.stderr}"
+
+    assert result.returncode == ERROR, context
+    assert result.returncode != REJECTED
+    assert "Traceback" not in result.stderr, context
+    said = [line for line in result.stdout.splitlines() if line.strip()]
+    assert len(said) == 1 and said[0].startswith("[ERROR]"), context
+    assert expected in said[0], context
+
+
+#: One step, no human gate, no policy — the cheapest run-state there is to make.
+_PLAIN_RECIPE = """---
+name: plain
+description: one step, passed by a verdict
+scope: project
+autonomy: interactive
+steps:
+  - id: implement
+    instruction: implement
+    gate: acceptance-gate
+    acceptance: ["it builds"]
+    checks: ["true"]
+---
+"""
+
+
+def test_generic_the_optional_state_path_the_help_text_advertises_is_optional(
+        rig_cli, rig_git_repo, tmp_path):
+    """The bracketed form driven to a 0, which is the only way to know it works.
+
+    Every test above this one reaches the refusal; this one has a real run-state and
+    leaves the path out anyway. Without it, "the brackets are honest now" is a claim
+    about a branch nobody has run."""
+    recipes = rig_git_repo / ".rig" / "recipes"
+    recipes.mkdir(parents=True, exist_ok=True)
+    (recipes / "plain.md").write_text(_PLAIN_RECIPE, encoding="utf-8")
+    env = {"RIG_ACTOR": "alice", "RIG_ALLOW_PROJECT_RECIPES": "1",
+           "RIG_TRUST_STORE": str(tmp_path / "trusted-recipes.json")}
+
+    for argv in (("init", ".rig/recipes/plain.md"), ("check",)):
+        step = rig_cli(*argv, cwd=rig_git_repo, env=env)
+        assert step.returncode == OK, f"{argv}\n{step.stdout}{step.stderr}"
+
+    judged = rig_cli("verdict", "--by", "test-verifier", "--pass", "--criterion", "1=PASS",
+                     cwd=rig_git_repo, env=env)
+    assert judged.returncode == OK, judged.stdout + judged.stderr
+
+
 def test_generic_no_command_in_this_sample_returns_a_status_the_shell_owns(
         rig_cli, rig_git_repo):
     """124 / 126 / 127 / 128+N belong to `timeout`, the shell, and the kernel.

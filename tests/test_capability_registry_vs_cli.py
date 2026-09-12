@@ -157,17 +157,14 @@ TOP_LEVEL_VERBS_HIDDEN_WITH_REASON = {
     "models": (
         "Configures the `orchestrate` surface for `run --auto-model`, which reads what "
         "`models --save` wrote. Nothing spells it `rig-wb models`, and that is the reason. "
-        "Its `--help` also answers with the orchestrator's whole ninety-line docstring, "
-        "but that belongs to `_usage_for`'s fallback and not to this verb: the advertised "
-        "`queue` does the same, which is pinned in tests/test_cli_smoke.py as a defect "
-        "owed a fix."
+        "Being hidden is now the whole of it: its `--help` answers with its own usage like "
+        "every other verb, so nothing about how it reads argues either way."
     ),
     "probe": (
         "Cited eight times across the two READMEs, always as `scripts/orchestrate.py "
         "probe`, because what it evidences is about that process: the read-only verifier "
         "sandbox is applied per provider. `selftest` covers the same ground on this "
-        "surface and is advertised. Its `--help` falls back like `models`, and for the "
-        "same shared reason."
+        "surface and is advertised."
     ),
 }
 
