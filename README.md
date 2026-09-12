@@ -128,7 +128,7 @@ The main command is:
 /rig:go "fix the login bug"
 ```
 
-**`/rig:go` is the single main entrypoint**, the one worth memorizing before anything else in this doc. `/rig:rig` still works as a compatibility alias — same engine, same arguments — so existing habits and scripts don't break; only the name moved.
+**`/rig:go` is the single main entrypoint**, the one worth memorizing before anything else in this doc. The old `/rig:rig` name still works for the whole of 3.x as a deprecated shim — same engine, same arguments, so existing scripts don't break — and is removed in 4.0.0. Change it to `/rig:go` while you have the major to do it in.
 
 `/rig:talk` stays as the conversational front door onto the same engine — useful when you'd rather describe the situation and let rig ask follow-ups than state a single task up front:
 
@@ -464,7 +464,7 @@ The denominator is the recipe's own: `steps.json` is seeded from the resolved re
   → あなた: diff を見て accept  (2)
     #1  rig-20260705-090800-login-fix
         ログイン失敗を直す
-    → /rig:rig diff <task_id> · /rig:rig accept <task_id> · /rig:rig discard <task_id> --yes
+    → /rig:go diff <task_id> · /rig:go accept <task_id> · /rig:go discard <task_id> --yes
   ✗ キュー側で失敗（差分レビュー以前）  (1)
     #3  壊れているやつ
     → 原因を確認して `queue retry <id>`
@@ -1044,7 +1044,7 @@ An experimental backend that delegates review-gate parallel fan-out to Anthropic
 
 ### VS Code extension — rig board (read-only, #286)
 
-`vscode-extension/` is a **read-only** sidebar Tree View of `.rig/runs/` task/gate state, so you don't have to leave the editor to run `/rig:rig board`. It parses the same `task.json`/`acceptance.json`/`steps.json` `scripts/workbench.py` already writes — no new state-management engine, and no accept/discard or any other write command is registered anywhere in the extension. See `vscode-extension/README.md` for install instructions (not yet published to the Marketplace) and honest verification scope (the parsing logic is unit-tested with plain Node; actually loading the extension in a live VS Code Extension Host is unverified in this environment).
+`vscode-extension/` is a **read-only** sidebar Tree View of `.rig/runs/` task/gate state, so you don't have to leave the editor to run `/rig:go board`. It parses the same `task.json`/`acceptance.json`/`steps.json` `scripts/workbench.py` already writes — no new state-management engine, and no accept/discard or any other write command is registered anywhere in the extension. See `vscode-extension/README.md` for install instructions (not yet published to the Marketplace) and honest verification scope (the parsing logic is unit-tested with plain Node; actually loading the extension in a live VS Code Extension Host is unverified in this environment).
 
 ### Prompt evaluation gate (`rig-wb eval`, v2.1.1)
 

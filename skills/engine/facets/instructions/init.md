@@ -24,7 +24,7 @@
 
 ### ②-b `.gitignore` への `.rig/` 追加（workbench 実行状態）
 
-`/rig:rig`（`patterns/isolated-worktree`）の run state は `<repo>/.rig/runs/` に書かれる。ローカル実行ログであり共有リポジトリにコミットする性質のものではないため、`.gitignore` に `.rig/` が無ければ**追加を提案**する（他の gitignore 提案と同様、勝手に書き換えず確認を取る）。既に `.rig/` または親パターン（`.rig` 等）でカバーされていれば提案しない。
+`/rig:go`（`patterns/isolated-worktree`）の run state は `<repo>/.rig/runs/` に書かれる。ローカル実行ログであり、共有リポジトリにコミットする性質のものではない。そのため `.gitignore` に `.rig/` が無ければ**追加を提案**する（他の gitignore 提案と同様、勝手に書き換えず確認を取る）。既に `.rig/` または親パターン（`.rig` 等）でカバーされていれば提案しない。
 
 ### ②-c デザイン制約ファイル（`<repo>/.claude/design-constraints.json`・任意）
 

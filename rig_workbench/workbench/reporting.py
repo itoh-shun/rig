@@ -88,7 +88,7 @@ def cmd_status(args: argparse.Namespace) -> None:
 def cmd_board(args: argparse.Namespace) -> None:
     """Single dashboard listing all tasks.
 
-    Tasks started directly via `/rig:rig` and tasks run in parallel via
+    Tasks started directly via `/rig:go` and tasks run in parallel via
     `/rig:queue go --provider rig` all land in the same `.rig/runs/`, so even
     with several tasks in flight you can **see the whole picture with one
     command instead of juggling terminals** — structurally solving
@@ -117,7 +117,7 @@ def cmd_board(args: argparse.Namespace) -> None:
             print("No readable active tasks." if not args.all else "No readable tasks.")
         else:
             print("No active tasks." if not args.all else "No tasks (.rig/runs/ is empty).")
-        print("\nTo start a new task: /rig:rig \"<task>\"")
+        print("\nTo start a new task: /rig:go \"<task>\"")
         return
 
     waiting_on_you: list[str] = []
@@ -160,8 +160,8 @@ def cmd_board(args: argparse.Namespace) -> None:
         print(f"\nあなた待ち {len(waiting_on_you)} / 他人待ち {len(waiting_on_others)} / "
               f"実行中 {len(tasks) - len(waiting_on_you) - len(waiting_on_others)}")
         if waiting_on_you:
-            print("Next actions: /rig:rig diff <task_id> · /rig:rig accept <task_id> "
-                  "· /rig:rig discard <task_id> --yes")
+            print("Next actions: /rig:go diff <task_id> · /rig:go accept <task_id> "
+                  "· /rig:go discard <task_id> --yes")
 
 
 def cmd_log(args: argparse.Namespace) -> None:

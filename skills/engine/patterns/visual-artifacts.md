@@ -6,7 +6,7 @@
 
 | 状況 | パス |
 |---|---|
-| **workbench task に紐づく場合**（`/rig:rig` 経由・task_id が存在） | `<repo>/.rig/runs/<task-id>/visual/` |
+| **workbench task に紐づく場合**（`/rig:go` 経由・task_id が存在） | `<repo>/.rig/runs/<task-id>/visual/` |
 | **ad-hoc**（task_id なし。例: `/rig:design <url>` を単独起動） | `<repo>/.rig/visual/adhoc/<YYYYMMDD-HHMMSS>-<slug>/` |
 
 ファイル名は `<step-or-viewport>-<before|after>.png`（例: `verify-before.png` / `verify-after.png`、`design-audit-desktop.png` / `design-audit-mobile.png`）のように、何を撮ったか一目で分かる形にする。DOM スナップショット・axe 結果等の非画像成果物も同じディレクトリに `.json`/`.md` で置いてよい。

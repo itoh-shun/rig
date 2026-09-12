@@ -111,8 +111,8 @@ def render_batch(grouped: dict) -> list[str]:
             out.append(f"    #{row['id']}  {row['task_id']}")
             out.append(f"        {_clip(row.get('task'))}")
     if groups:
-        out.append("    → /rig:rig diff <task_id> · /rig:rig accept <task_id> "
-                   "· /rig:rig discard <task_id> --yes")
+        out.append("    → /rig:go diff <task_id> · /rig:go accept <task_id> "
+                   "· /rig:go discard <task_id> --yes")
     if failed:
         out.append(f"  ✗ キュー側で失敗（差分レビュー以前）  ({len(failed)})")
         for row in failed:
@@ -125,7 +125,7 @@ def render_batch(grouped: dict) -> list[str]:
         out.append(f"  ? task id を出力に残さず、状態を確認できませんでした  ({len(unlinked)})")
         for row in unlinked:
             out.append(f"    #{row['id']}  {_clip(row.get('task'))}")
-        out.append("    → `/rig:rig board` で確認")
+        out.append("    → `/rig:go board` で確認")
     return out
 
 

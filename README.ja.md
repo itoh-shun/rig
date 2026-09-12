@@ -127,7 +127,7 @@ rig-wb version
 /rig:go "ログインバグを直して"
 ```
 
-**`/rig:go` は唯一のメイン入口**であり、このドキュメントの中で一番先に覚えるべきコマンドである。`/rig:rig` は互換エイリアスとして引き続き動く——同じエンジン・同じ引数なので、既存の習慣やスクリプトはそのまま壊れない。変わったのは名前だけ。
+**`/rig:go` は唯一のメイン入口**であり、このドキュメントの中で一番先に覚えるべきコマンドである。旧名の `/rig:rig` は 3.x のあいだ非推奨の互換 shim として残る。同じエンジン・同じ引数なので既存のスクリプトは壊れない。4.0.0 で削除するので、この major のうちに `/rig:go` へ書き換えてほしい。
 
 `/rig:talk` は同じエンジンへのより会話的な入口としてそのまま残る——状況を説明して rig に聞き返してもらいたいとき、1つのタスクを最初から言い切るより向いている：
 
@@ -959,7 +959,7 @@ review-gateの並列レビューを、既存のsubprocess+ThreadPoolExecutorで�
 
 ### VS Code拡張 — rig board（読み取り専用・#286）
 
-`vscode-extension/`は`.rig/runs/`のtask/gate状態を**読み取り専用**でサイドバーのTree Viewに表示する（エディタを離れず`/rig:rig board`相当を見られる）。`scripts/workbench.py`が既に書いている`task.json`/`acceptance.json`/`steps.json`をそのままパースするだけ——新しい状態管理エンジンは無く、accept/discard等の書き込みコマンドは拡張全体を通して一切登録していない。インストール手順（未公開・ソースから）と正直な検証範囲（状態パースロジックはplain Nodeでユニットテスト済み／実際のVS Code Extension Hostでの動作確認はこの環境では未検証）は`vscode-extension/README.md`参照。
+`vscode-extension/`は`.rig/runs/`のtask/gate状態を**読み取り専用**でサイドバーのTree Viewに表示する。エディタを離れず`/rig:go board`相当を見られる。`scripts/workbench.py`が既に書いている`task.json`/`acceptance.json`/`steps.json`をそのままパースするだけだ。新しい状態管理エンジンは無く、accept/discard等の書き込みコマンドは拡張全体を通して一切登録していない。インストール手順（未公開・ソースから）と正直な検証範囲は`vscode-extension/README.md`参照。内訳はこうだ。状態パースロジックはplain Nodeでユニットテスト済み、実際のVS Code Extension Hostでの動作確認はこの環境では未検証。
 
 ### プロンプト評価ゲート（`rig-wb eval`・v2.1.1）
 

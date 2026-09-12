@@ -479,22 +479,22 @@ def _build_queue_task_prompt(task: str, provider: str) -> str:
 
     The `rig`/`claude` providers run in parallel as **separate processes** of headless
     `claude -p` (`queue go --max-parallel N`). Multiple processes share the same working
-    directory, so without routing through the workbench's isolated worktree (`/rig:rig`)
+    directory, so without routing through the workbench's isolated worktree (`/rig:go`)
     there is a **risk of parallel tasks fighting over files**. Hence the rig/claude providers
-    are explicitly instructed to run `/rig:rig "<task>"`, which automatically isolates each
+    are explicitly instructed to run `/rig:go "<task>"`, which automatically isolates each
     task in its own worktree.
     Accepting is not the queue's job (the user applies results individually via
-    `/rig:rig board` -> `accept`).
+    `/rig:go board` -> `accept`).
     """
     if provider in ("rig", "claude"):
         return (
             "Invoke the `rig` skill via the Skill tool and execute the following task in an "
-            "isolated worktree per `facets/instructions/workbench` (the `/rig:rig` unified entry). "
+            "isolated worktree per `facets/instructions/workbench` (the `/rig:go` unified entry). "
             "It runs in parallel with other queue items, so **never write to the main working tree** "
             "(do not accept; do triage, implementation, and the acceptance-gate judgment inside the "
             "isolated worktree, and leave applying to the user, who will list results with "
-            "`/rig:rig board` after the queue finishes and `/rig:rig accept` them individually).\n"
-            f'Run: /rig:rig "{task}"\n'
+            "`/rig:go board` after the queue finishes and `/rig:go accept` them individually).\n"
+            f'Run: /rig:go "{task}"\n'
             "Once the gate is settled (one of passed/passed_with_warnings/failed), output "
             "'STATUS: done' at the end."
         )
@@ -686,7 +686,7 @@ def _cmd_queue_dispatch(sub, free, backend, cfg, gen, ver, max_parallel, *,
             rc2, vout = run_provider(ver, "verifier", _build_queue_verify_prompt(task, reply), cfg,
                                      persona="queue")
             ok = ("VERDICT: PASS" in vout) and ("VERDICT: FAIL" not in vout)
-            note = ("✅ rig: gate settled (needs /rig:rig board → accept)" if ok else "❌ rig: verification FAIL") + f" ({gen}→{ver})"
+            note = ("✅ rig: gate settled (needs /rig:go board → accept)" if ok else "❌ rig: verification FAIL") + f" ({gen}→{ver})"
         except Exception as e:  # noqa: BLE001 - one bad item must not abandon the batch
             # ex.map propagates the first exception and discards the other results, which
             # left every remaining item pinned at `running` with no way to tell why (#360).

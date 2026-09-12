@@ -1056,7 +1056,7 @@ def cmd_run(args, *, out: Presenter = CONSOLE, env: Env = OS_ENV):
             "You are already using Claude in this session, so this risks double-firing and "
             "billing to a different bucket. Switch to one of:\n"
             "\n"
-            "  1. Use `/rig:rig \"<task>\"` (manual backend = via the Agent tool, same session)\n"
+            "  1. Use `/rig:go \"<task>\"` (manual backend = via the Agent tool, same session)\n"
             "  2. `--provider ollama` / `--provider lmstudio` (local, no billing)\n"
             "  3. `--provider mock` (for tests)\n"
             "  4. If you really must run headless, pass `--allow-headless-in-cc` explicitly\n"

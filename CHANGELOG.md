@@ -390,6 +390,19 @@ makes it a defect owed a fix rather than a curiosity about two hidden verbs; the
 / `init` answer a missing state file with a traceback before `exitcodes.guard` turns it into
 exit 2.
 
+### Deprecated
+
+**`/rig:rig` is deprecated in favour of `/rig:go`, and is removed in 4.0.0.** The two are the
+same command: `commands/rig.md` does nothing but re-read `commands/go.md`, so every argument and
+every subcommand is identical and the fix is to change the word. Nothing breaks in 3.x — the name
+keeps working for the whole major, which is what 1.11.0 promised when `/rig:go` arrived and the
+alias stayed. In 4.0.0 the file goes and typing `/rig:rig` gets the host's unknown-command error,
+so a script that runs `claude -p "/rig:rig …"` has this major to change one word rather than a
+release note to discover after it has already stopped. Two surfaces say so ahead of time: the
+command's own `description` opens with `[deprecated: use /rig:go; removed in 4.0.0]`, and the
+`rig:engine` skill's `description` — the line a host prints when it lists skills — names `/rig:go`
+alone, so nothing advertises the old name to somebody meeting rig for the first time.
+
 ### Removed
 
 **`rig-wb list` and `rig-wb review` are gone; both reached no handler.** Each was in

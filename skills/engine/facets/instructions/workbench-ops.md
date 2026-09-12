@@ -324,7 +324,7 @@ python3 scripts/workbench.py log --limit <N>
 python3 scripts/workbench.py board [--all]
 ```
 
-**複数タスクを並行で進めているときの単一の確認場所**（`/rig:rig` を何度も直接叩いた場合でも、`/rig:queue go --provider rig` で並列 dispatch した場合でも、全ての task は `.rig/runs/` に集約されるため同じ一覧に出る）。既定は非終端状態（`running`/`gate_passed`/`gate_failed`）のみ表示——`accepted`/`discarded` まで含めたい場合は `--all`。出力（task_id・input・type/recipe/mode/最終 step/gate）をそのまま提示する。整形の追加は不要。
+**複数タスクを並行で進めているときの単一の確認場所**。`/rig:go` を何度も直接叩いた場合でも、`/rig:queue go --provider rig` で並列 dispatch した場合でも同じ一覧に出る。全ての task が `.rig/runs/` に集約されるためだ。既定は非終端状態（`running`/`gate_passed`/`gate_failed`）のみ表示——`accepted`/`discarded` まで含めたい場合は `--all`。出力（task_id・input・type/recipe/mode/最終 step/gate）をそのまま提示する。整形の追加は不要。
 
 「ターミナルをいくつも開いていて何をしていたか忘れる」状況は、このコマンド1つに集約することで解消する——ユーザーが並行タスクの状態を尋ねたら、まず `board` を提案する。
 

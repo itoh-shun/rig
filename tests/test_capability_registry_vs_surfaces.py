@@ -904,8 +904,10 @@ def test_the_github_actions_inputs_are_a_subset_of_the_flags_that_capability_dec
 #:   * a shipped recipe name, either after `--recipe` or in backticks — a recipe is
 #:     executed by `rig-wb run <recipe>`, so naming one names the `run` capability;
 #:   * `commands/<name>.md` — a file that delegates wholesale to another command file
-#:     inherits what that one names. `/rig:rig` is a compatibility alias for `/rig:go` and
-#:     is the only file that does this.
+#:     inherits what that one names. `/rig:rig` is a deprecated shim for `/rig:go` (it
+#:     goes in 4.0.0) and is the only file that does this. It is resolved through rather
+#:     than exempted by name, because a front door that opens onto everything `/rig:go`
+#:     opens onto is not a command that names no capability.
 _RIG_WB = re.compile(r"rig-wb((?:[ \t]+[a-z0-9][a-z0-9.-]*)+)")
 _WORKBENCH_SHIM = re.compile(r"scripts/workbench\.py[ \t]+([a-z0-9-]+)")
 _ORCHESTRATE_SHIM = re.compile(r"scripts/orchestrate\.py[ \t]+([a-z0-9-]+)")
