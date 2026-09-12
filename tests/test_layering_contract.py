@@ -189,9 +189,11 @@ PORT_NAMES = ("Presenter", "ProcessRunner", "FileStore", "Env", "GitRepo", "Cloc
 #: between the code and the document *is the measurement*, and a checker holding its own
 #: copy of the vocabulary would drift alongside the document it audits and report nothing.
 #:
-#: `orchestrate` is the fifth and the largest — thirteen thousand lines, twenty-one commands
-#: and forty cross-pillar findings, into `packs`, `govern`, `workbench` and the package's own
-#: top-level modules at once. They are held by four adapters this pillar declares rather than
+#: `orchestrate` is the fifth and the largest — twenty-one commands in `COMMANDS` and forty
+#: findings in seven judgement modules when this pass started (35 cross-pillar and 5 into the
+#: package's own top-level modules, measured at the commit before the first adapter landed
+#: with `cli.py`, `config.py` and `yaml_adapter.py` already exempt), reaching `packs`,
+#: `govern`, `workbench` and the package root at once. They are held by four adapters this pillar declares rather than
 #: one, and which edge went into which is a measurement rather than a filing decision:
 #: `pack_surfaces.py` holds the resolver and the trust store, `govern_surfaces.py` the stage
 #: gates and the ledger, `package_surfaces.py` `repo_paths` / `caller` / `bench_providers`,
