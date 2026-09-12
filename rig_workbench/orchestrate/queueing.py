@@ -12,11 +12,40 @@ try:
 except ImportError:  # pragma: no cover - Windows
     fcntl = None  # type: ignore[assignment]
 
+from typing import Protocol
+
 from ..ports import Presenter, ProcessRunner
 from ..ports.local import CONSOLE, SUBPROCESS
 from . import config
 from . import dependencies as deps
+from .batch_surface import WORKBENCH_BATCH
 from .providers import _build_prompt, run_provider
+
+
+class BatchSummary(Protocol):
+    """What this module needs of the workbench's batch bookkeeping.
+
+    A queue GO produces two facts the workbench owns: which task a provider's reply
+    registered, and what a person must still do about the tasks that ran. Neither is a
+    judgement this module makes — the task record, the acceptance state and the wording of
+    the reminder all live in `workbench.batch`, and answering them a second time here would
+    give the queue its own drifting copy of the board's vocabulary.
+
+    Stated as a protocol rather than imported, because the import is what
+    `tests/test_layering_contract.py` forbids: a judgement module may reach the standard
+    library, its own pillar and the six ports, and `workbench.batch` is none of those. It
+    was reached from inside two function bodies here, which hid the edge rather than
+    removing it. `batch_surface.WORKBENCH_BATCH` satisfies this shape and is what every
+    shipped caller passes.
+    """
+
+    def task_id(self, text: str) -> str:
+        """The workbench task id the reply registered, or empty when there is none."""
+        ...
+
+    def lines(self, results: list[dict]) -> list[str]:
+        """The "what you must do next" block for a finished batch, or nothing."""
+        ...
 
 # ── Task queue (stack up, then GO; tracker integration) ──────────────────────
 # Holds "stack tasks -> GO in one batch" in a local json file or an external tracker
@@ -708,29 +737,17 @@ def _held_lines(held: list[dict]) -> list[str]:
     return lines
 
 
-def _find_task_id(text: str) -> str:
+def _find_task_id(text: str, *, batch: BatchSummary = WORKBENCH_BATCH) -> str:
     """Best-effort, and never a reason for GO to fail."""
-    try:
-        from ..workbench.batch import find_task_id
-        return find_task_id(text)
-    except Exception:  # noqa: BLE001
-        return ""
+    return batch.task_id(text)
 
 
-def _batch_lines(results: list[dict]) -> list[str]:
+def _batch_lines(results: list[dict], *,
+                 batch: BatchSummary = WORKBENCH_BATCH) -> list[str]:
     """The regrouped "what you must do next" block, or nothing.
 
-    Imported lazily and wrapped: the batch already ran, and a rendering problem in the
-    summary must not turn a completed GO into a traceback.
+    Deferred and wrapped on the other side of `BatchSummary`: the batch already ran, and a
+    rendering problem in the summary must not turn a completed GO into a traceback.
     """
-    try:
-        from ..workbench.batch import group_batch, render_batch
-        from ..workbench.state import maybe_repo_root
-
-        root = maybe_repo_root()
-        if root is None:
-            return []
-        return render_batch(group_batch(root, results))
-    except Exception:  # noqa: BLE001
-        return []
+    return batch.lines(results)
 

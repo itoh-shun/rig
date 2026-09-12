@@ -11,6 +11,7 @@ import subprocess
 import concurrent.futures as futures
 from collections import Counter
 from functools import wraps
+from typing import Protocol
 
 from .. import repo_paths
 from ..ports import Clock, Env, Presenter, ProcessRunner
@@ -39,6 +40,28 @@ from .secure_fs import (
     prepare_output_target,
     release_output_lock,
 )
+from .batch_surface import KNOWN_PROJECTS
+
+
+class ProjectIndex(Protocol):
+    """What `fleet --discovered` needs of the cross-project run log.
+
+    One question: which repositories has rig actually run in. The answer is a projection of
+    `~/.rig/runs.jsonl`, which is the workbench's file with the workbench's rules about
+    truncated lines and collapsed records — reading it here would be a second reader of one
+    log, and the second reader is the one that goes stale.
+
+    Stated as a protocol rather than imported, because the import is what
+    `tests/test_layering_contract.py` forbids: a judgement module may reach the standard
+    library, its own pillar and the six ports, and `workbench.run_index` is none of those.
+    It was reached from inside this command's body, which hid the edge rather than removing
+    it. `batch_surface.KNOWN_PROJECTS` satisfies this shape and is what every shipped caller
+    passes.
+    """
+
+    def __call__(self) -> list[str]:
+        """Every repository that has recorded a run, newest first."""
+        ...
 
 
 _SECURE_PIN_FLAGS = {
@@ -1291,7 +1314,8 @@ def _read_jsonl(path: pathlib.Path) -> list[dict]:
     return rows
 
 
-def cmd_fleet(args, *, out: Presenter = CONSOLE):
+def cmd_fleet(args, *, out: Presenter = CONSOLE,
+              projects: ProjectIndex = KNOWN_PROJECTS):
     """Aggregate multiple repositories' `.rig/runs.jsonl`/`drill-results.jsonl` across projects (#272).
 
     Read-only, no side effects — no repository's `.rig/` data is ever written to. Meant for
@@ -1341,8 +1365,7 @@ def cmd_fleet(args, *, out: Presenter = CONSOLE):
         sys.exit(1)
 
     if discovered:
-        from ..workbench.run_index import known_projects
-        names = known_projects()
+        names = projects()
     else:
         names = [p for p in repos_arg.split(",") if p.strip()]
     repo_paths = [pathlib.Path(p).expanduser().resolve() for p in names]
