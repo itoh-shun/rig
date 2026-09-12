@@ -74,7 +74,8 @@ from rig_workbench.workbench.reporting import read_all_tasks
 
 from . import conformance as conf
 from . import ledger, waiver
-from .approval import UNKNOWN_HEAD, evaluate, load_approvals, record_decision
+from .approval import (UNKNOWN_HEAD, evaluate, ledger_attestations, load_approvals,
+                       record_decision)
 from .identity import ORG_SCHEMA, current_actor, load_org_binding, org_binding_path
 # `PERMISSIONS` left with it: the only thing this module used it for was the
 # `govern can` help line ("one of: …"), and that argument's help now comes from the
@@ -556,7 +557,9 @@ def cmd_approve(args: argparse.Namespace, out: Presenter, clock: Clock) -> Verdi
     # disagree about whether an approval still counts.
     head = ((_branch_tip(root, task) or UNKNOWN_HEAD) if task.get("branch")
             else _head(root, task))
-    status = evaluate(eff, task, load_approvals(root, task_id), head=head, clock=clock)
+    status = evaluate(eff, task, load_approvals(root, task_id), head=head,
+                      attested=ledger_attestations(root, chain_required=eff.audit_chain_required),
+                      clock=clock)
     out.out(f"## rig govern approve: {task_id} ({task.get('task_type')})\n")
     if not eff.active:
         out.out("(no policy in effect — decisions are recorded but nothing is required)")
@@ -691,7 +694,7 @@ def cmd_audit(args: argparse.Namespace, out: Presenter, clock: Clock) -> Verdict
     out.out(f"## rig govern audit (latest {len(shown)} / {len(entries)})\n")
     for e in shown:
         out.out(f"  #{e.get('seq'):<4} {e.get('ts')}  {e.get('action'):<16} "
-                f"{e.get('actor')}  {e.get('subject')}")
+                f"{e.get('actor')}  {e.get('subject')}{ledger.collapsed_note(e)}")
         data = e.get("data") or {}
         if data:
             out.out(f"        {json.dumps(data, ensure_ascii=False, sort_keys=True)}")

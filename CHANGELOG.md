@@ -536,6 +536,77 @@ word. Every prose line that spelled it `rig-wb review` is corrected to the form 
 
 ### Fixed
 
+**Two governance-integrity follow-ups the G2 and G3 reviews recorded, each measured through the
+real CLI before it was closed.**
+
+- **A decision no ledger entry attests no longer counts toward the quorum.** `approvals.json`
+  is plain JSON in a tree the task's own author can write, and nothing reconciled it against the
+  HMAC-chained ledger: measured on a governed scratch task, a hand-written
+  `{"actor": "bob", "decision": "approve"}` nobody granted printed `approvals: 1/1  ✓ satisfied`
+  and `accept` carried on, with no `approval.grant` anywhere in the chain. `accept`, `govern
+  approve status` and conformance's `approvals` check now read the ledger and drop a decision no
+  `approval.grant` / `approval.deny` entry attests for the same task, actor, decision, org, team
+  and branch tip, with its own line — `· bob — not counted: no ledger entry attests this
+  decision` — and the accept is refused with `approval requirement not met (0/1)`. An entry
+  written before the shas existed (b5016ed) carries neither, so it is matched on task, actor and
+  decision alone and keeps counting: an upgrade must not lock a team out of work its own ledger
+  already attests. Identities are compared case-folded, because `Bob` and `bob` are one person.
+  Enforced where the repository holds `.rig/provenance.key` or the policy sets
+  `audit.chain_required`; a repository with neither has no chain to reconcile against and behaves
+  exactly as before. **A signature on the attesting entry is deliberately not required**: the key
+  is created lazily by the first successful accept, so honest grants made before it are unsigned
+  for good — measured, requiring one refused a real approval the moment the repository first
+  signed anything — and it buys nothing, because the chain needs no secret and a forger can
+  append an unsigned entry too. Denials are never reconciled away. **Two limits, measured and
+  stated rather than implied.** Without a key this buys ordering and visibility, not resistance:
+  an attacker who can write `approvals.json` can append the matching `approval.grant` with
+  `entry_hash` and `prev` recomputed by hand, and `verify` still answers `ledger intact — 2
+  entries, unsigned`. And a repository that *had* a key can be talked out of having had one —
+  strip every `sig`, recompute the chain, delete the key, and enforcement drops away silently.
+  That one is documented and not closed: every marker that could remember lives in `.rig/`, which
+  the same attacker can write. `audit.chain_required` in a git-tracked policy layer is the only
+  durable answer, and it is the knob an org that wants this closed sets.
+- **Both ledgers cap a repeated event at four lines a day.** `.rig/ledger.jsonl` and
+  `.rig/audit.jsonl` grew one line per event with no bound, and a caller who is being refused can
+  loop — most of all through the `accept_refused` line the entry above adds on seven refusal paths.
+  Measured at 66bd4fe, 1000 identical appends wrote 369,890 bytes over 1000 lines in 2.5s, and the
+  time is quadratic because every append re-reads the file to find `prev`; the same 1000 now write
+  1,392 bytes over 4 lines in 0.10s, and the plain audit log 484 bytes over 4. Three lines are
+  written as they always were and the fourth carries `collapsed`; the rest of that day are not
+  written, and `append` returns the candidate marked `suppressed` so a caller can tell. The key is
+  the event **and the date**, counted wherever it appears rather than at the tail: counting a
+  consecutive run left alternating two events completely unbounded (measured, 200 alternating calls
+  wrote 200 lines; now 8), and the date is what keeps the cap from silencing an event that
+  legitimately recurs next week and keeps a campaign that runs for days visible as days. Nothing is
+  rewritten, so the chain is untouched — `seq` stays dense and `govern audit --verify` answers
+  `ledger intact` — and the two readers that must not mistake a capped line for a single event now
+  say so: `workbench audit` and `govern audit log` print `(+3 more like it that day; further
+  repeats that day were not recorded)`, and `audit_event_weights` weights the line by what it
+  stands for — which is what `force_bypass_counter`, and `stats`, `digest` and `cockpit`
+  behind it, then count. Each file caps its own writes only:
+  the cap used to return before the ledger mirror, which let four hand-written lines in the
+  unsigned audit log suppress a real `accept_force` from the chain (measured, audit 4 → 4 and
+  ledger 0 → 0). **One payload shape changes with it:** an `audit.*` ledger entry's `data` no
+  longer repeats the event's own `ts`, because that made every mirror unique and the chain could
+  never recognise a repeat of itself — so `govern audit export` output for those entries has one
+  field fewer, and the entry's own `ts` is the same moment. `collapsed` is dropped from the mirror
+  for the same reason. `audit_event_weights` clamps that same weight at what the cap can write,
+  so a hand-written `"collapsed": 1000000` in the unsigned audit file cannot reach
+  `force_bypass_counter` as a million forced accepts; and where the cap has floored a count,
+  `stats`, `digest` and `cockpit` print it as `4+ (repeats capped)` rather than as a total. And the
+  cap's read is inside `audit_append`'s swallow-all: a `.rig/audit.jsonl` holding one 0xff byte
+  raised `UnicodeDecodeError` out of `accept` *after* the squash, so a forced bypass applied with
+  no record at all; the read now defaults to appending anyway, and the line and its ledger mirror
+  are both written. **What it costs:** within one day, an event that happened four times and one
+  that happened a thousand times read the same. Recording that exactly is impossible append-only —
+  advancing a count requires writing, and a suppressed event writes nothing — and the alternatives
+  are a non-atomic rewrite of the tail entry or a counter file beside the chain. Recorded as debt
+  rather than taken, along with the cost of the cap's own read: `audit_append` and
+  `ledger._event_total` both walk the whole file per append, both with a `json.dumps` per entry,
+  which is quadratic on the path the cap exists to bound. It is the shape `ledger.append` has
+  always paid for `prev`, and the cap shortens it by holding the line count down rather than by
+  avoiding it.
+
 **Three acceptance-gate integrity holes, each measured on a scratch `feature` task before it
 was closed.**
 
@@ -627,6 +698,7 @@ carried only the task type and the note, which says an approval happened and not
 was for. The entry's `data` now carries the verdict, the `head` and the `branch_tip`. It
 does not stop the file being edited — it makes the edit visible, because a decision
 claiming a commit no chain entry ever attested is now a difference somebody can find.
+*`410092c` is the half that makes govern see it: such a decision is no longer counted.*
 
 **Known debt, recorded and not fixed here.** The `accept_force` audit line is written
 before the squash can fail, so the ledger can still record a forced accept that never
@@ -706,7 +778,9 @@ not authenticated — the docstring now says so, and nothing decides on it.
 
 **Recorded and not fixed here.** `.rig/audit.jsonl` and `.rig/ledger.jsonl` have no bound
 and nothing prunes them, and a refused force is now a line somebody else can cause to be
-written — repeated refusals grow both files. `ledger._key` accepts a zero-byte key and
+written — repeated refusals grow both files. *Closed by `410092c`: a repeated event is written three
+times, then once more carrying `collapsed`, and not again that day; 50 refused forces
+through the CLI leave 4 lines in each file and the chain still verifies.* `ledger._key` accepts a zero-byte key and
 signs with it (pre-existing). `state.audit_append` swallows every exception, so a write
 that fails is a gap rather than an error; `verify` reports the gap, and nothing reports the
 failure. Moving the force line after the squash leaves a window of its own: a signal

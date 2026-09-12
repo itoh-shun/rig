@@ -15,7 +15,8 @@ import pathlib
 
 from .config import ACTIVE_STATUSES
 from .confidence import aggregate_drill_confidence
-from .reporting import force_bypass_counter, gate_status_counts, read_all_tasks
+from .reporting import (force_bypass_count, force_bypass_counter, gate_status_counts,
+                        read_all_tasks)
 from .state import _load_audit, gate_status, load_json, repo_root, runs_dir
 
 
@@ -164,9 +165,11 @@ def cmd_cockpit(_args: argparse.Namespace) -> None:
 
     # ── Safety strip ──────────────────────────────────────────────────────
     print("├─ Safety strip")
-    n_force, _ = force_bypass_counter(_load_audit(root))
+    audit_events = _load_audit(root)
+    n_force, _ = force_bypass_counter(audit_events)
     if n_force:
-        print(f"│ force-bypass: {n_force} (details: `workbench.py audit`)")
+        print(f"│ force-bypass: {force_bypass_count(audit_events, n_force)} "
+              f"(details: `workbench.py audit`)")
     else:
         print("│ No force-bypass records.")
 

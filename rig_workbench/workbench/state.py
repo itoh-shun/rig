@@ -185,25 +185,152 @@ def audit_append(root: pathlib.Path, event: dict) -> None:
     The file keeps its v1 shape — `workbench audit`, `digest` and every existing
     reader depend on it. Under a policy the same event is *also* chained into
     `.rig/ledger.jsonl`, where deleting it is detectable (govern.ledger).
+
+    **Repeats of one event are bounded, and each file bounds itself.** This file has no
+    chain to protect it and had no cap of its own, so a caller that can make the same event
+    happen repeatedly grew it a line at a time for as long as it liked. The rule
+    `govern.ledger` applies to the chain applies here — every field but the time of day
+    compared, plus the date, `REPEAT_CAP` lines written and one more carrying `collapsed`,
+    and the rest of that day not written.
+
+    **The cap decides this file's write and nothing else.** It used to return before the
+    ledger mirror, which handed an unsigned, hand-writable file authority over what the
+    chain records: four look-alike lines pasted into `.rig/audit.jsonl` suppressed a real
+    `accept_force` from the chain (measured, audit 4 → 4 and ledger 0 → 0), and the chain's
+    own run was judged against this file's tail rather than its own (measured, a
+    `policy.init` in between broke the ledger's run and the next repeat still wrote
+    nothing). The mirror is now unconditional and `ledger.append` applies its own cap
+    against its own tail — which is why the mirrored payload drops `ts` and `collapsed`:
+    those are this file's bookkeeping, and leaving them in made every mirror unique so the
+    chain could never recognise a repeat of its own.
+
+    Line shape is unchanged, which is why `cmd_audit` and the rest keep reading it; the two
+    readers that must not mistake a collapsed line for a single event say so themselves
+    (`govern.ledger.collapsed_note`, `audit_event_weights`).
     """
+    # INSIDE the swallow, and defaulting to "append anyway". The historic write was an
+    # append with no read; the cap gave this function a read, and a read can fail where an
+    # append cannot — a `.rig/audit.jsonl` holding a single 0xff byte raised
+    # `UnicodeDecodeError` out of `_load_audit`, straight through `audit_append` and out of
+    # `accept`, which by then has already squashed and written `status: accepted`. A forced
+    # bypass then applied with no record in either file. A corrupt or unreadable audit log
+    # must cost at most the cap, never the record.
     try:
-        p = audit_path(root)
-        p.parent.mkdir(parents=True, exist_ok=True)
-        with p.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n")
+        suppressed = _audit_repeat_suppressed(root, event)
     except Exception:
-        pass
+        suppressed = False
+    if not suppressed:
+        try:
+            p = audit_path(root)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            with p.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n")
+        except Exception:
+            pass
     try:
         from ..govern import ledger
         from ..govern.identity import current_actor, load_org_binding
 
         binding = load_org_binding(root)
         if binding.bound:
+            mirrored = {k: v for k, v in event.items() if k not in ("ts", "collapsed")}
             ledger.append(root, f"audit.{event.get('action', 'event')}",
                           actor=current_actor(root), subject=str(event.get("task_id") or ""),
-                          org=binding.org, team=binding.team, data=event)
+                          org=binding.org, team=binding.team, data=mirrored)
     except Exception:
         pass
+
+
+def _audit_repeat_suppressed(root: pathlib.Path, event: dict) -> bool:
+    """Whether this event repeats the tail of `.rig/audit.jsonl` often enough to stop.
+
+    Mutates `event` to carry `collapsed` — that day's line count for it — on the entry that
+    closes the cap; returns True for the repeats after it. Reading the file to write one
+    line is the cost of the bound, and it is the same cost `govern.ledger.append` has always
+    paid to find `prev`. Every failure here is "not suppressed": the caller swallows what
+    escapes anyway, and both layers answer the same way, because a log this cannot read is a
+    reason to write more rather than less.
+    """
+    from ..govern import ledger          # function-local, as the mirror below already is
+
+    try:
+        existing = _load_audit(root)
+    except Exception:
+        return False
+    on_record = _audit_event_total(existing, event)
+    if on_record > ledger.REPEAT_CAP:
+        return True
+    if on_record == ledger.REPEAT_CAP:
+        event["collapsed"] = on_record + 1
+    return False
+
+
+def _audit_event_total(existing: list[dict], event: dict) -> int:
+    """How many lines this event already has on today's record in `.rig/audit.jsonl`.
+
+    The same walk `govern.ledger._event_total` does over the chain, over this file's own
+    shape: every occurrence anywhere, not only a consecutive run, so that alternating two
+    events does not escape the cap; a `collapsed` entry sets the running count rather than
+    adding to it, because it already accounts for every line before it.
+    """
+    key = _audit_repeat_key(event)
+    total = 0
+    for previous in existing:
+        if _audit_repeat_key(previous) != key:
+            continue
+        carried = previous.get("collapsed")
+        total = carried if isinstance(carried, int) and carried > 0 else total + 1
+    return total
+
+
+def audit_event_weights(events: list[dict]) -> list[tuple[dict, int]]:
+    """Each audit event with the number of lines it accounts for.
+
+    One, except on an entry the cap closed: that one carries that day's line count for the
+    event, and what it adds is that count minus what is already counted for the same event.
+    Over a whole file this is 1 everywhere and the sum is the line count — the weighting is
+    for a *window*, a `--last 7d` that begins after the plain lines and holds only the capped
+    one, where counting it as a single event would report less than the file already shows.
+    It does not recover the run: how many there were is not recorded anywhere, and
+    `REPEAT_CAP` says why.
+
+    Counted per event and not per consecutive run, because that is how the cap counts
+    (`govern.ledger._event_total`); the key is `_audit_repeat_key`, the same one the write
+    uses, so the two can never disagree about what "the same event" means.
+
+    **And clamped, because `collapsed` arrives from an unsigned file.** `.rig/audit.jsonl`
+    is plain JSON anyone with the checkout can edit — the premise the whole reconciliation
+    rests on — so a single hand-written line saying `"collapsed": 1000000` would otherwise
+    report a million forced accepts to `stats`, `digest` and `cockpit`. The clamp is not
+    charity toward whoever wrote the line — the premise here is that they may be the forger
+    — it is the ceiling of what the code that writes this file could have produced: the cap
+    never writes more than `REPEAT_CAP + 1` for one event on one day, so a larger number is
+    not evidence of more events, only of an edit.
+    """
+    from ..govern import ledger
+
+    out: list[tuple[dict, int]] = []
+    counted: dict[str, int] = {}
+    for event in events:
+        key = _audit_repeat_key(event)
+        so_far = counted.get(key, 0)
+        carried = event.get("collapsed")
+        weight = (min(max(carried - so_far, 1), ledger.REPEAT_CAP + 1)
+                  if isinstance(carried, int) and carried > 0 else 1)
+        counted[key] = so_far + weight
+        out.append((event, weight))
+    return out
+
+
+def _audit_repeat_key(event: dict) -> str:
+    """What makes two audit events the same one: every field but the time of day, plus the
+    date, and never `collapsed` (the capping line has to read as one more of the event it
+    caps). The date is in it for the reason `govern.ledger.REPEAT_CAP` gives — the cap is per
+    event per day, so it never silences an event that recurs next week, and a campaign that
+    runs for days stays visible as days."""
+    body = {k: v for k, v in event.items() if k not in ("ts", "collapsed")}
+    body["_day"] = str(event.get("ts") or "")[:10]
+    return json.dumps(body, sort_keys=True, ensure_ascii=False, default=str)
 
 
 def _load_audit(root: pathlib.Path) -> list[dict]:

@@ -25,7 +25,8 @@ import json
 import pathlib
 from collections import Counter
 
-from .reporting import (force_bypass_counter, gate_status_counts, load_reviews,
+from .reporting import (force_bypass_count, force_bypass_counter, gate_status_counts,
+                        load_reviews,
                         read_all_tasks, rubber_stamp_warnings, verifier_counters)
 from .state import _load_audit, load_json, maybe_repo_root, runs_dir
 
@@ -147,7 +148,8 @@ def build_digest(root: pathlib.Path, period: str,
     n_force, by_bypass = force_bypass_counter(audit_events)
     lines.append("## Force accepts")
     lines.append("")
-    lines.append(f"- `accept --force` in period: {n_force}")
+    lines.append("- `accept --force` in period: "
+                 + force_bypass_count(audit_events, n_force))
     for name, n in by_bypass.most_common():
         lines.append(f"  - bypassed {name}: {n}")
     lines.append("")

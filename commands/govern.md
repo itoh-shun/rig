@@ -99,7 +99,7 @@ rig-wb orchestrate approve architecture_review --deny --note "there is no ADR"
 
 ## How this relates to accept (no second chokepoint)
 
-Approval **adds to the acceptance gate; it does not replace it**. Where a policy exists, `accept` passes through the accept permission, the approval quorum (**separation of duties**: the author's approval does not count; **freshness**: it lapses when the branch moves), the `--force` permission, and the validity of any exception, before it reaches the squash merge. There is still exactly one chokepoint, accept — build a second and you have built a way around the first.
+Approval **adds to the acceptance gate; it does not replace it**. Where a policy exists, `accept` passes through the accept permission, the approval quorum (**separation of duties**: the author's approval does not count; **freshness**: it lapses when the branch moves; **attestation**: a decision that no `approval.grant` ledger entry attests for the same task, actor, decision and branch tip is not counted — `approvals.json` is an ordinary writable file and the chain is the half that cannot be edited unseen. It is enforced where the repository holds `.rig/provenance.key` or the policy sets `audit.chain_required`; a repository with neither has no chain to reconcile against and behaves as before, and without a key the reconciliation buys visibility rather than resistance), the `--force` permission, and the validity of any exception, before it reaches the squash merge. There is still exactly one chokepoint, accept — build a second and you have built a way around the first.
 
 ## Flags
 

@@ -15,6 +15,8 @@ import sys
 
 import pytest
 
+from rig_workbench.govern import ledger
+
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 WORKBENCH = REPO_ROOT / "scripts" / "workbench.py"
 
@@ -629,3 +631,142 @@ def test_the_ledger_records_which_commit_an_approval_was_for(repo, worktree_root
     assert entry["data"]["head"] == entry["data"]["branch_tip"] == approved
     # And the chain still verifies with the wider record in it.
     assert run_govern(["audit", "verify"], repo).returncode == 0
+
+
+# ── reconciliation: approvals.json against the chained ledger ────────────────
+def keyed(repo):
+    """Give the repository a provenance key, which is what `workbench` does the first time
+    it signs a provenance record. A keyed repository signs what it appends, so the chain
+    is in a state to attest decisions and `ledger_attestations` enforces."""
+    (repo / ".rig").mkdir(parents=True, exist_ok=True)
+    (repo / ".rig" / "provenance.key").write_bytes(b"k" * 32)
+
+
+def test_a_hand_written_approval_no_ledger_entry_attests_is_not_counted(repo):
+    """The G2 review's measurement, pinned. `approvals.json` is plain JSON in a tree the
+    task's author can write: before this, a decision nobody granted printed `approvals: 1/1
+    ✓ satisfied` and accept went through, and the only trace in the ledger was the
+    `accept.force` written afterwards."""
+    keyed(repo)
+    govern(repo, approvals={"feature": {"quorum": 1, "roles": ["reviewer"]}})
+    task_id = new_task(repo)
+    make_acceptable(repo, task_id)
+    head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, check=True,
+                          capture_output=True, text=True).stdout.strip()
+    (repo / ".rig" / "runs" / task_id / "approvals.json").write_text(json.dumps(
+        {"task_id": task_id, "decisions": [
+            {"actor": "bob", "decision": "approve", "roles": ["reviewer"], "head": head,
+             "branch_tip": None, "note": "never happened",
+             "ts": "2026-09-12T10:00:00+00:00"}]}), encoding="utf-8")
+
+    result = run_cli(["accept", task_id], repo)
+    assert result.returncode != 0
+    assert "approvals: 0/1" in result.stdout
+    assert "· bob — not counted: no ledger entry attests this decision" in result.stdout
+    assert "approval requirement not met (0/1)" in out(result)
+
+
+def test_approve_status_reads_the_unattested_decision_the_same_way_accept_does(repo):
+    keyed(repo)
+    govern(repo, approvals={"feature": {"quorum": 1, "roles": ["reviewer"]}})
+    task_id = new_task(repo)
+    make_acceptable(repo, task_id)
+    (repo / ".rig" / "runs" / task_id / "approvals.json").write_text(json.dumps(
+        {"task_id": task_id, "decisions": [
+            {"actor": "bob", "decision": "approve", "roles": ["reviewer"], "head": None,
+             "branch_tip": None, "note": "", "ts": "2026-09-12T10:00:00+00:00"}]}),
+        encoding="utf-8")
+    shown = run_govern(["approve", "status", task_id], repo)
+    assert "approvals: 0/1" in shown.stdout
+    assert "no ledger entry attests this decision" in shown.stdout
+
+
+def test_an_approval_the_ledger_attests_still_counts_in_a_signing_repository(repo):
+    """The honest path, unchanged. `govern approve grant` writes the decision and the
+    `approval.grant` entry in the same command, so the two always agree."""
+    keyed(repo)
+    govern(repo, approvals={"feature": {"quorum": 1, "roles": ["reviewer"]}})
+    task_id = new_task(repo)
+    make_acceptable(repo, task_id)
+    granted = run_govern(["approve", "grant", task_id, "--note", "read every line"], repo,
+                         env={"RIG_ACTOR": "bob"})
+    assert granted.returncode == 0, out(granted)
+    assert "approvals: 1/1" in granted.stdout and "satisfied" in granted.stdout
+    result = run_cli(["accept", task_id], repo)
+    assert "not counted" not in result.stdout
+    assert "approvals: 1/1" in result.stdout
+
+
+def test_without_a_key_or_a_chain_the_old_behaviour_is_kept(repo):
+    """A repository that has never signed anything has no chain to reconcile against, and
+    refusing every decision on that basis would lock out every team that has not turned the
+    ledger on. `audit.chain_required` is the switch that refuses instead."""
+    govern(repo, approvals={"feature": {"quorum": 1, "roles": ["reviewer"]}})
+    task_id = new_task(repo)
+    make_acceptable(repo, task_id)
+    (repo / ".rig" / "runs" / task_id / "approvals.json").write_text(json.dumps(
+        {"task_id": task_id, "decisions": [
+            {"actor": "bob", "decision": "approve", "roles": ["reviewer"], "head": None,
+             "branch_tip": None, "note": "", "ts": "2026-09-12T10:00:00+00:00"}]}),
+        encoding="utf-8")
+    assert "approvals: 1/1" in run_govern(["approve", "status", task_id], repo).stdout
+
+    govern(repo, approvals={"feature": {"quorum": 1, "roles": ["reviewer"]}},
+           audit={"chain_required": True})
+    required = run_govern(["approve", "status", task_id], repo)
+    assert "approvals: 0/1" in required.stdout
+    assert "no ledger entry attests this decision" in required.stdout
+
+
+def test_repeated_refused_forces_are_bounded_in_both_files(repo):
+    """The growth bound over G3's `accept_refused` line, end to end. Seven refusal paths
+    each write one, so the caller a governance boundary is refusing is the caller who can
+    write most; `govern.ledger.REPEAT_CAP` is what stops the loop.
+
+    `ATTEMPTS` is fixed and the expectation is clamped to it rather than derived from the
+    cap. Every attempt is a real `accept` subprocess, so a multiplier that follows the cap
+    upwards turns a raised `REPEAT_CAP` into a test that runs for hours instead of one that
+    fails — and a bound this slow to disagree is a bound nobody re-measures.
+    """
+    attempts = 20
+    keyed(repo)
+    govern(repo, approvals={"feature": {"quorum": 1, "roles": ["reviewer"]}})
+    task_id = new_task(repo)
+    make_acceptable(repo, task_id, leave_failing="no_unrelated_diff")
+    for _ in range(attempts):
+        assert run_cli(["accept", task_id, "--force"], repo).returncode != 0
+
+    # Each attempt happens on one day, so the whole loop is one capped event.
+    expected = min(ledger.REPEAT_CAP + 1, attempts)
+    audit = [json.loads(line) for line
+             in (repo / ".rig" / "audit.jsonl").read_text(encoding="utf-8").splitlines()]
+    chained = (repo / ".rig" / "ledger.jsonl").read_text(encoding="utf-8").splitlines()
+    assert [e["action"] for e in audit] == ["accept_refused"] * expected
+    assert len(chained) == expected
+    assert audit[-1]["reason"] == "governance"
+    if attempts > ledger.REPEAT_CAP:
+        assert audit[-1]["collapsed"] == expected
+    # The bound is a cap on what is written, not a rewrite of what was.
+    verified = run_govern(["audit", "--verify"], repo)
+    assert verified.returncode == 0
+    assert f"ledger intact — {expected} entries" in verified.stdout
+
+
+def test_a_grant_made_before_the_key_existed_still_counts_after_it(repo):
+    """The key is created lazily by the first successful accept, so an honest grant recorded
+    before it is unsigned for good. Refusing such an entry made accept stop honouring real
+    approvals the moment the repository signed anything for the first time."""
+    govern(repo, approvals={"feature": {"quorum": 1, "roles": ["reviewer"]}})
+    task_id = new_task(repo)
+    make_acceptable(repo, task_id)
+    assert run_govern(["approve", "grant", task_id, "--note", "read it"], repo,
+                      env={"RIG_ACTOR": "bob"}).returncode == 0
+    entries = [json.loads(line) for line
+               in (repo / ".rig" / "ledger.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert not any("sig" in e for e in entries)
+
+    keyed(repo)                      # what the first successful accept does
+    shown = run_govern(["approve", "status", task_id], repo)
+    assert "approvals: 1/1" in shown.stdout
+    assert "not counted" not in shown.stdout
+    assert "not counted" not in run_cli(["accept", task_id], repo).stdout

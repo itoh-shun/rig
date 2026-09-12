@@ -154,3 +154,30 @@ def test_malformed_jsonl_lines_are_skipped(tmp_path):
         f.write("{not json\n\n[1,2]\n")
     out = build_digest(tmp_path, "week")
     assert "Orchestrate runs (`.rig/runs.jsonl`): 3" in out
+
+
+def force_line(text):
+    return next(line for line in text.splitlines()
+                if line.startswith("- `accept --force` in period:"))
+
+
+def test_the_digest_marks_a_force_count_the_cap_has_floored(tmp_path):
+    """50 forced bypasses of one shape leave four entries, and four is what the digest
+    prints. The docstrings said the number was a floor; the printed number did not, and the
+    number is the part most people read."""
+    from rig_workbench.govern import ledger
+    from rig_workbench.workbench.digest import build_digest
+    from rig_workbench.workbench.state import audit_append
+
+    make_rig(tmp_path)
+    plain = force_line(build_digest(tmp_path, "week"))
+    assert "capped" not in plain          # the ordinary case says nothing
+
+    stamp = datetime.datetime.now().astimezone().isoformat(timespec="seconds")
+    for _ in range(50):
+        audit_append(tmp_path, {"ts": stamp, "action": "accept_force", "task_id": "rig-x",
+                                "bypassed": ["no_unrelated_diff"]})
+    capped = force_line(build_digest(tmp_path, "week"))
+    assert capped.endswith("+ (repeats capped)")
+    # 50 forced bypasses of one shape are four entries, beside whatever the fixture had.
+    assert int(capped.split(": ")[1].split("+")[0]) >= ledger.REPEAT_CAP + 1

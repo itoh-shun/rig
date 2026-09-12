@@ -22,7 +22,7 @@ import dataclasses
 import pathlib
 
 from . import ledger, waiver
-from .approval import UNKNOWN_HEAD, evaluate, load_approvals
+from .approval import UNKNOWN_HEAD, evaluate, ledger_attestations, load_approvals
 from .identity import current_actor, load_org_binding
 from .policy import EffectivePolicy, PolicyError, effective_policy
 from .rbac import can, roles_of
@@ -97,7 +97,11 @@ def check_accept(root: pathlib.Path, task: dict, *, bypassed: list[str],
     if head is UNKNOWN_HEAD:
         verdict.lines.append("  the task's branch does not resolve, so no approval can be "
                              "checked against the commit this would apply")
-    status = evaluate(eff, task, load_approvals(root, task.get("task_id", "")), head=head)
+    # The chain is read here and handed in, the way the branch tip is: a decision no
+    # `approval.grant` entry attests does not count toward the quorum.
+    status = evaluate(eff, task, load_approvals(root, task.get("task_id", "")), head=head,
+                      attested=ledger_attestations(
+                          root, chain_required=eff.audit_chain_required))
     verdict.approvals_counted = status.counted
     verdict.approvals_required = status.required
     if status.required or status.counting or status.denials:

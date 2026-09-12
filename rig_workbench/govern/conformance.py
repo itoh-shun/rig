@@ -27,7 +27,7 @@ from typing import Protocol, runtime_checkable
 from ..ports import Clock, FileStore
 from ..ports.local import LOCAL_FILES, SYSTEM_CLOCK
 from . import ledger, waiver
-from .approval import evaluate, load_approvals
+from .approval import evaluate, ledger_attestations, load_approvals
 from .identity import load_org_binding
 from .policy import PERMISSIONS, EffectivePolicy, PolicyError, effective_policy
 from .rbac import holders_of, permissions_of
@@ -495,6 +495,9 @@ def _check_approvals(root: pathlib.Path, eff: EffectivePolicy, records: RunRecor
         return Check("approvals", NA, UNLISTED)
     offenders: list[str] = []
     checked = 0
+    # Read once for the whole window rather than per task: `ledger_attestations` walks the
+    # chain, and a conformance run scores every accepted run in the period.
+    attested = ledger_attestations(root, chain_required=eff.audit_chain_required, files=files)
     for task in in_window:
         if task.get("status") != "accepted":
             continue
@@ -504,7 +507,7 @@ def _check_approvals(root: pathlib.Path, eff: EffectivePolicy, records: RunRecor
         checked += 1
         status = evaluate(eff, task,
                           load_approvals(root, task.get("task_id", ""), files=files),
-                          clock=clock)
+                          attested=attested, clock=clock)
         if not status.satisfied:
             offenders.append(f"{task.get('task_id')} ({task.get('task_type')}): "
                              f"{status.counted}/{status.required} approvals")

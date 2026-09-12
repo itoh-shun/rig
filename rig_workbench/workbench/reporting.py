@@ -13,7 +13,8 @@ from .progress import from_state as progress_from_state
 from .progress import next_action
 from .config import (ACTIVE_STATUSES, CHECK_ICON, GATE_PRESETS, NEXT_ACTIONS,
                      STEP_ICON, TASK_TYPES)
-from .state import (_diff_lines, _load_audit, budget_status, build_acceptance,
+from .state import (_diff_lines, _load_audit, audit_event_weights, budget_status,
+                    build_acceptance,
                     die, drift_lines, effective_base, gate_status, load_json,
                     load_project_gates, load_task,
                     maybe_repo_root, repo_root, resolve_task_id, runs_dir)
@@ -281,6 +282,8 @@ def cmd_audit(args: argparse.Namespace) -> None:
     `branch_empty`, `main_tree_dirty`, `squash_failed`), so that reaching for the override
     is visible whether or not it worked.
     """
+    from ..govern.ledger import collapsed_note
+
     root = repo_root()
     events = _load_audit(root)
     if args.action:
@@ -309,7 +312,10 @@ def cmd_audit(args: argparse.Namespace) -> None:
         else:
             second = (f"    bypassed: {_audit_cell(', '.join(e.get('bypassed') or []))}  "
                       f"gate: {_audit_cell(e.get('gate_status', '?'))}")
-        print(f"  {ts}  {action:16s}  task={tid}")
+        # Folded into the header line rather than printed on its own: the cap is a
+        # property of the entry, not an event of its own, and this listing's print count is
+        # held at a baseline (`tests/test_architecture_inventory.py`).
+        print(f"  {ts}  {action:16s}  task={tid}{collapsed_note(e)}")
         print(second)
         if e.get("failed_checks"):
             print(f"    failed: {_audit_cell(', '.join(e['failed_checks']))}")
@@ -476,14 +482,49 @@ def rubber_stamp_warnings(verifier_stats: Counter, verifier_rejects: Counter) ->
             if runs >= 5 and verifier_rejects.get(persona, 0) == 0]
 
 
+def force_bypass_count(audit_events: list[dict], n_force: int) -> str:
+    """`n_force` written the way a reader may safely act on it.
+
+    The count is a floor wherever the cap has collapsed a line: 50 forced bypasses of one
+    shape leave four entries, and four is what `stats`, `digest` and `cockpit` print. The
+    docstrings said so; the printed number did not, and the number is the only part most
+    people read. So it carries a `+` exactly when some contributing entry was capped, and
+    reads as an ordinary total otherwise — which is every repository that has never hit the
+    cap.
+
+    The `+` is not the weighting, and the two answer different halves. `audit_event_weights`
+    matters when a window holds a capped line *without* the plain entries before it — a
+    `--last 7d` that starts after them — where the line is worth what it carries rather than
+    one. Over a whole file the four entries weigh one each and the weighting changes
+    nothing; the `+` is what says the four are not all of it. Neither of them recovers how
+    many there were.
+
+    A string rather than a second return value from `force_bypass_counter`, so the three
+    surfaces fold it into the line they already print and no ratchet moves.
+    """
+    capped = any(e.get("collapsed") for e in audit_events
+                 if e.get("action") == "accept_force")
+    return f"{n_force}+ (repeats capped)" if capped else str(n_force)
+
+
 def force_bypass_counter(audit_events: list[dict]) -> tuple[int, Counter]:
-    """(number of accept_force events, Counter of bypassed criteria)."""
-    force_events = [e for e in audit_events if e.get("action") == "accept_force"]
+    """(number of accept_force events, Counter of bypassed criteria).
+
+    A floor, and the cap is why. Repeats of one event are capped in the file
+    (`govern.ledger.REPEAT_CAP`), so fifty forced bypasses of one shape leave four lines and
+    this returns four; how many there were is not recorded anywhere. `audit_event_weights`
+    is what keeps it from being worse than that — where a window holds a capped line without
+    the lines before it, the line is worth what its `collapsed` carries rather than one. Over
+    a whole file every weight is 1 and the sum is the line count. `force_bypass_count`
+    renders the floor for a reader; this returns the number.
+    """
+    weights = [(e, w) for e, w in audit_event_weights(audit_events)
+               if e.get("action") == "accept_force"]
     by_bypass: Counter[str] = Counter()
-    for e in force_events:
+    for e, weight in weights:
         for name in e.get("bypassed", []):
-            by_bypass[name] += 1
-    return len(force_events), by_bypass
+            by_bypass[name] += weight
+    return sum(w for _, w in weights), by_bypass
 
 
 def cmd_stats(args: argparse.Namespace) -> None:
@@ -571,7 +612,7 @@ def cmd_stats(args: argparse.Namespace) -> None:
                         if e.get("ts") and datetime.datetime.fromisoformat(e["ts"]) >= cutoff]
     n_force, by_bypass = force_bypass_counter(audit_events)
     if n_force:
-        print(f"\nForce bypass ({n_force}): "
+        print(f"\nForce bypass ({force_bypass_count(audit_events, n_force)}): "
               "`accept --force` cannot bypass the hard preconditions of accept_requirements (structural strength); "
               "this records the cases where soft preconditions were overridden.")
         for name, n in by_bypass.most_common():
