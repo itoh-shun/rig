@@ -132,6 +132,66 @@ def _is_untracked_state(entry: str) -> bool:
     return entry.startswith("?? ") and _names_state(entry)
 
 
+def _invoker() -> str:
+    """Who drove this command, as `.rig/runs.jsonl` and `.rig/audit.jsonl` both record it.
+
+    One reader of `RIG_INVOKER` for the two audit lines below, rather than the same
+    expression written twice: this package is not behind the `Env` port yet
+    (`tests/test_architecture_inventory.py` counts its remaining sites), so a second
+    spelling of the read would be a second site to move when it is.
+    """
+    return __import__("os").environ.get("RIG_INVOKER") or "direct"
+
+
+def _audit_force_refused(root: pathlib.Path, task_id: str, task: dict,
+                         reason: str, detail: str) -> None:
+    """Record a force that accept refused or could not apply.
+
+    A force, and not the flag: `--force` on a run whose checklist is fully met changes
+    nothing — governance is asked with `force=bool(soft_fail)` for the same reason — so the
+    callers below guard on `soft_fail`, the requirements the flag is actually reaching
+    past. Measured before that: a passing gate plus `--force` plus an unmet approval quorum
+    wrote `accept_refused` with `forced: true`, recording an ordinary governance refusal as
+    an override attempt because a word was on the command line.
+
+    Measured before this existed: every way a force can end without applying wrote nothing
+    at all — not `.rig/audit.jsonl`, not the chained ledger, not task.json — so somebody
+    probing a governance boundary once a day left exactly as much trace as somebody who
+    never tried. There are seven, and `reason` is which one: `branch_unresolvable`,
+    `governance` (quorum, the `accept.force` permission, a missing waiver),
+    `worktree_missing`, `worktree_dirty`, `branch_empty`, `main_tree_dirty`,
+    `squash_failed`. The line is `accept_refused`, alongside the `accept_force` one that
+    says a force went through.
+
+    **Only under `--force`.** The ordinary gate loop refuses far more often than it
+    accepts — that is what a gate is for — and every one of those refusals is already
+    recorded where it belongs: the criterion that failed is in `acceptance.json`, with the
+    sensor's finding under it. Auditing them here would add a line per unmet gate, which
+    is the whole run log, and the one signal this file exists to keep — someone reaching
+    past a judgement that was already given — would be the rare entry in a file nobody
+    reads.
+    """
+    audit_append(root, {
+        "ts": now_iso(),
+        "action": "accept_refused",
+        "task_id": task_id,
+        "task_type": task.get("task_type"),
+        "recipe": task.get("recipe"),
+        "forced": True,
+        "reason": reason,
+        "detail": detail,
+        # Who reached, as they claimed it. `current_identity` is the same answer the RBAC
+        # check above uses (`RIG_USER`, then `git config user.name`), and neither source is
+        # authenticated: this field says what the caller asserted, not who they are. It is
+        # worth recording anyway, because forging it takes an act, but no decision may be
+        # made on it, and `wb audit` sanitises it before printing
+        # (`reporting._audit_cell`). Under a policy `audit_append` stamps the chained
+        # ledger entry with govern's own actor as well.
+        "actor": current_identity(root),
+        "invoker": _invoker(),
+    })
+
+
 def _task_head(root: pathlib.Path, task: dict) -> str | None:
     """The task WORKTREE's HEAD — the commit the tree in front of the operator sits on.
 
@@ -369,9 +429,16 @@ def _cmd_accept_locked(args: argparse.Namespace, root: pathlib.Path, task_id: st
     # handed `head=None`, under which every approval counts. Measured: `approvals: 1/1 ✓
     # satisfied`, an `accept_force` line appended to `.rig/audit.jsonl`, and only then a raw
     # `git rev-list` failure — a weakened check and a false ledger entry, for a run that
-    # never reached the squash. Refused here, before the checklist and long before anything
-    # is written, because there is no verdict to give: the commits are gone.
+    # never reached the squash. Refused here, before the checklist and before the tree or
+    # the run-state is touched, because there is no verdict to give: the commits are gone.
+    # A `--force` that lands here leaves one `accept_refused` line and nothing else.
     if task.get("branch") and branch_tip is None:
+        if args.force:
+            # `soft_fail` is not computed yet, and here `args.force` is the same predicate
+            # by construction: a branch that does not resolve fails `gate_judged_this_head`,
+            # so any `--force` reaching this line is a force in effect.
+            _audit_force_refused(root, task_id, task, "branch_unresolvable",
+                                 f"branch '{task['branch']}' does not resolve")
         die(f"branch '{task['branch']}' does not resolve, so neither the acceptance gate nor "
             f"an approval can be about it and there is nothing to squash. Restore it "
             f"(`git branch {task['branch']} <sha>`) or start the work again with "
@@ -485,6 +552,8 @@ def _cmd_accept_locked(args: argparse.Namespace, root: pathlib.Path, task_id: st
         print(line)
     if gov.blocked:
         # Permission, quorum, or a missing waiver: the policy layer looked and said no.
+        if soft_fail:
+            _audit_force_refused(root, task_id, task, "governance", gov.blocked)
         reject(f"governance: {gov.blocked}")
 
     if soft_fail:
@@ -493,27 +562,6 @@ def _cmd_accept_locked(args: argparse.Namespace, root: pathlib.Path, task_id: st
              f'write one with `workbench.py note {task_id} "<why this was acceptable>"`, which '
              f"lands in the run log beside this decision.")
         task["forced"] = True
-        audit_append(root, {
-            "ts": now_iso(),
-            "action": "accept_force",
-            "task_id": task_id,
-            "task_type": task.get("task_type"),
-            "recipe": task.get("recipe"),
-            "bypassed": soft_fail,
-            "gate_status": status,
-            "failed_checks": [c["name"] for c in acc["checks"]
-                              if c["status"] in ("failed", "pending")],
-            # All three refs, always, and not only when they differ: an audit reading a
-            # forced accept has to be able to see which commits the verdict was measured
-            # against without going back to a worktree that may no longer exist.
-            # `evaluated_head` is REPORTED, not measured: acceptance.json is an ordinary
-            # file in a tree the task's own author can write, so it is what the gate says
-            # it judged. `branch_tip` and `worktree_head` are read from git here and now.
-            "evaluated_head": evaluated_head,
-            "worktree_head": worktree_head,
-            "branch_tip": branch_tip,
-            "invoker": __import__("os").environ.get("RIG_INVOKER") or "direct",
-        })
     skipped_criteria = sorted(c["name"] for c in acc["checks"] if c["status"] == "skipped")
     if status == "passed_with_warnings":
         warns = [f"{c['name']} ({c.get('detail') or 'no detail'})" for c in acc["checks"] if c["status"] == "warning"]
@@ -531,9 +579,14 @@ def _cmd_accept_locked(args: argparse.Namespace, root: pathlib.Path, task_id: st
     # (2) Worktree consistency check
     wt = pathlib.Path(task["worktree_path"])
     if not wt.is_dir():
+        if soft_fail:
+            _audit_force_refused(root, task_id, task, "worktree_missing", f"{wt} does not exist")
         die(f"worktree {wt} does not exist")
     dirty = worktree_dirty(wt)
     if dirty:
+        if soft_fail:
+            _audit_force_refused(root, task_id, task, "worktree_dirty",
+                                 f"{len(dirty)} uncommitted change(s) in {wt}")
         die(
             f"worktree has {len(dirty)} uncommitted change(s). "
             f"Commit them in the worktree before accepting (git -C {wt} add -A && git -C {wt} commit)"
@@ -550,6 +603,9 @@ def _cmd_accept_locked(args: argparse.Namespace, root: pathlib.Path, task_id: st
     squash_ref = branch_tip or branch
     ahead = git(["rev-list", "--count", f"{eff_base}..{squash_ref}"], cwd=root).stdout.strip()
     if ahead == "0":
+        if soft_fail:
+            _audit_force_refused(root, task_id, task, "branch_empty",
+                                 f"{branch} has no commits on top of {eff_base[:12]}")
         die(f"branch {branch} has no commits on top of base (no diff to accept)")
 
     # (2)-b Main working tree consistency check (guarantees up front that a failed
@@ -560,6 +616,9 @@ def _cmd_accept_locked(args: argparse.Namespace, root: pathlib.Path, task_id: st
     root_dirty = git(["status", "--porcelain"], cwd=root).stdout.splitlines()
     blocking = [entry for entry in root_dirty if not _is_untracked_state(entry)]
     if blocking:
+        if soft_fail:
+            _audit_force_refused(root, task_id, task, "main_tree_dirty",
+                                 f"{len(blocking)} uncommitted change(s) in {root}")
         die(
             f"The working tree has {len(blocking)} uncommitted change(s). "
             f"accept only runs on a clean working tree so that the squash merge can be safely rolled back. "
@@ -593,6 +652,13 @@ def _cmd_accept_locked(args: argparse.Namespace, root: pathlib.Path, task_id: st
         # started with is the tree they get back.
         git(["reset", "--hard", "HEAD"], cwd=root, check=False)
         restored = "The working tree was restored to its pre-merge state."
+        # The squash is what applies a forced accept, so a squash that failed is a force
+        # that did not happen — recorded as the refusal it is, and never as `accept_force`.
+        if soft_fail:
+            _audit_force_refused(
+                root, task_id, task, "squash_failed",
+                f"git merge --squash exited {proc.returncode}"
+                + (f", conflicts in {len(set(conflicted))} file(s)" if conflicted else ""))
         if conflicted:
             paths = sorted(set(conflicted))
             listed = "".join(f"    {p}\n" for p in paths[:_CONFLICT_LIST_MAX])
@@ -637,6 +703,51 @@ def _cmd_accept_locked(args: argparse.Namespace, root: pathlib.Path, task_id: st
     task["status"] = "accepted"
     task["accepted_at"] = now_iso()
     save_task(d, task)
+
+    # The force is recorded after the squash, never before it. This line used to be
+    # written beside the `forced: true` warning. Counted at b5016ed: the write was at
+    # line 498, seventy-two lines above the squash at 570, with three refusals in
+    # between — a dirty worktree (538), a branch with no commits on top of base (553),
+    # a dirty main tree (564). Any of them, or the squash itself, left
+    # `.rig/audit.jsonl` saying a forced accept had happened while the working tree was
+    # rolled back and no provenance record existed. (The other two refusals a force can
+    # meet — an unresolvable branch at 375, governance at 488 — were above the write and
+    # could never emit it.) Measured on a scratch bugfix task that passed its gate and
+    # whose base then moved under it: exit 2, one `accept_force` line, task.json at
+    # `gate_passed` with no `forced` key, no provenance.json.
+    #
+    # The alternative shape — write it early with an `outcome`, then append
+    # `accept_force_failed` — was not taken because every reader of this file counts
+    # `action == "accept_force"` and none of them reads an `outcome`: `reporting.py`'s
+    # `force_bypass_counter` (which `cmd_stats`, `digest.py` and `cockpit.py` and
+    # `mission_control.py` all call), `reporting.py`'s `cmd_audit` listing, and
+    # `govern/ledger.py`'s mirrored `audit.accept_force` entry. Under that shape each of
+    # them would have had to learn a field to stay correct; under this one they are
+    # correct unchanged, and the number they print — forced accepts — is now the number
+    # of forced accepts that were applied. A refused or failed force is its own action
+    # (`accept_refused`), which those counters ignore and `wb audit` lists.
+    if soft_fail:
+        audit_append(root, {
+            "ts": now_iso(),
+            "action": "accept_force",
+            "task_id": task_id,
+            "task_type": task.get("task_type"),
+            "recipe": task.get("recipe"),
+            "bypassed": soft_fail,
+            "gate_status": status,
+            "failed_checks": [c["name"] for c in acc["checks"]
+                              if c["status"] in ("failed", "pending")],
+            # All three refs, always, and not only when they differ: an audit reading a
+            # forced accept has to be able to see which commits the verdict was measured
+            # against without going back to a worktree that may no longer exist.
+            # `evaluated_head` is REPORTED, not measured: acceptance.json is an ordinary
+            # file in a tree the task's own author can write, so it is what the gate says
+            # it judged. `branch_tip` and `worktree_head` are read from git here and now.
+            "evaluated_head": evaluated_head,
+            "worktree_head": worktree_head,
+            "branch_tip": branch_tip,
+            "invoker": _invoker(),
+        })
 
     # The governed record of the decision. Written for every accept under a
     # policy, not only the forced ones: "who applied what, when, under which

@@ -9,6 +9,8 @@ to show up in `verify`.
 import datetime
 import json
 
+import pytest
+
 from rig_workbench.govern import conformance as conf
 from rig_workbench.govern import ledger
 from rig_workbench.workbench.reporting import read_all_tasks
@@ -128,6 +130,72 @@ def test_a_ledger_without_a_key_still_chains(tmp_path):
     seed(tmp_path, key=False)
     result = ledger.verify(tmp_path)
     assert result.ok and result.signed == 0
+
+
+def test_a_signed_ledger_whose_key_has_been_deleted_does_not_verify(tmp_path):
+    """Deleting the key is cheaper than forging a signature, and it used to work.
+
+    The chain is SHA-256 and needs no secret: an attacker rewrites the entries, recomputes
+    every `hash`, and removes `.rig/provenance.key` so the signature pass never runs. The
+    exact sequence below — two signed entries cut down to one, the chain recomputed by
+    hand, the key deleted — returned `ok=True` and "ledger intact — 1 entries, unsigned".
+    """
+    seed(tmp_path, n=2)
+    kept = [json.loads(line) for line in lines(tmp_path)][:1]
+    kept[0]["subject"] = "task-rewritten"
+    kept[0].pop("hash")
+    kept[0]["hash"] = ledger.entry_hash(kept[0])
+    rewrite(tmp_path, kept)
+    ledger.key_path(tmp_path).unlink()
+
+    result = ledger.verify(tmp_path)
+    assert not result.ok
+    assert any("signatures but" in problem and "absent" in problem for problem in result.problems)
+    # And a repository that never signed anything is still intact, not broken by this.
+    other = tmp_path / "unsigned"
+    seed(other, n=2, key=False)
+    assert ledger.verify(other).ok
+
+
+def test_a_key_that_cannot_be_read_is_reported_instead_of_skipped(tmp_path):
+    """The compensating check `_key`'s docstring names.
+
+    `_key` swallows an `OSError` into `None`, and `verify` reads the same `None` as "this
+    repository has no key" — so a key that is present and unreadable used to turn every
+    signature check off and still answer "ledger intact ... unsigned". Here the key is a
+    directory, which is the cheapest unreadable key there is.
+    """
+    seed(tmp_path, key=False)
+    ledger.key_path(tmp_path).mkdir(parents=True, exist_ok=True)
+    result = ledger.verify(tmp_path)
+    assert not result.ok
+    assert any("could not be read" in problem for problem in result.problems)
+    assert "BROKEN" in result.summary()
+
+
+def test_the_strict_secret_read_would_refuse_the_ledger_key_as_repositories_hold_it(tmp_path):
+    """Why `_key` stays on `read_bytes`, measured rather than asserted in prose.
+
+    `.rig/` is created by `mkdir(parents=True, exist_ok=True)` under the ambient umask and
+    `load_or_create_provenance_key` chmods the key file only, so a real repository has a
+    0600 key inside a 0755 directory. `read_secret_bytes` refuses that — it verifies the
+    directory before it looks at the file — and `_key` would turn the refusal into `None`,
+    leaving every ledger silently unsigned. Swapping the call is a migration (narrow the
+    directory first), and this test is what fails if somebody swaps it instead.
+    """
+    from rig_workbench.ports.local import LOCAL_FILES
+
+    (tmp_path / ".rig").mkdir(parents=True, exist_ok=True)
+    key = ledger.key_path(tmp_path)
+    key.write_bytes(b"k" * 32)
+    key.chmod(0o600)
+    (tmp_path / ".rig").chmod(0o755)
+
+    with pytest.raises(OSError, match="mode 0700"):
+        LOCAL_FILES.read_secret_bytes(key)
+    # ...while the read the ledger actually makes works, and the chain is signed.
+    seed(tmp_path, n=1, key=False)
+    assert ledger.verify(tmp_path).signed == 1
 
 
 def test_an_empty_ledger_verifies(tmp_path):

@@ -304,8 +304,8 @@ GOVERN: tuple[Capability, ...] = (
                "record afterwards",
         summary="read, verify or export the tamper-evident ledger",
         preconditions=("git-repo", "audit-ledger", "permission-audit-export"),
-        effect_line="log と verify は台帳を読むだけです。export は台帳を書き出したうえで、"
-                    "その書き出し自体を台帳に追記します",
+        effect_line="log と verify（`--verify` も同じ）は台帳を読むだけです。export は"
+                    "台帳を書き出したうえで、その書き出し自体を台帳に追記します",
         effect_class="writes-state",
         network="never",
         flags=(
@@ -313,6 +313,11 @@ GOVERN: tuple[Capability, ...] = (
                  help="read the ledger, verify its chain, or export it",
                  choices=("log", "verify", "export"), default="log"),
             Flag(name="--limit", type="int", help="with log: show only the latest N entries"),
+            # The same verdict as the `verify` positional, as a flag. The chain check was
+            # reachable only by typing a word between `log` and `export`, which is why it
+            # was read as absent; `cmd_audit` answers either spelling with exit 0 / 3.
+            Flag(name="--verify", type="bool",
+                 help="verify the chain (the same check as `audit verify`)"),
             # `audit` already has an `action` positional (log / verify / export), so this
             # option cannot take the dest argparse would derive: it would overwrite the word
             # the person typed. `dest="filter_action"` is what the shipped parser declares,

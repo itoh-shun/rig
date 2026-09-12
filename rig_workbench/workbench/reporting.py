@@ -242,13 +242,44 @@ def cmd_gates(_args: argparse.Namespace) -> None:
                 print(f"  {target} + {c}" + (f" — {descs[c]}" if c in descs else ""))
 
 
+#: What one audit field may occupy in the listing, and what it may not contain.
+_AUDIT_CELL_MAX = 200
+_AUDIT_CONTROLS = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def _audit_cell(value) -> str:
+    """One field of an audit entry, rendered for a terminal.
+
+    `.rig/audit.jsonl` holds what a caller CLAIMED, which is the point of an audit trail:
+    `actor` comes from `RIG_USER` or `git config user.name`, and a refusal's `detail`
+    quotes git. Both reach this listing from someone the command refused. Printed raw,
+    `RIG_USER=$'\x1b[2K\rnothing to see'` rewrites the line above it, and a newline forges
+    a second entry in the output that is in no file.
+
+    So the sanitising is here, at the sink, and not at the write: the ledger keeps the
+    claim verbatim — a chained entry that was rewritten before signing would be evidence
+    of nothing — and every reader that renders it is responsible for its own terminal.
+    C0 controls (ESC among them) and DEL become spaces rather than disappearing, because
+    a name that was three control characters should read as something odd rather than as
+    an empty field, and the whole cell is capped.
+    """
+    text = "" if value is None else str(value)
+    text = _AUDIT_CONTROLS.sub(" ", text)
+    return text if len(text) <= _AUDIT_CELL_MAX else text[:_AUDIT_CELL_MAX - 1] + "…"
+
+
 def cmd_audit(args: argparse.Namespace) -> None:
-    """List force-bypass records from `.rig/audit.jsonl`.
+    """List force records from `.rig/audit.jsonl`: the forces that applied, and the ones
+    that did not.
 
     Separate from the "not overridable with --force" premise of
     accept_requirements, this audit log permanently records cases where an
     unmet gate was overridden with --force (evidence of the differentiator's
-    physical strength).
+    physical strength). `accept_force` is written once the squash has applied;
+    `accept_refused` is a force that did not apply, on any of the seven paths its `reason`
+    names (`branch_unresolvable`, `governance`, `worktree_missing`, `worktree_dirty`,
+    `branch_empty`, `main_tree_dirty`, `squash_failed`), so that reaching for the override
+    is visible whether or not it worked.
     """
     root = repo_root()
     events = _load_audit(root)
@@ -263,15 +294,25 @@ def cmd_audit(args: argparse.Namespace) -> None:
     shown = events[-limit:]
     print(f"## rig audit (latest {len(shown)} / {len(events)} total)\n")
     for e in shown:
-        ts = e.get("ts", "?")
-        action = e.get("action", "?")
-        tid = e.get("task_id", "?")
-        by = ", ".join(e.get("bypassed") or [])
-        gate = e.get("gate_status", "?")
+        ts = _audit_cell(e.get("ts", "?"))
+        action = _audit_cell(e.get("action", "?"))
+        tid = _audit_cell(e.get("task_id", "?"))
+        # Two shapes share this file and this listing. A force that applied carries the
+        # requirements it bypassed and the gate it bypassed them past; a force that was
+        # refused carries why, and has no bypassed set because nothing was bypassed. The
+        # second line says whichever of the two the entry actually holds, rather than
+        # printing "bypassed:  gate: ?" over a refusal that has neither.
+        if e.get("reason"):
+            second = f"    refused: {_audit_cell(e['reason'])}" + (
+                f" — {_audit_cell(e['detail'])}" if e.get("detail") else "")
+            second += f"  by: {_audit_cell(e['actor'])}" if e.get("actor") else ""
+        else:
+            second = (f"    bypassed: {_audit_cell(', '.join(e.get('bypassed') or []))}  "
+                      f"gate: {_audit_cell(e.get('gate_status', '?'))}")
         print(f"  {ts}  {action:16s}  task={tid}")
-        print(f"    bypassed: {by}  gate: {gate}")
+        print(second)
         if e.get("failed_checks"):
-            print(f"    failed: {', '.join(e['failed_checks'])}")
+            print(f"    failed: {_audit_cell(', '.join(e['failed_checks']))}")
 
 
 # ── stats helpers (shared with digest.py — issue #285: reuse, don't duplicate) ──

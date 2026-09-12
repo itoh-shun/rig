@@ -41,6 +41,8 @@ import re
 import subprocess
 import sys
 
+import pytest
+
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 WORKBENCH = REPO_ROOT / "scripts" / "workbench.py"
 
@@ -749,6 +751,236 @@ def test_forcing_past_a_moved_head_writes_both_shas_into_the_audit_ledger(tmp_pa
     assert "gate_judged_this_head" in entry["bypassed"]
     assert entry["evaluated_head"] == judged
     assert entry["worktree_head"] == moved
+
+
+def _audit(repo):
+    path = repo / ".rig" / "audit.jsonl"
+    if not path.exists():
+        return []
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+def _ready_to_accept_but_one(repo, wt_root, task_id, unjudged="tests_pass_or_explained"):
+    """Judge every criterion but one, and write the diff summary `accept` requires.
+
+    The counterpart of `_ready_to_accept`, and the shape every test about `--force` needs:
+    with the whole gate passed there is nothing for `--force` to reach past, `soft_fail` is
+    empty, and accept behaves exactly as it would without the flag. One criterion left
+    `pending` is the smallest thing that makes the flag mean something.
+    """
+    everything = ("no_secret_leak", "no_gate_tampering", "no_injection_markers",
+                  "no_destructive_operation", "public_api_changes_documented",
+                  *DECLARATION_ONLY)
+    judged = [n for n in everything if n != unjudged]
+    r = cli(repo, wt_root, "gate", task_id,
+            *(a for n in judged for a in ("--set", f"{n}=passed")))
+    assert r.returncode == 3, r.stdout + r.stderr          # a gate with something pending
+    assert status_of(repo, task_id, unjudged)["status"] == "pending"
+    (repo / ".rig" / "runs" / task_id / "diff.md").write_text(
+        "# diff summary\n\nthe task's own work.\n", encoding="utf-8")
+
+
+def test_a_force_whose_squash_conflicts_records_the_refusal_and_not_the_force(tmp_path):
+    """The ledger records what happened, not what was attempted.
+
+    Measured before the fix, on this exact setup — one criterion left unjudged so `--force`
+    has something to reach past, and a base that moved under the branch: `accept --force`
+    printed the conflict and exited 2, the working tree was rolled back, task.json stayed
+    `running` with no `forced` key and no provenance.json — and `.rig/audit.jsonl` held one
+    `accept_force` line saying a forced accept had been applied. The line was written
+    seventy-two lines before the squash it was about (498 and 570 at the parent commit).
+
+    This is the test that fails if the write moves back above the squash. The version of it
+    that passed the whole gate first could not: with `soft_fail` empty no `accept_force` is
+    written in either position, so it held whichever order the file was in.
+    """
+    repo, wt_root, task_id, wt = _repo_ready_for_accept(tmp_path)
+    _ready_to_accept_but_one(repo, wt_root, task_id)
+    # The base moves under the branch, in the same file: the squash conflicts.
+    (repo / "app.py").write_text("x = 99  # the base moved\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "a conflicting change on the base")
+
+    forced = cli(repo, wt_root, "accept", task_id, "--force")
+    out = forced.stdout + forced.stderr
+    assert forced.returncode == 2, out
+    assert "squash merge conflicted in 1 file(s)" in out
+
+    entries = _audit(repo)
+    assert [e["action"] for e in entries] == ["accept_refused"]
+    entry = entries[0]
+    assert entry["reason"] == "squash_failed"
+    assert "conflicts in 1 file(s)" in entry["detail"]
+    assert entry["task_id"] == task_id and entry["forced"] is True
+    assert entry["actor"]
+    # Nothing was applied, so nothing claims it was.
+    assert _git_out(repo, "status", "--porcelain") == ""
+    task = json.loads((repo / ".rig" / "runs" / task_id / "task.json").read_text(encoding="utf-8"))
+    assert task["status"] == "running" and "forced" not in task
+    assert not (repo / ".rig" / "runs" / task_id / "provenance.json").exists()
+
+
+def test_a_force_refused_by_a_dirty_tree_is_recorded_as_an_attempt(tmp_path):
+    """The other half: a `--force` that never reaches the squash still reached for it.
+
+    Measured before the fix: the refusal wrote nothing anywhere, so a run of probes against
+    this boundary was indistinguishable from nobody having tried.
+    """
+    repo, wt_root, task_id, wt = _repo_ready_for_accept(tmp_path)
+    _ready_to_accept_but_one(repo, wt_root, task_id)
+    (wt / "app.py").write_text("x = 4  # uncommitted\n", encoding="utf-8")
+
+    forced = cli(repo, wt_root, "accept", task_id, "--force")
+    out = forced.stdout + forced.stderr
+    assert forced.returncode == 2, out
+    assert "uncommitted change(s)" in out
+
+    entries = _audit(repo)
+    assert [e["action"] for e in entries] == ["accept_refused"]
+    assert entries[0]["reason"] == "worktree_dirty"
+    assert "1 uncommitted change(s)" in entries[0]["detail"]
+
+    # And an unforced refusal adds nothing: the gate loop is not audited. Without the flag
+    # the same run is refused one step earlier, by the criterion nobody judged.
+    plain = cli(repo, wt_root, "accept", task_id)
+    assert plain.returncode == REJECTED, plain.stdout + plain.stderr
+    assert "tests_pass_or_explained" in plain.stdout + plain.stderr
+    assert len(_audit(repo)) == 1
+
+
+def test_a_force_refused_by_a_dirty_main_tree_is_recorded_as_an_attempt(tmp_path):
+    """The refusal furthest down the file, and the last one before the squash.
+
+    The main working tree has to be clean because the rollback after a failed squash is a
+    hard reset. A `--force` stopped here has already been past the gate, past governance
+    and past the worktree check; before this was written it left no trace at all.
+    """
+    repo, wt_root, task_id, wt = _repo_ready_for_accept(tmp_path)
+    _ready_to_accept_but_one(repo, wt_root, task_id)
+    (repo / "app.py").write_text("x = 9  # uncommitted, in the main tree\n", encoding="utf-8")
+
+    forced = cli(repo, wt_root, "accept", task_id, "--force")
+    out = forced.stdout + forced.stderr
+    assert forced.returncode == 2, out
+    assert "accept only runs on a clean working tree" in out
+
+    entries = _audit(repo)
+    assert [e["action"] for e in entries] == ["accept_refused"]
+    assert entries[0]["reason"] == "main_tree_dirty"
+    assert "1 uncommitted change(s)" in entries[0]["detail"]
+    # `forced` is the force that was in effect, which here is the unjudged criterion.
+    assert entries[0]["forced"] is True
+
+
+def test_a_force_on_a_branch_with_no_commits_is_recorded_as_an_attempt(tmp_path):
+    """The refusal between the two dirty-tree ones, and the cheapest to reach.
+
+    A task whose worktree was never committed in has a branch level with its base. There
+    is nothing to squash, `--force` cannot conjure a diff, and before this write the
+    attempt left no trace — it is also one of the three refusals that lay *below* the old
+    `accept_force` write, so this path used to record a forced accept for a branch with no
+    commits on it.
+    """
+    repo, wt_root = make_repo(tmp_path), tmp_path / "wt"
+    task_id, wt = new_task(repo, wt_root)
+    (repo / ".gitignore").write_text(".rig/\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "ignore .rig")
+    # No commit in the worktree: the branch is level with its base.
+    _ready_to_accept_but_one(repo, wt_root, task_id)
+    assert _git_out(repo, "rev-list", "--count", f"HEAD..rig/{task_id}").strip() == "0"
+
+    forced = cli(repo, wt_root, "accept", task_id, "--force")
+    out = forced.stdout + forced.stderr
+    assert forced.returncode == 2, out
+    assert "has no commits on top of base" in out
+
+    entries = _audit(repo)
+    assert [e["action"] for e in entries] == ["accept_refused"]
+    assert entries[0]["reason"] == "branch_empty"
+    assert f"rig/{task_id}" in entries[0]["detail"]
+    assert entries[0]["forced"] is True
+
+
+def test_a_worktree_that_vanishes_after_the_precondition_is_recorded_as_an_attempt(tmp_path, monkeypatch):
+    """`worktree_missing` is the second reading of a fact the checklist already checked.
+
+    `worktree_exists` is a hard precondition — not overridable, `--force` or not — so an
+    ordinary deleted worktree never reaches this refusal. What reaches it is the window
+    between the two reads, which is the same shape as the squash-sha race above and is
+    driven the same way: in process, with `accept`'s own `git` helper wrapped so the
+    directory disappears *after* the checklist passed and *before* the second read. Without
+    the window the write below is defence in depth; with it, it is the only line that says
+    a force was reaching for a worktree that had gone.
+    """
+    import argparse as _argparse
+    import shutil
+
+    from rig_workbench.workbench import accept as accept_mod
+
+    repo, wt_root, task_id, wt = _repo_ready_for_accept(tmp_path)
+    _ready_to_accept_but_one(repo, wt_root, task_id)
+
+    real_git = accept_mod.git
+
+    def vanishing_git(argv, **kwargs):
+        result = real_git(argv, **kwargs)
+        if argv[:2] == ["merge-base", "--is-ancestor"] and wt.is_dir():
+            # The window, closed by hand: the checklist has read the worktree and the
+            # second read has not happened yet.
+            shutil.rmtree(wt)
+        return result
+
+    monkeypatch.setattr(accept_mod, "git", vanishing_git)
+    monkeypatch.chdir(repo)
+    with pytest.raises(SystemExit):
+        accept_mod.cmd_accept(_argparse.Namespace(task_id=task_id, force=True))
+
+    entries = _audit(repo)
+    assert [e["action"] for e in entries] == ["accept_refused"]
+    assert entries[0]["reason"] == "worktree_missing"
+    assert str(wt) in entries[0]["detail"]
+
+    # And the ordinary case — gone before accept runs at all — is the hard precondition,
+    # which is not a force being refused and writes nothing.
+    other_id, other_wt = new_task(repo, wt_root, slug="gone-early")
+    shutil.rmtree(other_wt)
+    refused = cli(repo, wt_root, "accept", other_id, "--force")
+    assert refused.returncode == 2, refused.stdout + refused.stderr
+    assert "not overridable even with --force" in refused.stdout + refused.stderr
+    assert [e["task_id"] for e in _audit(repo)] == [task_id]
+
+
+def test_the_audit_listing_does_not_hand_a_refused_callers_escape_codes_to_the_terminal(tmp_path):
+    """`actor` is a claim by the caller the command refused, and `wb audit` prints it.
+
+    `RIG_USER` is whatever the caller exports, so a blocked force can put `ESC[2K\r` and a
+    newline into the entry and rewrite the listing around it — including forging a line
+    that is in no file. The entry keeps the claim verbatim (an audit trail that edits what
+    it records is evidence of nothing); the listing is where it is made safe.
+    """
+    repo, wt_root, task_id, wt = _repo_ready_for_accept(tmp_path)
+    _ready_to_accept_but_one(repo, wt_root, task_id)
+    (wt / "app.py").write_text("x = 4  # uncommitted\n", encoding="utf-8")
+
+    hostile = "\x1b[31mmallory\nrig-20990101-000000-forged  accept_force"
+    env = dict(os.environ, RIG_WORKTREE_ROOT=str(wt_root), RIG_USER=hostile)
+    forced = subprocess.run([sys.executable, str(WORKBENCH), "accept", task_id, "--force"],
+                            cwd=repo, capture_output=True, text=True, timeout=60, env=env)
+    assert forced.returncode == 2, forced.stdout + forced.stderr
+
+    # The file holds exactly what was claimed...
+    entry = _audit(repo)[0]
+    assert entry["action"] == "accept_refused" and entry["actor"] == hostile
+
+    # ...and the listing holds no control character at all.
+    listed = cli(repo, wt_root, "audit")
+    assert listed.returncode == 0, listed.stdout + listed.stderr
+    assert "\x1b" not in listed.stdout
+    assert "mallory" in listed.stdout
+    body = [line for line in listed.stdout.splitlines() if line.startswith("    refused:")]
+    assert len(body) == 1
+    assert "forged" in body[0]        # the forged second line stayed on the first one
 
 
 def test_a_run_whose_acceptance_json_records_no_head_is_unknown_not_matching(tmp_path):

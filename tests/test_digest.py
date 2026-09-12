@@ -9,6 +9,7 @@ window, --out file output, and the graceful empty-data path.
 import argparse
 import datetime
 import json
+from collections import Counter
 import pathlib
 
 from rig_workbench.workbench.digest import build_digest, cmd_digest
@@ -62,6 +63,12 @@ def make_rig(root: pathlib.Path) -> None:
     write_jsonl(rig / "audit.jsonl", [
         {"ts": iso(1), "action": "accept_force", "task_id": "t-failed",
          "bypassed": ["acceptance_gate_not_failed"], "gate_status": "failed"},
+        # A force that was refused shares the file with the one that applied, and the
+        # counters here are about forces that landed: `accept --force in period` is a
+        # count of overrides, and a refusal overrode nothing.
+        {"ts": iso(1), "action": "accept_refused", "task_id": "t-failed", "forced": True,
+         "reason": "governance", "detail": "approval requirement not met (0/1)",
+         "actor": "olivia"},
     ])
 
     write_jsonl(rig / "drill-results.jsonl", [
@@ -89,6 +96,22 @@ def test_digest_contains_expected_counts(tmp_path):
     assert "- bypassed acceptance_gate_not_failed: 1" in out
     assert "stamper has 0 rejects across 5 runs" in out
     assert "66.7% (2/3 seeds across 1 drill run(s))" in out
+
+
+def test_a_refused_force_is_not_counted_as_a_force_accept(tmp_path):
+    """`force_bypass_counter` filters on the action name, which is what let the
+    `accept_force` line move after the squash without touching any of its five readers —
+    `wb stats`, digest, cockpit and mission control all come through this one function.
+    The refusal in the fixture above is the entry that must not be counted."""
+    from rig_workbench.workbench.reporting import force_bypass_counter
+    from rig_workbench.workbench.state import _load_audit
+
+    make_rig(tmp_path)
+    events = _load_audit(tmp_path)
+    assert [e["action"] for e in events] == ["accept_force", "accept_refused"]
+    n_force, by_bypass = force_bypass_counter(events)
+    assert n_force == 1
+    assert by_bypass == Counter({"acceptance_gate_not_failed": 1})
 
 
 def test_month_period_widens_the_window(tmp_path):

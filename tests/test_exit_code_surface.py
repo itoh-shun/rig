@@ -669,6 +669,63 @@ def test_specific_govern_can_exits_zero_for_a_permission_the_actor_holds_and_thr
     assert "denied" in denied.stdout
 
 
+# ── specific: govern audit --verify (0 / 3) ──────────────────────────────────
+def test_specific_govern_audit_verify_exits_zero_on_an_intact_chain_and_three_on_a_broken_one(
+        rig_cli, rig_git_repo):
+    """The ledger is an HMAC chain and `--verify` is the flag that says so out loud.
+
+    One repository, one ledger, two states of the same file: as `govern init` wrote it, and
+    with one entry's `actor` edited by hand. The 3 is the same nonconformance code
+    `govern can` returns for a denied permission — a verdict, not a malfunction — and the
+    positional spelling (`govern audit verify`) answers identically, which is what makes
+    the flag an alias rather than a second check.
+    """
+    env = {"RIG_ACTOR": "rig test"}
+    started = rig_cli("govern", "init", "--org", "acme", "--team", "team-a",
+                      cwd=rig_git_repo, env=env)
+    assert started.returncode == 0, started.stdout + started.stderr
+
+    intact = rig_cli("govern", "audit", "--verify", cwd=rig_git_repo, env=env)
+    assert intact.returncode == OK, intact.stdout + intact.stderr
+    assert "ledger intact" in intact.stdout
+
+    ledger = rig_git_repo / ".rig" / "ledger.jsonl"
+    entries = [json.loads(line) for line in
+               ledger.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert entries, "govern init writes at least one ledger entry"
+    entries[0]["actor"] = "mallory"
+    ledger.write_text("\n".join(json.dumps(e, sort_keys=True) for e in entries) + "\n",
+                      encoding="utf-8")
+
+    broken = rig_cli("govern", "audit", "--verify", cwd=rig_git_repo, env=env)
+    assert broken.returncode == 3, broken.stdout + broken.stderr
+    assert "ledger BROKEN" in broken.stdout
+    assert "entry #0" in broken.stdout and "edited after the fact" in broken.stdout
+
+    positional = rig_cli("govern", "audit", "verify", cwd=rig_git_repo, env=env)
+    assert positional.returncode == broken.returncode
+    assert positional.stdout == broken.stdout
+
+
+def test_specific_govern_audit_refuses_verify_together_with_export(rig_cli, rig_git_repo):
+    """Two jobs, one invocation, and silence would be the worse answer.
+
+    `--verify` reads the chain and `export` writes it out. Taken together the verdict
+    printed, the export never happened, and the status said the chain was intact — a
+    caller piping `audit export --verify` to a file got an empty file and a 0.
+    """
+    env = {"RIG_ACTOR": "rig test"}
+    assert rig_cli("govern", "init", "--org", "acme", "--team", "team-a",
+                   cwd=rig_git_repo, env=env).returncode == 0
+
+    both = rig_cli("govern", "audit", "export", "--verify", cwd=rig_git_repo, env=env)
+    assert both.returncode == REJECTED, both.stdout + both.stderr
+    assert "two different things" in both.stdout + both.stderr
+    # Each alone still works.
+    assert rig_cli("govern", "audit", "export", cwd=rig_git_repo, env=env).returncode == OK
+    assert rig_cli("govern", "audit", "--verify", cwd=rig_git_repo, env=env).returncode == OK
+
+
 # ── specific: the orchestrator's human gate (3) ──────────────────────────────
 _HUMAN_GATE_RECIPE = """---
 name: staged

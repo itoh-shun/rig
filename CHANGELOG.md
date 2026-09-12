@@ -637,6 +637,85 @@ boundary leaves no trace; a blocked-accept ledger entry would show it. `govern/l
 decisions carry `head` and no `branch_tip` by design — a stage has no task branch — and
 nothing asserts that intent, so a later reader cannot tell the design from an omission.
 
+**Four audit-ledger integrity debts, the four the paragraph above recorded, each measured
+through the real CLI before and after.**
+
+- **The forced-accept line is written after the squash, not before it.** `accept --force`
+  appended `accept_force` beside the `forced: true` warning, seventy-two lines above the
+  merge it was about — counted at the parent commit, where the write sat at line 498 and
+  the squash at 570 — with three refusals in between: a dirty worktree, a branch with no
+  commits on top of its base, and a dirty main tree. (The two refusals a force meets
+  earlier, an unresolvable branch and governance, were above the write and could never
+  emit it.) Measured on a scratch bugfix task that passed its gate and whose base then
+  moved under it: exit 2, the working tree rolled back, task.json still at `gate_passed`
+  with no `forced` key and no provenance.json written — and one `accept_force` line saying
+  a forced accept had been applied. The line now goes in once the squash has applied, so
+  the count every reader takes is forced accepts that landed. The readers were checked one
+  by one and none needed a change: `reporting.py`'s `force_bypass_counter` (and through it
+  `wb stats`, `wb digest`, `cockpit` and mission control), `reporting.py`'s `wb audit`
+  listing, and the `audit.accept_force` entry `state.audit_append` mirrors into the
+  governance ledger. The alternative shape — write it early with an `outcome` and append a
+  failure line — was rejected for that reason: each of those readers filters on the action
+  name and reads no `outcome`.
+- **A refused force is now a line instead of nothing.** Seven ways a force can end without
+  applying wrote nothing at all — not `.rig/audit.jsonl`, not the chained ledger, not
+  task.json — so somebody probing the boundary once a day was indistinguishable from
+  somebody who never tried. Each of the seven now appends one `accept_refused` line
+  carrying `reason`, `detail`, the actor (`RIG_USER`, then `git config user.name`) and the
+  invoker; `reason` says which of the seven it was, and `_audit_force_refused`'s docstring
+  lists them. **Unforced refusals are deliberately not audited** and the same docstring
+  says why: the ordinary gate loop refuses far more often than it accepts, every one of
+  those refusals is already in `acceptance.json` with the sensor's finding under it, and
+  auditing them would bury the one signal this file exists for — somebody reaching past a
+  judgement that was already given. `wb audit` prints the refusal's reason where a force
+  prints its bypassed criteria.
+- **`govern audit --verify` exists.** The ledger has been an HMAC chain since v2 and
+  `ledger.verify` has always been able to report the first break in each category, but the
+  only door to it was a positional word between `log` and `export`. The flag is the same
+  check, the same output — `ledger intact — N entries, M signed`, or `ledger BROKEN` with
+  the entry number and the reason for each break — and the same codes: 0 intact, 3 broken,
+  the nonconformance code `govern can` already returns for a denial. Both spellings are
+  pinned against a real edited ledger in `tests/test_exit_code_surface.py`, and the flag is
+  declared in the capability registry beside the exit codes it returns.
+- **The chain key keeps its wide read, and now says what was measured.** `ledger._key`
+  reads `.rig/provenance.key` with the port's `read_bytes` rather than `read_secret_bytes`.
+  Three shapes were put in front of the strict read: a 0600 key inside a 0755 `.rig/` —
+  what every checkout has, because `.rig/` is created under the ambient umask and only the
+  key file is chmod-ed — was refused with `secure runtime directory must be owned by the
+  caller with mode 0700`; 0600 inside 0700 was read; 0644 inside 0700 was refused as
+  `secure runtime file must be caller-owned regular mode 0600 with one link`. The first row
+  is the legitimate ledger a swap would break: the refusal becomes `None`, and the chain
+  goes on appending silently unsigned while `verify` stops checking signatures for the same
+  reason. So the read stays as it is and the compensating check moved into `verify`, which
+  now reports a key that is present and unreadable as a problem of its own instead of
+  answering "intact, unsigned" for a repository whose entries are all signed. Tightening
+  the read is still a migration — narrow the directory, write the key through
+  `write_secret_bytes`, chmod what exists — in that order, because the strict read judges
+  the directory before it looks at the file.
+
+Two more holes in the same sink were found while closing those and are closed with them.
+`verify` now fails a ledger whose entries carry signatures when the key is gone: the hash
+chain needs no secret, so rewriting the entries, recomputing every `hash`, and *deleting*
+`.rig/provenance.key` is cheaper than forging a signature, and it used to answer "ledger
+intact — 1 entries, unsigned" — measured on a two-entry signed ledger cut to one. And `wb
+audit` sanitises the fields it prints: `actor` comes from `RIG_USER` and a refusal's
+`detail` quotes git, so a caller the command refused could put `ESC` and a newline into
+the listing and forge a line that is in no file. The entry keeps the claim verbatim; the
+listing strips C0 controls and caps each cell. `actor` is what a caller asserted and is
+not authenticated — the docstring now says so, and nothing decides on it.
+
+**Recorded and not fixed here.** `.rig/audit.jsonl` and `.rig/ledger.jsonl` have no bound
+and nothing prunes them, and a refused force is now a line somebody else can cause to be
+written — repeated refusals grow both files. `ledger._key` accepts a zero-byte key and
+signs with it (pre-existing). `state.audit_append` swallows every exception, so a write
+that fails is a gap rather than an error; `verify` reports the gap, and nothing reports the
+failure. Moving the force line after the squash leaves a window of its own: a signal
+between the merge and the append loses the `accept_force` for an accept that did apply —
+strictly narrower than the bug it replaces, which recorded an accept that did not, and
+visible as a staged tree with no line. And the
+capability registry still describes `wb audit` as the log of force bypasses alone, although
+the file now holds both kinds.
+
 **Three CLI commands answered a predictable absence with a traceback, a full validation
 run, or the whole module docstring.** Each was recorded as a debt in
 `docs/v3-architecture-design-brief.ja.md` and measured through the real process before it

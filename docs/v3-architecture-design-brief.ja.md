@@ -906,6 +906,26 @@ sha を解決するのは accept 側である。govern の判定層は `workbenc
 併記するので、既存の `approvals.json` の意味は変わらない。`head` しか持たない古い決定も
 branch の先端と突き合わせる。
 
+#### 台帳が「起きたこと」ではなく「試したこと」を記録していた 4 件
+
+CHANGELOG の G2 の項が債務として記録し、その run では直さなかった 4 件である。出どころは
+レビューで、どれも監査の証跡そのものに関わる。実測は直す前と後の両方を実プロセスで取ってある。
+
+| 先送り | 実測（直す前） | いま |
+|---|---|---|
+| `accept --force` の `accept_force` 行が squash の失敗より前に書かれる | base が動いた bugfix task で `accept --force` は exit 2 で終わり、作業木は巻き戻り、task.json は `gate_passed` のまま `forced` を持たず、provenance.json も無い。それでも `.rig/audit.jsonl` には `accept_force` が 1 行残る | 閉じた。`46288a7` が squash の成功後へ移した。数える読み手は action 名で数えるので直していない——`force_bypass_counter` とその先の `wb stats`・`digest`・`cockpit`・mission control、台帳へ写す `audit.accept_force` の 4 つである。直したのは `wb audit` の一覧 1 つで、`accept_refused` には bypassed 基準も gate 状態も無いため、2 行目に理由の行を足した（print の数は増やしていない） |
+| 拒まれた force はどこにも何も書かない | force が適用されずに終わる経路は 7 本ある（どの 1 本かは `reason` が名指す。一覧は `_audit_force_refused` の docstring）。7 本とも `.rig/audit.jsonl` も台帳も task.json も書かず、境界を毎日試す者と一度も試さない者が同じ跡になる | 閉じた。`46288a7` と `fb68eeb` が 7 本に `accept_refused` を 1 行ずつ足した。`reason`・`detail`・実行者・invoker を持つ。`--force` の付かない拒否は監査しない。理由は docstring に書いた——ふつうの gate の拒否は `acceptance.json` に既にあり、ここへ足すと run log 全体になる |
+| `govern audit` に `--verify` が無い | `govern audit --verify` は `unrecognized arguments: --verify` で exit 2。位置引数の `audit verify` は動き、無傷で exit 0、1 行を書き替えた台帳で `entry #0` の理由つき exit 3 | 閉じた。`46288a7` が flag を足した。綴りが 2 つで判定は 1 つ、出力も終了コードも同じで、`tests/test_exit_code_surface.py` が実プロセスで 0 と 3 を固定する。exit 3 は registry に宣言済みのまま |
+| `ledger._key` が `read_bytes` で鎖の鍵を読む | `read_secret_bytes` に 3 つの形を与えた。0755 の `.rig/` の中の 0600 の鍵——どの checkout もこの形である——は `secure runtime directory must be owned by the caller with mode 0700` で拒否、0700 の中の 0600 は読めた、0700 の中の 0644 は `secure runtime file must be caller-owned regular mode 0600 with one link` で拒否 | 据え置くと決めた（`46288a7`）。1 行目が、入れ替えると壊れる正当な台帳である。拒否は `None` になり、鎖は署名の無いまま追記を続け、`verify` も同じ `None` を読んで署名を検査しなくなる。代わりに `verify` 側へ補償を置いた。鍵が在って読めないときは、署名を飛ばさず 1 件の問題として報告する |
+
+**閉じる途中で 5 件が出てきた。手は入れず、実測だけ置く。** どれも同じ sink の周りにある。
+
+- `.rig/audit.jsonl` と `.rig/ledger.jsonl` に上限が無く、刈る仕掛けも無い。拒まれた force が 1 行になったので、他人が書かせられる行が増えた。繰り返し試せば両方が伸びる。
+- `ledger._key` は 0 バイトの鍵を受け取り、それで署名する。本 run より前からある。
+- `state.audit_append` は例外を全部握り潰す。書けなかった追記は誤りではなく欠落として残る。欠落は `verify` が報告するが、書けなかったこと自体は誰も報告しない。
+- squash と追記の間に窓が残る。ここで落ちると、適用された accept の `accept_force` が落ちる。置き換えた前の穴（適用されていない accept が記録される）より狭い。跡は、行の無い staged な木として残る。
+- 能力レジストリの `wb audit` の説明は、いまも force の記録だけを指している。ファイルは 2 種を持つ。
+
 #### CLI の答えになっていなかった 3 件
 
 上表とは出どころが違う。レビューが残した先送りではなく、本節と §7 が散文の中に書いたまま

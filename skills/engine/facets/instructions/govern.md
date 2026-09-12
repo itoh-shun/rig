@@ -24,7 +24,7 @@
    rig-wb govern policy lint              # 層が上位を緩めていないか（exit 3 = 緩めている）
    rig-wb govern conformance --json       # 1リポジトリの適合性（exit 3 = FAIL あり）
    rig-wb govern rollup --scan <dir> --json   # チーム横断（team A/B/C → 共通ポリシー の表）
-   rig-wb govern audit verify             # 台帳の連鎖検証（exit 3 = 改竄検出）
+   rig-wb govern audit verify             # 台帳の連鎖検証（`--verify` も同じ。exit 3 = 改竄検出）
    ```
 4. **乖離出し** — 数字を一次資料に、重い順で（`ポリシー未到達 > 台帳破損 > force 率 > 承認の形骸化 > 例外の恒久化 > 権限の集中/空 > 二重管理`）。**印象で採点しない**。
 5. **手を出す** — 各乖離に「ポリシー改定 / 権限再配分 / 基準の現実化 / 例外の昇格」のいずれか。**quorum を上げる提案はしない**（効くのは職務分離と鮮度）。

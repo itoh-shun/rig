@@ -96,6 +96,14 @@ def out(result):
     return result.stdout + result.stderr
 
 
+def audit(repo):
+    """`.rig/audit.jsonl` as a list — absent file included, as an empty one."""
+    path = repo / ".rig" / "audit.jsonl"
+    if not path.exists():
+        return []
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
 # ── backward compatibility ───────────────────────────────────────────────────
 def test_an_ungoverned_repo_never_mentions_governance(repo):
     task_id = new_task(repo)
@@ -229,7 +237,43 @@ def test_forcing_past_the_gate_still_needs_the_approval(repo):
     # ...and the refusal left no forced-accept record behind
     task = json.loads((repo / ".rig" / "runs" / task_id / "task.json").read_text(encoding="utf-8"))
     assert "forced" not in task
-    assert not (repo / ".rig" / "audit.jsonl").exists()
+    # What it does leave is the attempt. A force refused by the quorum used to write
+    # nothing at all, here or in the chained ledger, so somebody testing the boundary
+    # once a day looked exactly like somebody who never tried.
+    entries = audit(repo)
+    assert [e["action"] for e in entries] == ["accept_refused"]
+    assert entries[0]["reason"] == "governance"
+    assert "approval requirement not met (0/1)" in entries[0]["detail"]
+    assert entries[0]["task_id"] == task_id and entries[0]["forced"] is True
+    assert entries[0]["actor"]
+
+
+def test_the_flag_alone_is_not_a_force_and_is_not_recorded_as_one(repo):
+    """`--force` on a run with nothing to force changes nothing, including the record.
+
+    Measured before this was guarded on `soft_fail`: a fully judged gate, `--force`, and an
+    unmet approval quorum wrote `accept_refused` with `forced: true` — an ordinary
+    governance refusal filed as an override attempt, because a word was on the command
+    line. `check_accept` is asked with `force=bool(soft_fail)` for the same reason, so the
+    refusal now follows the same predicate the decision did.
+    """
+    govern(repo, approvals={"feature": {"quorum": 1, "roles": ["reviewer"]}},
+           members={"alice": ["dev"], "olivia": ["owner"], "bob": ["reviewer"]})
+    task_id = new_task(repo)
+    make_acceptable(repo, task_id)            # every criterion judged: soft_fail is empty
+    result = run_cli(["accept", task_id, "--force"], repo, env={"RIG_ACTOR": "olivia"})
+    assert result.returncode != 0
+    assert "approval requirement not met (0/1)" in out(result)
+    assert [e for e in audit(repo) if e.get("forced")] == []
+
+    # ...and the same refusal with one criterion unmet is a force, and is recorded as one.
+    forced_task = new_task(repo)
+    make_acceptable(repo, forced_task, leave_failing="tests_pass_or_explained")
+    second = run_cli(["accept", forced_task, "--force"], repo, env={"RIG_ACTOR": "olivia"})
+    assert second.returncode != 0
+    entries = [e for e in audit(repo) if e["task_id"] == forced_task]
+    assert [e["action"] for e in entries] == ["accept_refused"]
+    assert entries[0]["forced"] is True and entries[0]["reason"] == "governance"
 
 
 def test_an_actor_without_approve_cannot_approve(repo):
@@ -470,10 +514,11 @@ def test_an_approval_cannot_be_spent_on_a_branch_tip_the_approver_never_saw(repo
     assert (f"approved {approved[:12]}, the branch is now at {evil[:12]} "
             f"(the branch moved after this approval); re-approve at {evil[:12]}") in out(result)
     assert "approval requirement not met (0/1)" in out(result)
-    # Nothing reached the main tree, and no forced accept was recorded.
+    # Nothing reached the main tree, and no forced accept was recorded — the attempt is,
+    # as a refusal, which is the difference between the record and the outcome.
     assert not (repo / "evil.py").exists()
     assert _git(repo, "status", "--porcelain") == ""
-    assert not (repo / ".rig" / "audit.jsonl").exists()
+    assert [e["action"] for e in audit(repo)] == ["accept_refused"]
 
 
 def test_an_approval_granted_on_the_branch_is_still_spent_on_it(repo, worktree_root):
@@ -547,8 +592,13 @@ def test_a_task_branch_that_no_longer_resolves_is_refused_before_governance(repo
     # Refused before governance ran, so nothing claimed the approval was satisfied...
     assert "approvals: 1/1" not in out(result)
     assert "✓ satisfied" not in out(result)
-    # ...and nothing was written: no audit line for an accept that never reached the squash.
-    assert not (repo / ".rig" / "audit.jsonl").exists()
+    # ...and nothing was applied. The one thing written is the attempt itself: one
+    # `accept_refused` line naming the missing ref, never an `accept_force` for a squash
+    # that did not run.
+    entries = audit(repo)
+    assert [e["action"] for e in entries] == ["accept_refused"]
+    assert entries[0]["reason"] == "branch_unresolvable"
+    assert f"rig/{task_id}" in entries[0]["detail"]
     assert _git(repo, "status", "--porcelain") == ""
     assert "forced" not in json.loads(
         (repo / ".rig" / "runs" / task_id / "task.json").read_text(encoding="utf-8"))

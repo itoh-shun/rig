@@ -634,8 +634,22 @@ def cmd_waiver(args: argparse.Namespace, out: Presenter, clock: Clock) -> Verdic
 
 # ── audit ────────────────────────────────────────────────────────────────────
 def cmd_audit(args: argparse.Namespace, out: Presenter, clock: Clock) -> Verdict:
+    """Read the ledger, verify its chain, or export it.
+
+    `--verify` is the same verdict as the `verify` positional, spelled the way a caller
+    reaches for it: the chain is an HMAC chain and `ledger.verify` has always been able to
+    say so, but the only door to it was a positional word that `audit`'s help line buried
+    between `log` and `export`. Either spelling prints the verdict — intact, or broken with
+    the entry number and the reason for each break — and exits 0 or 3.
+    """
     root = _repo_root()
-    if args.action == "verify":
+    if args.verify and args.action == "export":
+        # Two different jobs, and silently doing one of them is the worse answer: the
+        # verdict would print, the export would not be written, and the exit status would
+        # say the chain is intact rather than that nothing was exported.
+        return _err(out, "`--verify` and `export` ask for two different things: verify "
+                         "reads the chain, export writes it out. Run them one after the other")
+    if args.action == "verify" or args.verify:
         result = ledger.verify(root)
         out.out(f"## rig govern audit verify\n\n{result.summary()}")
         for problem in result.problems:

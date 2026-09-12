@@ -52,6 +52,7 @@ rig-wb govern can accept.force                    # check one permission (exit 3
 rig-wb govern approve status|grant|deny <task-id> # the approval flow (the author's own approval never counts)
 rig-wb govern waiver grant <id> --criterion <c> --reason "..." --expires YYYY-MM-DD
 rig-wb govern audit log|verify|export --format csv   # read the ledger / verify the chain / export for audit
+rig-wb govern audit --verify                      # the same chain check as `audit verify` (exit 3 = broken)
 rig-wb govern conformance [--json]                # one repository's conformance (exit 3 = something FAILed)
 rig-wb govern rollup --scan <dir> [--json]        # across teams: A, B, C against the common policy
 ```

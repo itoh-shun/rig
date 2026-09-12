@@ -58,6 +58,10 @@ def entry_hash(entry: dict) -> str:
     return hashlib.sha256(_canonical(entry)).hexdigest()
 
 
+def key_path(root: pathlib.Path) -> pathlib.Path:
+    return root / ".rig" / "provenance.key"
+
+
 def _key(root: pathlib.Path, *, files: FileStore = LOCAL_FILES) -> bytes | None:
     """The signing key, if this repository has one. Never creates it here —
     signing is opportunistic, and a read-only checkout must still be able to
@@ -65,20 +69,29 @@ def _key(root: pathlib.Path, *, files: FileStore = LOCAL_FILES) -> bytes | None:
 
     `read_bytes` and deliberately **not** `read_secret_bytes`, which is the security
     decision the `FileStore` docstring flags rather than a choice of method name.
-    `read_secret_bytes` refuses a file that is not caller-owned mode 0600 inside a
-    0700 directory, and `.rig/` is created by `mkdir(parents=True, exist_ok=True)`
-    under the ambient umask — 0755 on every existing checkout. So the strict read
-    would raise `OSError` here for every repository that has a key today, and the
-    `except OSError` below would turn that into `None`: the ledger would keep
-    appending, silently unsigned, and `verify` would stop checking signatures at all
-    because it reads the same `None`. A tamper-evidence downgrade that reports
-    nothing is worse than the ordinary permissions this file has now. Tightening it
-    is a migration, not a swap: `.rig/` (or a new 0700 subdirectory) has to be
-    narrowed, `workbench.state.load_or_create_provenance_key` has to write through
-    `write_secret_bytes`, existing keys have to be chmod-ed, and this function has to
-    tell "refused because widened" apart from "absent" so the first one is loud.
+
+    Measured before this was left as it is. Three shapes were
+    put in front of `LOCAL_FILES.read_secret_bytes`: a key at mode 0600 inside a 0755
+    `.rig/` — which is what every checkout has, because `.rig/` is created by
+    `mkdir(parents=True, exist_ok=True)` under the ambient umask and
+    `workbench.state.load_or_create_provenance_key` chmods the file and not the
+    directory — was refused with `OSError: secure runtime directory must be owned by
+    the caller with mode 0700`; 0600 inside 0700 was read; and 0644 inside 0700 was
+    refused with `secure runtime file must be caller-owned regular mode 0600 with one
+    link`. The first row is the legitimate ledger the swap would break: the strict read
+    raises, the `except OSError` below turns it into `None`, and the ledger goes on
+    appending, silently unsigned, on every repository that has a key today.
+
+    So the read stays wide and the compensating check is in `verify`, which is where the
+    downgrade would otherwise be invisible: a key file that exists and cannot be read is
+    reported as a problem of its own rather than quietly skipping the signature pass.
+
+    Tightening it is still a migration and not a swap: `.rig/` (or a new 0700
+    subdirectory) has to be narrowed, `load_or_create_provenance_key` has to write
+    through `write_secret_bytes`, and existing keys have to be chmod-ed — in that
+    order, because the strict read refuses the directory before it looks at the file.
     """
-    p = root / ".rig" / "provenance.key"
+    p = key_path(root)
     try:
         return files.read_bytes(p) if files.is_file(p) else None
     except OSError:
@@ -171,11 +184,36 @@ def verify(root: pathlib.Path, *, files: FileStore = LOCAL_FILES) -> VerifyResul
     not match its own content (edited entry), a `prev` that does not match the
     previous entry's hash (removed or reordered entry), a sequence number that
     skips, and a signature that does not verify against the local key.
+
+    A key file that is present and unreadable is itself one of the problems, reported
+    before the walk: that is the only state in which the signature column below is
+    absent for a reason other than "this repository has no key".
     """
     entries = read_ledger(root, files=files)
     problems: list[str] = []
     signed = 0
     key = _key(root, files=files)
+    key_file = key_path(root)
+    if key is None and any(e.get("sig") for e in entries):
+        # The other way the signature pass falls silent, and the one an attacker chooses:
+        # the hash chain needs no secret, so anybody can rewrite the ledger, recompute
+        # every `hash` and `prev`, and then DELETE the key rather than forge a signature.
+        # Measured on a two-entry signed ledger cut down to one with the chain recomputed:
+        # before this line `verify` answered `ok=True`, "ledger intact — 1 entries,
+        # unsigned". Entries that carry `sig` are a claim that this repository signs; a
+        # missing key cannot check that claim, and unchecked is not intact.
+        problems.append("entries carry signatures but .rig/provenance.key is absent, so no "
+                        "signature could be checked (the key was removed, or this is a "
+                        "checkout that never had it)")
+    if key is None and (files.is_file(key_file) or files.is_dir(key_file)):
+        # The compensating check `_key` names. Without it, a key this process cannot read
+        # — a mode it may not open, a directory in its place, a mount that refuses it —
+        # makes every signature check below fall away silently, and `verify` answers
+        # "intact, unsigned" for a repository whose entries were all signed. `is_dir` is
+        # here beside `is_file` because the path existing at all is the fact: `_key` reads
+        # only a regular file, so a directory reaches this line as an absent key too.
+        problems.append(".rig/provenance.key exists but could not be read, so no signature "
+                        "was checked; the hash chain was still checked")
     prev_hash = GENESIS
     for index, entry in enumerate(entries):
         where = f"entry #{index}"

@@ -275,6 +275,11 @@ def shipped_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("audit", help="read, verify or export the tamper-evident ledger")
     p.add_argument("action", nargs="?", choices=("log", "verify", "export"), default="log")
     p.add_argument("--limit", type=int, help="with log: show only the latest N entries")
+    # Added to the recorded surface in the same commit that added it to the table: the
+    # chain check gained a flag spelling (`audit --verify`), and the transcription tracks
+    # what `rig-wb govern audit` offers a person rather than what it offered first.
+    p.add_argument("--verify", action="store_true",
+                   help="verify the chain (the same check as `audit verify`)")
     p.add_argument("--action", dest="filter_action", help="filter by action name")
     p.add_argument("--since", help="only entries since YYYY-MM-DD")
     p.add_argument("--format", choices=("jsonl", "csv", "markdown"), default="jsonl",
