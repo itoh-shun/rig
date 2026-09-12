@@ -84,6 +84,11 @@ def make_repo(tmp_path):
     (repo / "tests").mkdir(parents=True)
     (repo / ".rig").mkdir(parents=True)
     _git(repo, "init", "-q")
+    # `accept --force` squash-merges through rig's own git calls, which carry none of the
+    # `-c` pair `_git` passes; on a runner with no global identity that commit dies with
+    # "empty ident name". The identity belongs in the repo, which the task worktrees share.
+    _git(repo, "config", "user.email", "t@example.com")
+    _git(repo, "config", "user.name", "t")
     (repo / "app.py").write_text("x = 1\n", encoding="utf-8")
     (repo / "tests" / "test_app.py").write_text(
         "def test_x():\n    assert 1 + 1 == 2\n", encoding="utf-8")

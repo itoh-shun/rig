@@ -573,10 +573,11 @@ def cmd_gate(args: argparse.Namespace) -> None:
         for c in acc["checks"]:
             origin = " [project]" if c.get("origin") == "project" else ""
             detail = f" — {c['detail']}" if c.get("detail") else ""
-            print(f"  {CHECK_ICON[c['status']]} {c['name']}{origin}{detail}")
-            # The operator's own sentence, when it is not already the detail
-            if c.get("note") and c["note"] != c.get("detail"):
-                print(f"      note (operator): {c['note']}")
+            # The operator's own sentence rides the same line, when it is not
+            # already the detail
+            note = (f"\n      note (operator): {c['note']}"
+                    if c.get("note") and c["note"] != c.get("detail") else "")
+            print(f"  {CHECK_ICON[c['status']]} {c['name']}{origin}{detail}{note}")
         for note in sensor_notes:
             print(note)
         # After the listing, so the operator sees the gate as recorded before being told

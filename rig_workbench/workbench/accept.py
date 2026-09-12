@@ -106,9 +106,10 @@ def cmd_diff(args: argparse.Namespace) -> None:
         print(f"  {sections['unrelated diff']}")
     elif unrelated:
         print(f"  {CHECK_ICON[unrelated['status']]} {unrelated['status']}"
-              + (f" — {unrelated['detail']}" if unrelated.get("detail") else ""))
-        if unrelated.get("note") and unrelated["note"] != unrelated.get("detail"):
-            print(f"  note (operator): {unrelated['note']}")
+              + (f" — {unrelated['detail']}" if unrelated.get("detail") else "")
+              + (f"\n  note (operator): {unrelated['note']}"
+                 if unrelated.get("note") and unrelated["note"] != unrelated.get("detail")
+                 else ""))
     else:
         print("  (not checked)")
 
