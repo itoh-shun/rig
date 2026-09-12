@@ -73,6 +73,13 @@ against recipes that resolve without the trust gate speaking, and the two tests 
 particular recipe substitute it the same one-argument way, which is what keeps this file
 from asserting the opposite of that decision.
 
+**The rule lives here rather than in the shell, which is where its three siblings keep
+it.** `packs/cli.py`, `validation/cli.py` and `eval/cli.py` each open with a paragraph on
+forwarding, and `orchestrate/cli.py` cannot: its module docstring *is* `--help` — `main()`
+prints it whole for an unknown verb and `_usage_for` slices one command's lines out of it
+for `-h`, so a paragraph added there becomes text a user reads. So the refusals raised
+below point at this file instead of at the shell.
+
 `test_the_tripwire_is_armed` checks all five mechanisms, so a green run here can never mean
 a trap was never set.
 """
@@ -229,8 +236,10 @@ def _refusing(name: str, note: str):
     def refusing(*_args: object, **_kwargs: object) -> object:
         raise PortNotForwarded(
             f"an orchestrate command reached {name} while it was holding an injected "
-            f"port. {note} Forward it at that call site; see "
-            "rig_workbench/orchestrate/cli.py's module docstring for the rule."
+            f"port. {note} Forward it at that call site; the rule is stated in this "
+            "file's module docstring, because this pillar's shell cannot hold it — "
+            "orchestrate/cli.py's docstring *is* `--help`, sliced by `_usage_for` and "
+            "printed by `main()`."
         )
     return refusing
 
