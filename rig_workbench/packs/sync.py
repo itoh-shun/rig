@@ -18,19 +18,36 @@ file sit inside a pack, unhashed and undeclared, and `validate_pack` would then 
 pack as clean — the pack's contents and the pack's manifest would disagree with nobody
 watching. It is named instead.
 
-That rule is now the only refusal, and it absorbed the one that used to sit beside it. Sync
-refused a pack carrying `pack.sig.json` by name, because rewriting the manifest invalidated
-the signature over it. Nothing signs a pack any more, so `pack.sig.json` is not a pack file
-at all — it is a stray at the pack root, in no asset directory, and the rule above already
-names it. `validate_pack` agrees: it no longer excuses the name either, so such a pack is
-`asset declaration drift` there. One rule, stated once, instead of a special case for a
-mechanism that is gone.
+That rule absorbed the one that used to sit beside it. Sync refused a pack carrying
+`pack.sig.json` by name, because rewriting the manifest invalidated the signature over it.
+Nothing signs a pack any more, so `pack.sig.json` is not a pack file at all — it is a stray
+at the pack root, in no asset directory, and the rule above already names it. `validate_pack`
+agrees: it no longer excuses the name either, so such a pack is `asset declaration drift`
+there. One rule, stated once, instead of a special case for a mechanism that is gone.
+
+**An installed pack is not an author's tree, and sync refuses it.** Everything above is
+written for a tree its author owns: `pack init` scaffolds it, the author adds a file, sync
+declares it, `pack validate` passes. `pack install` produces a different object — a copy
+under `.rig/packs/` whose manifest bytes `pack.lock.json` records as `manifest_sha256` and
+`validate_lock_root` recomputes on every resolve. Rewriting that manifest is exactly the
+drift the lock exists to catch, and `resolved_collection` is fail-closed, so a sync there
+stops every persona, recipe and wiki lookup in the project.
+
+Refused rather than repaired, and the alternative is worth stating because it looks helpful:
+sync could update `manifest_sha256` and `asset_hashes` in the same operation. That would make
+the lock re-bless whatever is on disk — one command, and the record that detects a changed
+installed pack agrees with the change. It could not be done honestly in any case:
+`source.sha256` pins the artefact the pack was installed from, and no amount of rescanning a
+modified installed tree re-derives it. Nothing in the tree wants this either; the shipped
+`pack-author` recipe's declare step runs sync, validate, doctor and test, and installs
+nothing.
 """
 
 from __future__ import annotations
 
 import pathlib
 
+from .lock import lock_path, read_lock
 from .manifest import canonical, digest, read_json_yaml
 from .model import ASSET_DIRS, PackError, TYPE_ASSETS
 from .resources import describe_resource
@@ -88,6 +105,28 @@ def scan_assets(root: pathlib.Path) -> dict[str, list[str]]:
     return grouped
 
 
+def owning_lock_entry(root: pathlib.Path) -> dict | None:
+    """The `pack.lock.json` entry that owns `root`, or None if nothing installed it.
+
+    Keyed on the lock, never on the directory. `.rig/packs/<id>` is where `pack install`
+    puts a pack and it is also where `pack init`'s own signposting tells an author to
+    scaffold one, so the path says nothing. The lock does: an entry here means `pack
+    install` wrote this directory and recorded a digest over its manifest.
+
+    A lock that cannot be read is treated as one that owns the pack. The question being
+    asked is "may this manifest be rewritten", and "I cannot tell" is not a yes.
+    """
+    parent = root.parent
+    if not lock_path(parent).exists():
+        return None
+    try:
+        lock = read_lock(parent)
+    except PackError:
+        return {"id": root.name, "scope": "?", "source": {"path": "?"}}
+    return next((item for item in lock["packs"]
+                 if isinstance(item, dict) and item.get("path") == root.name), None)
+
+
 def sync_manifest(root: pathlib.Path | str) -> dict[str, object]:
     """Rewrite `pack.yaml` so its `assets` and `hashes` describe the files that are there.
 
@@ -102,6 +141,22 @@ def sync_manifest(root: pathlib.Path | str) -> dict[str, object]:
     author's, and a sync that edited them would be making decisions it has no basis for.
     """
     root = pathlib.Path(root).resolve()
+    entry = owning_lock_entry(root)
+    if entry is not None:
+        # Before `read_json_yaml`, and a long way before the write: a manifest rewritten
+        # under a lock that still names the old digest is drift, and the failure it
+        # produces is worse than the one it was meant to fix. An undeclared file inside an
+        # installed pack already fails `validate_pack` as `asset declaration drift`, which
+        # names the file and so can be undone by deleting it. Syncing replaces that with
+        # `pack lock drift: manifest changed`, which names nothing recoverable — the
+        # manifest's original bytes are gone, and `pack remove` runs the same lock check,
+        # so the pack cannot even be uninstalled.
+        raise PackError(
+            f"{entry['id']} is installed here and its manifest is pinned by "
+            f"{lock_path(root.parent).name}, so sync will not rewrite it "
+            f"(sync the pack where it is authored, then reinstall: "
+            f"rig-wb pack remove {entry['id']} --scope {entry['scope']} && "
+            f"rig-wb pack install {entry['source']['path']} --scope {entry['scope']})")
     _raw, manifest = read_json_yaml(root / "pack.yaml")
     type_ = manifest.get("type")
     if type_ not in TYPE_ASSETS:

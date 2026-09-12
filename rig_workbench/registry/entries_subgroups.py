@@ -466,9 +466,11 @@ PACK: tuple[Capability, ...] = (
         verb="sync",
         intent="I added or deleted a file inside my pack and want its manifest to say what "
                "is actually on disk",
-        preconditions=("pack-dir", "every-file-in-an-asset-dir"),
+        preconditions=("pack-dir", "pack-not-installed", "every-file-in-an-asset-dir"),
         effect_line="pack.yaml の assets と hashes をディスクの実体から作り直して"
-                    "上書きします（asset ディレクトリの外にあるファイルは拒否します）",
+                    "上書きします（asset ディレクトリの外にあるファイルは拒否します。"
+                    "pack.lock.json が所有する導入済み pack も、lock が固定した "
+                    "manifest を書き換えることになるため拒否します）",
         effect_class="writes-worktree",
         network="never",
         flags=(Flag(name="path", type="path",
