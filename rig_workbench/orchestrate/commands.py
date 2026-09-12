@@ -40,7 +40,65 @@ from .secure_fs import (
     release_output_lock,
 )
 from .batch_surface import KNOWN_PROJECTS
+from .govern_surfaces import GOVERN_SURFACES
 from .pack_surfaces import PackError
+
+
+class StageGovernance(Protocol):
+    """What `approve` needs of the governance layer.
+
+    Casting a decision on a step asks governance six things: does the policy layer load,
+    does anything gate this step, who is casting, may they, what record does that make, and
+    where does it get mirrored. Not one of those is the orchestrator's arithmetic — quorum,
+    qualifying roles, separation of duties and freshness are `govern.approval`'s, the
+    org→team→project tightening is `govern.policy`'s, and the hash chain that makes the
+    audit trail tamper-evident is `govern.ledger`'s. This command decides only *where* the
+    decision is stored: in the run-state, beside that step's checks and verdicts.
+
+    Stated as a protocol rather than imported, because the import is what
+    `tests/test_layering_contract.py` forbids: a judgement module may reach the standard
+    library, its own pillar and the six ports, and six `govern` modules are none of those.
+    They were reached from inside this command's body, which hid the edges rather than
+    removing them. `govern_surfaces.GOVERN_SURFACES` satisfies this shape and is what every
+    shipped caller passes.
+
+    **The policy crosses as a token.** `policy()` hands back a value this module holds and
+    hands straight back; every question about it is a method here. So no signature in this
+    file is written in another pillar's vocabulary, and `PolicyError` — which used to stand
+    in an `except` clause, where a class is an edge exactly as much as a function in a call
+    — stops at the adapter, arriving instead as the refusal message this command was going
+    to print anyway.
+    """
+
+    def policy(self, root: pathlib.Path) -> tuple[object, str | None]:
+        """The effective policy at `root`, or `(None, why it does not load)`."""
+        ...
+
+    def has_stage_rule(self, policy: object, step: dict) -> bool:
+        """Whether any approval rule governs this step."""
+        ...
+
+    def current_actor(self, root: pathlib.Path) -> str:
+        """The identity performing this action."""
+        ...
+
+    def refusal(self, policy: object, actor: str, permission: str) -> str | None:
+        """Why `actor` may not exercise `permission`, or None when they may."""
+        ...
+
+    def decision(self, policy: object, *, actor: str, decision: str, head: str | None,
+                 note: str) -> dict:
+        """One decision record, carrying the roles this actor holds."""
+        ...
+
+    def upsert(self, decisions: list[dict], entry: dict) -> list[dict]:
+        """`entry` added, replacing any earlier decision by the same actor."""
+        ...
+
+    def record(self, root: pathlib.Path, action: str, *, actor: str, subject: str,
+               data: dict) -> None:
+        """Mirror one governance event into the tamper-evident ledger."""
+        ...
 
 
 class ProjectIndex(Protocol):
@@ -587,7 +645,8 @@ def _approve_state_path(args) -> pathlib.Path | None:
 
 @_reports_refusals
 @_locked_secure_state_mutation(_approve_state_path)
-def cmd_approve(args, *, out: Presenter = CONSOLE):
+def cmd_approve(args, *, out: Presenter = CONSOLE,
+                governance: StageGovernance = GOVERN_SURFACES):
     """Cast a human-gate decision on a step of a run (v2.1).
 
     `orchestrate approve <step-id> [state.json] [--deny] [--note "..."] [--actor NAME]`
@@ -630,42 +689,33 @@ def cmd_approve(args, *, out: Presenter = CONSOLE):
         sys.exit(1)
     st = state["step_state"][sid]
 
-    from ..govern import ledger
-    from ..govern.approval import make_decision, upsert
-    from ..govern.identity import current_actor, load_org_binding
-    from ..govern.policy import PolicyError, effective_policy
-    from ..govern.rbac import can, roles_of
-    from ..govern.stage import stage_rule
     from .runstate import govern_root
 
     root = govern_root()
-    try:
-        eff = effective_policy(root)
-    except PolicyError as e:
-        out.out(f"[ERROR] policy layer does not load: {e}")
+    eff, unloadable = governance.policy(root)
+    if unloadable is not None:
+        out.out(f"[ERROR] policy layer does not load: {unloadable}")
         sys.exit(1)
-    if stage_rule(eff, step) is None:
+    if not governance.has_stage_rule(eff, step):
         out.out(f"[ERROR] step `{sid}` declares no human gate, and no policy `stage:{sid}` rule "
                 "applies — there is nothing to approve here")
         sys.exit(1)
-    actor = actor_override or current_actor(root)
-    if eff.active:
-        allowed = can(eff, actor, "approve")
-        if not allowed.allowed:
-            out.out(f"[ERROR] not permitted to approve: {allowed.reason}")
-            sys.exit(1)
+    actor = actor_override or governance.current_actor(root)
+    refused = governance.refusal(eff, actor, "approve")
+    if refused is not None:
+        out.out(f"[ERROR] not permitted to approve: {refused}")
+        sys.exit(1)
     if st.get("ran_as") and st["ran_as"] == actor:
         out.out(f"[WARN] {actor} ran this step; separation of duties means this decision "
                 "will not count toward the quorum")
 
-    entry = make_decision(actor=actor, decision=decision, roles=roles_of(eff, actor),
-                          head=_git_head(), note=note)
-    st["approvals"] = upsert(st.get("approvals") or [], entry)
-    binding = load_org_binding(root)
-    ledger.append(root, f"stage.{decision}", actor=actor, subject=f"{state['recipe']}:{sid}",
-                  org=binding.org, team=binding.team,
-                  data={"recipe": state["recipe"], "step": sid, "note": note,
-                        "state": str(sp)})
+    entry = governance.decision(eff, actor=actor, decision=decision,
+                                head=_git_head(), note=note)
+    st["approvals"] = governance.upsert(st.get("approvals") or [], entry)
+    governance.record(root, f"stage.{decision}", actor=actor,
+                      subject=f"{state['recipe']}:{sid}",
+                      data={"recipe": state["recipe"], "step": sid, "note": note,
+                            "state": str(sp)})
 
     action, msg = compute_next(state)
     save_state(state, sp)

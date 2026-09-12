@@ -14,6 +14,7 @@ from ..ports import Clock, Env, FileStore
 from ..ports.local import LOCAL_FILES, OS_ENV, SYSTEM_CLOCK
 from . import config
 from .gates import is_runtime_gate, validate_executable_steps
+from .govern_surfaces import GOVERN_SURFACES
 from .pack_surfaces import PACK_SURFACES
 from .secure_runtime import JAPANESE_WRITING_RECIPES
 from .secure_fs import atomic_append_line, atomic_write_bytes, read_bytes as read_secure_bytes
@@ -158,6 +159,36 @@ class PackProvenance(Protocol):
 
     def builtin(self) -> dict:
         """The bundled packs, keyed `(namespace, pack_id)`, with the core ids applied."""
+        ...
+
+
+class StepGovernance(Protocol):
+    """What this module needs of the governance layer, step by step.
+
+    Two questions. Has the human gate on this step been satisfied, and who is running it.
+    Neither is the runner's arithmetic: quorum, qualifying roles, separation of duties and
+    freshness are `govern.approval`'s, the org→team→project tightening is `govern.policy`'s,
+    and what counts as an identity is `govern.identity`'s. The runner decides *when* to ask
+    and what to do with the answer, which is the part that stays here.
+
+    Stated as a protocol rather than imported, because the import is what
+    `tests/test_layering_contract.py` forbids: a judgement module may reach the standard
+    library, its own pillar and the six ports, and `govern.policy`, `govern.stage` and
+    `govern.identity` are none of those. They were reached from inside two function bodies
+    here, which hid the edges rather than removing them. `govern_surfaces.GOVERN_SURFACES`
+    satisfies this shape and is what every shipped caller passes.
+
+    The status object crosses opaquely: `compute_next` reads `satisfied`, `denials` and
+    `lines()` off it, and never builds one.
+    """
+
+    def stage_status(self, root: pathlib.Path, step: dict, decisions: list[dict], *,
+                     author: str = ...):
+        """This step's human-gate status, or None when nothing gates it."""
+        ...
+
+    def actor_for(self, root: pathlib.Path, step: dict) -> tuple[str, str | None] | None:
+        """`(actor, advisory note)` for a step that needs an identity, or None."""
         ...
 
 
@@ -762,7 +793,8 @@ def govern_root() -> pathlib.Path:
     return cwd
 
 
-def stage_gate_status(step: dict, st: dict):
+def stage_gate_status(step: dict, st: dict, *,
+                      governance: StepGovernance = GOVERN_SURFACES):
     """This step's human-gate status, or None when it has no human gate (v2.1).
 
     Resolved live against the effective policy rather than baked into the
@@ -771,44 +803,35 @@ def stage_gate_status(step: dict, st: dict):
 
     A policy that fails to load is *not* treated as "no gate" — that would let a
     broken document silently open a stage. It raises, and the caller surfaces it.
+    The packaging guard that used to sit here — an install without the governance
+    pillar answers "no gate" — moved into the adapter with the import it guarded.
     """
-    try:
-        from ..govern.policy import effective_policy
-        from ..govern.stage import evaluate_stage
-    except ImportError:                                    # pragma: no cover - packaging guard
-        return None
-    eff = effective_policy(govern_root())
-    return evaluate_stage(eff, step, st.get("approvals") or [],
-                          author=st.get("ran_as") or "")
+    return governance.stage_status(govern_root(), step, st.get("approvals") or [],
+                                   author=st.get("ran_as") or "")
 
 
-def _record_actor(step: dict, st: dict) -> tuple[str | None, str | None]:
+def _record_actor(step: dict, st: dict, *,
+                  governance: StepGovernance = GOVERN_SURFACES,
+                  ) -> tuple[str | None, str | None]:
     """Stamp the running identity onto the step. Returns (blocking reason, advisory note).
 
     `ran_as` is what separation of duties compares an approver against, so it has
     to be recorded when the work happens, not when the approval arrives. A broken
     policy blocks (the same fail-closed rule as accept); an execution that does not
     hold the step's owning role only warns — see govern.stage.actor_mismatch.
+
+    Both the cheap exit and the packaging guard live behind `actor_for`, which answers
+    None for either: this step asks for no identity, or the governance pillar is not
+    installed. The order those two are checked in is a cost decision (resolving an identity
+    shells out to `git config`) and it is stated where the calls are.
     """
     try:
-        from ..govern.identity import current_actor, org_binding_path
-        from ..govern.policy import effective_policy
-        from ..govern.stage import actor_mismatch
-    except ImportError:                                    # pragma: no cover - packaging guard
-        return None, None
-    root = govern_root()
-    # Cheap exit for the overwhelmingly common case. Resolving an identity shells
-    # out to `git config`, and doing that at every step START of every run — in
-    # repositories with no policy and no step that declares an owner — would be a
-    # subprocess per step to record a value nothing reads.
-    if not (step.get("actor") or step.get("human_gate") or org_binding_path(root).is_file()):
-        return None, None
-    try:
-        actor = current_actor(root)
-        eff = effective_policy(root)
-        note = actor_mismatch(eff, step, actor)
+        answer = governance.actor_for(govern_root(), step)
     except Exception as e:
         return f"step `{step.get('id')}`: governance cannot be evaluated: {e}", None
+    if answer is None:
+        return None, None
+    actor, note = answer
     st["ran_as"] = actor
     return None, note
 
