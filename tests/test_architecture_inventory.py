@@ -465,8 +465,13 @@ BASELINE_EFFECT_SITES: dict[str, dict[str, int]] = {
         "env": 0,
         "clock": 0,
     },
+    # The unmigrated pillar. 513 until §11 T7/T8 removed five `print` sites from it, and 508
+    # is the walk's answer after they landed: two where `ensure_rig_gitignored` took the
+    # `Presenter` and `Env` ports and its two callers stopped printing its outcome for it
+    # (18c4021), three where the lines `new` closes with went onto the same presenter
+    # (2ff7696). Measured, not derived — run the walk before editing this literal again.
     "workbench": {
-        "print": 513,
+        "print": 508,
         "subprocess": 11,
         "open_write": 5,
         "write_text": 13,

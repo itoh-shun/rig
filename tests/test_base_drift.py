@@ -46,9 +46,14 @@ def git_repo(tmp_path):
 
 
 def _new_task(git_repo):
-    """Register a task, commit the .gitignore `new` appends (accept needs a clean root)."""
+    """Register a task and ignore `.rig/` (accept needs a clean root).
+
+    The `.gitignore` is written here because `new` no longer writes it unasked — off a
+    terminal it names the line and leaves the file alone.
+    """
     r = run_cli(["new", "drift task", "--type", "feature"], git_repo)
     assert r.returncode == 0, r.stdout + r.stderr
+    (git_repo / ".gitignore").write_text(".rig/\n", encoding="utf-8")
     sh(["git", "add", "-A", "--", ".gitignore"], git_repo)
     sh(["git", "commit", "-q", "-m", "gitignore .rig/"], git_repo)
     task_id = sorted(p.name for p in (git_repo / ".rig" / "runs").iterdir())[-1]
@@ -260,9 +265,13 @@ def test_unresolvable_base_fails_fast(git_repo):
     r = run_cli(["new", "based task", "--type", "feature", "--base", "no-such-branch"], git_repo)
     assert r.returncode != 0
     assert "does not resolve to a commit" in (r.stdout + r.stderr)
-    # No partial state: it aborts before the run dir and before the .gitignore edit.
+    # No partial state: it aborts before the run dir, and before it has said anything about
+    # `.gitignore`. The file's absence alone would prove nothing now — `new` never writes it
+    # off a terminal — so what is measured is that the offer was never reached.
     assert not (git_repo / ".rig" / "runs").exists()
-    assert not (git_repo / ".gitignore").exists()
+    assert ".gitignore" not in (r.stdout + r.stderr), (
+        "the run reached the `.gitignore` consent step before rejecting an unresolvable "
+        f"--base:\n{r.stdout}\n{r.stderr}")
 
 
 def test_base_branch_moving_ahead_alone_is_not_drift(git_repo):

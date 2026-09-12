@@ -228,8 +228,8 @@ def cmd_import(args: argparse.Namespace) -> None:
     # `.rig/gates.json` must abort with no partial state on disk.
     acc = build_acceptance(task_id, args.type, root)
 
-    if ensure_rig_gitignored(root):
-        print("◇ Appended .rig/ to .gitignore (prevents PR contamination)")
+    # Same consent as `new`: offered, and never written without an answer (T7a).
+    ensure_rig_gitignored(root)
 
     # The one line that makes the rest of rig work unchanged: the task branch is
     # created *at the imported commit*. `base..branch` is then the external change,

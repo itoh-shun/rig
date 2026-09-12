@@ -904,3 +904,130 @@ def test_the_probe_mask_is_the_strict_one_and_the_real_one_goes_back(monkeypatch
     finally:
         real(0o022)
     assert calls == [0o022, 0o007]
+
+
+# ── the second run in a repository (T7b) ────────────────────────────────────
+def _has_run_a_task(root: pathlib.Path) -> pathlib.Path:
+    """`.rig/` as `wb new` leaves it. Recording is gated on this directory existing, so a
+    test about recording has to say which of the two situations it is in."""
+    (root / hostcheck.STATE_DIR).mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def test_hostcheck_alone_creates_no_state_directory_and_leaves_the_tree_clean(tmp_path):
+    """`hostcheck` is step 0 of every `/rig:go`, and `FileStore.append_line` makes parent
+    directories. Recording unconditionally would therefore conjure `.rig/` into a repository
+    nobody had started a task in — and leave `?? .rig/` in `git status` at exactly the moment
+    `wb new` stopped adding the ignore entry unasked. `.rig/` is `wb new`'s to create."""
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+
+    assert hostcheck.cmd_hostcheck(["--repo", str(tmp_path)]) == 3
+    assert not (tmp_path / hostcheck.STATE_DIR).exists(), (
+        "an advisory command created rig's state directory in a repository that has never "
+        "run a task")
+    status = subprocess.run(["git", "status", "--porcelain"], cwd=tmp_path,
+                            capture_output=True, text=True, check=True)
+    assert status.stdout == "", f"hostcheck dirtied the working tree: {status.stdout!r}"
+
+    _has_run_a_task(tmp_path)
+    hostcheck.cmd_hostcheck(["--repo", str(tmp_path)])
+    assert (tmp_path / hostcheck.STATE_FILE).is_file(), (
+        "recording did not start once `.rig/` was there")
+
+
+def test_the_run_that_cannot_record_says_so_and_says_when_recording_starts(tmp_path, capsys):
+    hostcheck.cmd_hostcheck(["--repo", str(tmp_path)])
+    printed = capsys.readouterr().out
+    assert "Not recorded" in printed and hostcheck.STATE_DIR in printed, (
+        f"the report is silent about why there is no comparison to make:\n{printed}")
+
+
+def test_the_first_run_prints_the_whole_report_and_records_what_it_said(tmp_path, capsys):
+    """Nothing to compare against is not a delta: the first run in a repository is the
+    full report, and it says where it put the verdicts the next one will read."""
+    assert hostcheck.cmd_hostcheck(["--repo", str(_has_run_a_task(tmp_path))]) == 3
+    printed = capsys.readouterr().out
+
+    assert "prerequisites rig cannot enforce itself" in printed
+    for check in hostcheck.CHECKS:
+        assert check(tmp_path)["id"] in printed, "the first run left a check out of its report"
+    assert str(hostcheck.STATE_FILE) in printed, (
+        "the report does not name the file it recorded the verdicts in, so a reader meeting "
+        "the shorter second run has no way to find out what it was compared against.")
+    assert (tmp_path / hostcheck.STATE_FILE).is_file()
+
+
+def test_a_second_run_that_found_nothing_new_prints_the_summary_and_not_the_report(
+        tmp_path, capsys):
+    """It still runs every time — rig holds no "once per session" state and will not pretend
+    to — and that is exactly why the second run must not repeat itself. A report printed
+    unchanged on every pass through the workbench is one nobody reads by the fifth time,
+    including the line that finally moved."""
+    hostcheck.cmd_hostcheck(["--repo", str(_has_run_a_task(tmp_path))])
+    capsys.readouterr()
+
+    assert hostcheck.cmd_hostcheck(["--repo", str(tmp_path)]) == 3
+    printed = capsys.readouterr().out
+
+    assert "No change since" in printed, (
+        "a run that changed nothing printed no summary at all, which is indistinguishable "
+        f"from a run that never happened:\n{printed}")
+    assert "Run state under .rig/" not in printed, (
+        f"the second run repeated the full requirement text:\n{printed}")
+    assert str(hostcheck.STATE_FILE) in printed
+    assert printed.count("\n") < 6, f"the delta is not shorter than the report:\n{printed}"
+
+
+def test_only_the_check_whose_verdict_moved_is_printed_and_it_says_what_it_was(
+        tmp_path, capsys):
+    hostcheck.cmd_hostcheck(["--repo", str(_has_run_a_task(tmp_path))])
+    capsys.readouterr()
+    (tmp_path / ".gitignore").write_text(".rig/\n", encoding="utf-8")
+
+    hostcheck.cmd_hostcheck(["--repo", str(tmp_path)])
+    printed = capsys.readouterr().out
+
+    assert "state_ignored" in printed and "← was MISS" in printed, (
+        f"the check that changed was not reported as a change:\n{printed}")
+    # `deny_rules` is still named in the summary's missing list — that is the point of a
+    # summary. What must not come back is its stanza: requirement, detail and remedy.
+    assert "Deletion, production writes" not in printed, (
+        f"a check that did not move was printed in full again anyway:\n{printed}")
+    assert "1 changed since" in printed and "2 missing" in printed, (
+        f"the one-line summary does not carry the counts:\n{printed}")
+
+
+def test_full_prints_everything_again_no_matter_what_was_recorded(tmp_path, capsys):
+    """The escape hatch. Without it a repository's second run could never see the whole
+    report again, and an operator who wants it would be reaching for `rm`."""
+    hostcheck.cmd_hostcheck(["--repo", str(_has_run_a_task(tmp_path))])
+    capsys.readouterr()
+
+    hostcheck.cmd_hostcheck(["--repo", str(tmp_path), "--full"])
+    printed = capsys.readouterr().out
+    assert "prerequisites rig cannot enforce itself" in printed
+    assert "Run state under .rig/" in printed
+
+
+def test_a_record_is_appended_only_when_a_verdict_actually_moved(tmp_path):
+    """One line per change, not per run. `.rig/hostcheck.jsonl` is a record of the host's
+    history; a line per invocation would make it a record of how often rig was run."""
+    hostcheck.cmd_hostcheck(["--repo", str(_has_run_a_task(tmp_path)), "--json"])
+    hostcheck.cmd_hostcheck(["--repo", str(tmp_path), "--json"])
+    path = tmp_path / hostcheck.STATE_FILE
+    assert len(path.read_text(encoding="utf-8").strip().splitlines()) == 1
+
+    (tmp_path / ".gitignore").write_text(".rig/\n", encoding="utf-8")
+    hostcheck.cmd_hostcheck(["--repo", str(tmp_path), "--json"])
+    assert len(path.read_text(encoding="utf-8").strip().splitlines()) == 2
+
+
+def test_a_truncated_record_falls_back_instead_of_crashing_an_advisory_command(tmp_path):
+    """A half-written last line is a full disk or an interrupted run, not a reason to fail
+    the command that was only ever advisory."""
+    path = tmp_path / hostcheck.STATE_FILE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('{"at": "2026-01-01T00:00:00+00:00", "verdicts": {"umask": "MISS"}}\n'
+                    '{"at": "2026-01-02T00:00:0', encoding="utf-8")
+    assert hostcheck.previous_run(tmp_path)["verdicts"] == {"umask": "MISS"}
+    assert hostcheck.cmd_hostcheck(["--repo", str(tmp_path)]) == 3

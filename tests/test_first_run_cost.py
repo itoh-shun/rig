@@ -14,10 +14,15 @@ That was an observation somebody made once. This file is the same claim as a mea
 prerequisite creeping back into the first run fails a test rather than quietly becoming true
 again. §9 asks for exactly that discipline — 「主張ではなく測定に置く」.
 
-Two groups, selectable with `-k`:
+Three groups, selectable with `-k`:
 
     pytest tests/test_first_run_cost.py                 # the zero-step first run, end to end
     pytest tests/test_first_run_cost.py -k degrade      # each prerequisite, separately
+    pytest tests/test_first_run_cost.py -k gitignore    # the one tracked file it may write
+
+The consent *mechanism* — the terminal prompt, what counts as standing consent, and the
+`wb import` call site — lives in tests/test_gitignore_consent.py. What stays here is what §9
+measures: the cost of the first run, in the environment §9 names.
 
 The first drives the real command in an environment built to be hostile to a hidden
 prerequisite: `rig-wb` unreachable on PATH (verified with `shutil.which` inside the child, not
@@ -34,6 +39,12 @@ came back instead of reporting only "the first run broke":
     manifest  — an unconsented `.claude/rig.md` degrades to one warning on stderr (the
                 `require=False` path in rig_workbench/orchestrate/recipes.py), rather than the
                 exit-2 refusal with consent instructions that the `require=True` path prints.
+
+The `gitignore` pair is the other half of the same discipline. `new` used to append `.rig/`
+to the repository's `.gitignore` on its own, which is not a step the person has to take — it is
+a change they never asked for, in a file they own. Consent moved that write behind a question
+on a terminal and behind `RIG_ALLOW_GITIGNORE=1` off one; these two pin both ends, so neither
+the silent write nor a prompt on the CI path can come back unnoticed.
 
 If something here fails, a step has come back into the first run. That may even be right — a
 real security gate can be worth a step — but it is a decision about §9's target, so make it in
@@ -65,6 +76,11 @@ CONSENT_VARIABLES = (
     "RIG_ALLOW_PROJECT_PACKS",
     "RIG_ALLOW_PROJECT_MANIFEST",
     "RIG_ALLOW_PROJECT_RECIPES",
+    # Consent to append `.rig/` to the repository's `.gitignore` — the one tracked file `new`
+    # writes. It joined this list when the write stopped being silent: with the variable set,
+    # `new` writes without asking, and a first run that only passes because the developer's
+    # shell carries it would be measuring the consented path, not the zero-step one.
+    "RIG_ALLOW_GITIGNORE",
 )
 
 # Measured, not guessed, as conftest.subprocess_timeout asks: `new` in a scratch repo costs
@@ -257,6 +273,59 @@ def test_a_first_run_in_a_bare_git_repository_needs_no_cli_install_no_manifest_a
         f"task.json records task_id {recorded.get('task_id')!r} while the command reported "
         f"{task_id!r}. The first run produced a run nobody can address by the id they were "
         "given.")
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# The one tracked file the first run can write — `-k gitignore`
+# ═════════════════════════════════════════════════════════════════════════════
+def test_the_first_run_leaves_gitignore_alone_when_there_is_nobody_to_ask(
+        rig_git_repo, first_run_env):
+    """No consent, no write: `.gitignore` is the operator's file, and stdin is /dev/null here.
+
+    Everything else `new` writes lives under `.rig/`, which is rig's own state directory.
+    `.gitignore` is tracked content, so appending to it silently puts a line in somebody's next
+    commit that they never typed — in a repository rig was only asked to register a task in.
+    Off a terminal there is no one to ask, and a question that cannot be answered is either a
+    hang or a yes nobody gave, so the run says which line to add and writes nothing.
+
+    Said here rather than in a `new`-specific file because this is also §9's territory: the
+    line has to be *advice*, not a prompt, or the zero-step first run has grown a step.
+    """
+    env = first_run_env()
+    before = (rig_git_repo / ".gitignore").exists()
+    result = _first_run(rig_git_repo, env, *FIRST_RUN_ARGV)
+
+    assert result.returncode == 0, _both_streams(result)
+    assert (rig_git_repo / ".gitignore").exists() is before, (
+        "the first run wrote .gitignore in a repository where nothing consented to it and "
+        "nothing could be asked (stdin at /dev/null). The next `git status` in that repository "
+        f"shows a change its owner did not make.\n{_both_streams(result)}")
+    printed = result.stdout + result.stderr
+    assert ".rig/" in printed and ".gitignore" in printed, (
+        "the run neither wrote .gitignore nor said anything about it, so the reason `.rig/` is "
+        "still turning up in `git status` is now invisible. Refusing to write silently is the "
+        f"same defect as writing silently, pointed the other way.\n{_both_streams(result)}")
+
+
+def test_standing_consent_writes_gitignore_without_asking_anything(
+        rig_git_repo, first_run_env):
+    """`RIG_ALLOW_GITIGNORE=1` is the answer given in advance — the shape every other consent
+    rig records already has (`RIG_ALLOW_PROJECT_PACKS` and its kin in
+    rig_workbench/packs/trust.py). It has to be enough on its own: an escape hatch that still
+    stops to ask is one people route around with something worse.
+    """
+    env = first_run_env(RIG_ALLOW_GITIGNORE="1")
+    result = _first_run(rig_git_repo, env, *FIRST_RUN_ARGV)
+
+    assert result.returncode == 0, _both_streams(result)
+    ignored = (rig_git_repo / ".gitignore").read_text(encoding="utf-8")
+    assert ".rig/" in ignored, (
+        "RIG_ALLOW_GITIGNORE=1 was set and .rig/ still is not ignored. Standing consent that "
+        f"does not act is indistinguishable from no consent at all.\n{_both_streams(result)}")
+    for marker in STDIN_FAILURE_MARKERS:
+        assert marker not in result.stderr, (
+            f"consent was already given and the run asked anyway ({marker} on stderr).\n"
+            f"{_both_streams(result)}")
 
 
 # ═════════════════════════════════════════════════════════════════════════════

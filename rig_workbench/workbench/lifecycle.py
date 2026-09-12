@@ -10,6 +10,8 @@ import sys
 from rig_workbench import caller
 from rig_workbench.govern import identity as govern_identity
 from rig_workbench.packs.model import PackError
+from rig_workbench.ports import Env, Presenter
+from rig_workbench.ports.local import CONSOLE, OS_ENV
 
 from .anchors import SENSOR_CRITERION as ANCHOR_CRITERION
 from .anchors import apply_anchor_sensor
@@ -51,33 +53,118 @@ from .state import (build_acceptance, current_branch, die, gate_status, git, inv
 _SESSION_LAUNCHER = {"claude-code": "claude", "codex": "codex"}
 
 
-def ensure_rig_gitignored(root: pathlib.Path) -> bool:
-    """Append `.rig/` to the repo's `.gitignore` if missing. Returns whether it was appended.
+#: The entry rig wants ignored, and the comment it writes above it.
+GITIGNORE_ENTRY = ".rig/"
+_GITIGNORE_COMMENT = "# rig workbench state (task worktrees, telemetry, audit, locks)"
 
-    `.rig/` holds worktree state / runs / audit / locks, so it is appended
-    automatically on the first task creation to keep it from slipping into a PR.
-    If it is already ignored as `.rig/` / `.rig` / `/.rig/` (any variant), do
-    nothing (never clobber the user's entries on a false positive).
-    If `.gitignore` is missing, create it. Do nothing when root is not git-managed.
+#: Why, in the one sentence the question, the refusal and the advisory line all reuse — so the
+#: operator reads the same reason whichever of the three they meet.
+_GITIGNORE_REASON = ("worktree state, run telemetry, the audit log and the locks live there, "
+                     "and an unignored .rig/ rides along in the next commit")
+
+#: Standing consent, spelled the way every other consent rig records is: an environment
+#: variable set to "1" (`RIG_ALLOW_PROJECT_PACKS`, `RIG_ALLOW_PROJECT_MANIFEST`,
+#: `RIG_ALLOW_PROJECT_RECIPES` — `rig_workbench/packs/trust.py`). Deliberately not a new config
+#: file and not a manifest key: a decision about whether rig may edit a tracked file has to be
+#: answerable without first trusting a file in the repository that is making the request.
+GITIGNORE_CONSENT_ENV = "RIG_ALLOW_GITIGNORE"
+
+
+def rig_gitignore_status(root: pathlib.Path) -> str:
+    """`"ignored"`, `"missing"`, or `"not-git"` — what `.gitignore` says about `.rig/`.
+
+    Already ignored as `.rig/` / `.rig` / `/.rig/` (any variant) counts as ignored: rig never
+    clobbers the operator's own entries on a false positive. A tree that is not git-managed has
+    no `.gitignore` to have an opinion, which is not the same as one that is missing the line.
     """
     if not (root / ".git").exists():
-        return False
+        return "not-git"
     gi = root / ".gitignore"
-    already = False
-    lines: list[str] = []
     if gi.exists():
-        lines = gi.read_text(encoding="utf-8").splitlines()
+        try:
+            lines = gi.read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeError):
+            # Unreadable is not "missing": appending to a file rig could not read would be a
+            # write made blind. Treat it as ignored — the advisory costs nothing, the write could.
+            return "ignored"
         for ln in lines:
-            s = ln.strip()
-            if s in (".rig/", ".rig", "/.rig/", "/.rig"):
-                already = True
-                break
-    if already:
-        return False
-    with gi.open("a", encoding="utf-8") as f:
+            if ln.strip() in (".rig/", ".rig", "/.rig/", "/.rig"):
+                return "ignored"
+    return "missing"
+
+
+def append_rig_gitignore(root: pathlib.Path) -> None:
+    """Append the `.rig/` entry to the repo's `.gitignore`, creating the file if absent."""
+    with (root / ".gitignore").open("a", encoding="utf-8") as f:
         # The existing file may not end with a newline, so lead with one
-        f.write("\n# rig workbench state (task worktrees, telemetry, audit, locks)\n.rig/\n")
-    return True
+        f.write(f"\n{_GITIGNORE_COMMENT}\n{GITIGNORE_ENTRY}\n")
+
+
+def _answer_from_a_terminal(question: str) -> bool | None:
+    """Ask once, y/N. `True` for a yes, `False` for anything else, `None` when the ask itself
+    was cut short (EOF, Ctrl-C) and the caller owes the terminal a newline before it speaks."""
+    try:
+        answer = input(question)
+    except (EOFError, KeyboardInterrupt):
+        return None
+    return answer.strip().lower() in {"y", "yes"}
+
+
+def ensure_rig_gitignored(root: pathlib.Path, *, env: Env = OS_ENV,
+                          out: Presenter = CONSOLE) -> bool:
+    """Offer to ignore `.rig/`, and never write `.gitignore` without being told to.
+
+    `.gitignore` is the one file outside `.rig/` that registering a task touches, and it is
+    *tracked content*: appending to it silently puts a line in somebody's next commit that they
+    never typed, in a repository rig was only asked to start a task in. rig is the thing that
+    refuses to let an agent land work nobody looked at; writing to the operator's file on its
+    own authority is the same move with the roles swapped. So there are three ways the answer
+    can arrive, and no fourth:
+
+    * `RIG_ALLOW_GITIGNORE=1` — standing consent, given in advance. Write, and say so.
+    * stdin is a terminal — ask once (y/N, default no). A bare Enter is a no.
+    * anything else — CI, ``claude -p``, a subagent, a piped run — **do not write**. Say which
+      line to add and why, in one line. The person who could decide is not here, and a question
+      nobody can answer is either a process that hangs or a yes that nobody gave.
+
+    The environment and the console arrive on the `Env` and `Presenter` ports (§3) rather than
+    as `os.environ` and `print`, which is what lets a test drive all three branches without a
+    subprocess — and what keeps the consent from costing the effect-site ratchet anything.
+
+    Returns whether `.gitignore` was appended.
+    """
+    if rig_gitignore_status(root) != "missing":
+        return False
+    wrote, lead = False, ""
+    if env.get(GITIGNORE_CONSENT_ENV) == "1":
+        wrote, message = True, f"◇ Appended {GITIGNORE_ENTRY} to .gitignore ({GITIGNORE_CONSENT_ENV}=1)"
+    elif _stdin_is_a_terminal():
+        answered = _answer_from_a_terminal(
+            f"◇ Add {GITIGNORE_ENTRY} to .gitignore? {_GITIGNORE_REASON}. [y/N] ")
+        lead = "\n" if answered is None else ""
+        wrote = answered is True
+        message = (f"◇ Appended {GITIGNORE_ENTRY} to .gitignore" if wrote else
+                   f"◇ .gitignore left as it is — add {GITIGNORE_ENTRY} yourself whenever you "
+                   f"want it ignored, or set {GITIGNORE_CONSENT_ENV}=1 to answer this for good.")
+    else:
+        message = (f"◇ .gitignore has no {GITIGNORE_ENTRY} entry. Not written: no terminal to "
+                   f"ask. Add the line yourself, or set {GITIGNORE_CONSENT_ENV}=1.")
+    if wrote:
+        append_rig_gitignore(root)
+    out.out(lead + message)
+    return wrote
+
+
+def _stdin_is_a_terminal() -> bool:
+    """Is there somebody at the other end of stdin to answer a question?
+
+    Every way this can fail is the same answer: a closed, detached or replaced stdin has no
+    human behind it, and guessing yes would hang the run on a prompt nobody sees.
+    """
+    try:
+        return sys.stdin is not None and sys.stdin.isatty()
+    except (AttributeError, OSError, ValueError):
+        return False
 
 
 _STOPWORDS = {"の", "を", "に", "は", "が", "で", "と", "も", "て", "た", "する", "して", "ください",
@@ -189,9 +276,9 @@ def cmd_new(args: argparse.Namespace) -> None:
     except IssueRefError as exc:
         die(str(exc))
 
-    # Auto-append `.rig/` to .gitignore if missing. Insurance against accidental PR contamination.
-    if ensure_rig_gitignored(root):
-        print("◇ Appended .rig/ to .gitignore (prevents PR contamination)")
+    # Insurance against accidental PR contamination — offered, not taken. `ensure_rig_gitignored`
+    # prints its own outcome, whichever of the three it is, so nothing is decided here.
+    ensure_rig_gitignored(root)
 
     worktree_path: str | None = None
     branch: str | None = None
@@ -323,17 +410,26 @@ def cmd_new(args: argparse.Namespace) -> None:
             print(f"  - {t['task_id']} ({t['status']}): {label}")
 
     if worktree_path:
-        # An agent session is filed under the directory it was started in, so one started
-        # at the repository root is filed together with every other task's — and
-        # `--continue` inside the worktree finds nothing, because nothing was ever
-        # recorded there. Said here because this is the moment the directory exists and
-        # the operator is looking at its path (#471).
-        print("\nNext: この worktree の中でセッションを開き直す")
+        # These lines used to open with 「この worktree の中でセッションを開き直す」, which
+        # told the operator to do something README §1/§2 promise they do not have to: saying
+        # `/rig:go "<task>"` is enough, and the session that said it keeps driving. That is not
+        # a promise made only in prose — `facets/instructions/workbench` §③-2 and
+        # `patterns/isolated-worktree` §2 are the mechanism: the parent dispatches, and every
+        # subagent's working directory is pinned to this path. So the command was contradicting
+        # both the documentation and its own harness, and the documentation was the side that
+        # was right.
+        #
+        # What is true about cwd is narrower (#471), and it is about a *second* session, not
+        # this run: an agent session is filed under the directory it is started in, so one
+        # started at the repository root is filed with every other task's and `--continue`
+        # inside the worktree finds nothing. Worth saying while the path is on screen — as the
+        # condition it is, not as the next step.
         launcher = _SESSION_LAUNCHER.get(caller.detect(getattr(args, "caller", None)).id)
         target = shlex.quote(worktree_path)
-        print(f"  cd {target} && {launcher}" if launcher else f"  cd {target}")
-        print("  セッションの所属は cwd で決まる。ここで開けばこのタスク専用になり、"
-              "同じ場所で再開できる")
+        CONSOLE.out("\nNext: このセッションのまま進む。開き直さなくていい")
+        CONSOLE.out("  コードの変更は accept までこの worktree の中だけ。rig の状態は `.rig/` へ")
+        CONSOLE.out("  別セッションで開くときは worktree の中で（セッションは cwd に紐づく）:")
+        CONSOLE.out(f"    cd {target} && {launcher}" if launcher else f"    cd {target}")
 
 
 def cmd_step(args: argparse.Namespace) -> None:

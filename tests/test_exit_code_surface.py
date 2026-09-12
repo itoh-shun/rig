@@ -169,12 +169,12 @@ def _git(repo, *args):
 
 
 def _ignore_rig_state(repo):
-    """Commit the `.gitignore` a rig repository has, before rig writes it itself.
+    """Ignore `.rig/`, as a rig repository does by the time anyone accepts anything.
 
-    `wb new` creates `.gitignore` with `.rig/` in it when there is none, which leaves
-    the main working tree dirty — and `wb accept` refuses a dirty tree, so without
-    this the acceptance path cannot be reached at all. Committing it up front is what
-    a real rig repository looks like on its second day.
+    Not load-bearing any more, and kept because it is true to life: `wb new` only offers
+    the entry now (and off a terminal declines and prints the line), while `wb accept`
+    stopped counting an untracked `.rig/` as a dirty tree. What a real rig repository
+    looks like on its second day is this, so the exit codes are measured against it.
     """
     (repo / ".gitignore").write_text(
         "# rig workbench state (task worktrees, telemetry, audit, locks)\n.rig/\n",

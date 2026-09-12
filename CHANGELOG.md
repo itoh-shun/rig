@@ -329,6 +329,58 @@ brick behind it fails here rather than at dispatch.
 
 ### Changed
 
+**`wb accept` stops counting rig's own untracked state as a dirty working tree.** The clean-tree
+pre-check exists so that a failed squash can be rolled back without destroying uncommitted work
+— and that rollback is a hard reset, which does not touch untracked files, so untracked
+`.rig/` was never what it was protecting. It refused anyway, and in a repository with no `.rig/`
+entry in `.gitignore` that is every task: `wb new` writes the run directory, the context meter
+appends `context.jsonl`, the locks land in `locks/`. The advice it gave — commit or stash —
+committed rig's execution history into the project, which is the contamination the ignore entry
+exists to prevent, arriving by instruction. Untracked paths under `.rig/` no longer block accept.
+Everything else still does, and where the blocking paths are `.rig/` files somebody has already
+committed (a reset there *would* move index content) the message says to untrack and ignore them
+rather than to commit more.
+
+**`wb new` no longer edits your `.gitignore` without being asked.** Registering a task used to
+append `.rig/` to the repository's `.gitignore` on its own and print that it had — a line in
+somebody's next commit that they never typed, in the one file outside `.rig/` that task creation
+touches. It is now offered, three ways and no fourth: `RIG_ALLOW_GITIGNORE=1` is standing consent
+and writes (the shape `RIG_ALLOW_PROJECT_PACKS` and its kin already use, not a new config file);
+on a terminal it asks once, y/N, default no; and anywhere without one — CI, `claude -p`, a
+subagent, `/rig:go` itself — it writes nothing and prints one line naming the entry to add and
+why. `wb import` takes the same path. A repository that already ignores `.rig/` in any spelling
+sees nothing, as before, and `rig-wb hostcheck`'s `state_ignored` check is unchanged: it is now
+the thing that keeps telling you the entry is missing.
+
+**`rig-wb hostcheck` still runs every time and stops saying the same thing every time.** The
+workbench enters through it on every pass — rig holds no "once per session" state and will not
+pretend to — and it printed its whole six-check report on each of them, which is how a report
+becomes wallpaper: by the fifth identical block nobody reads the line that finally changed. The
+verdicts are now recorded, one JSON line per *change*, appended to `.rig/hostcheck.jsonl` beside
+the other append-only records rig keeps there (`runs.jsonl`, `audit.jsonl`, `context.jsonl`). The
+second and later runs in the same repository print only the checks whose verdict moved — each with
+what it was (`← was MISS`) — plus one summary line, and name the file they compared against. A
+repository with no record yet gets the full report, `--full` asks for it back at any time, and
+`--json` is unchanged: it always carries every check, because that is the data channel. Exit codes
+are untouched (0 / 3, and 1 only under `--strict`). That append is this command's only write and
+it never creates a directory: `.rig/` belongs to `wb new`, hostcheck is step 0 of every `/rig:go`,
+and a record written unconditionally would leave `?? .rig/` in `git status` in a repository nobody
+had started a task in. Until `.rig/` exists the report prints in full and says so in one line; a
+tree that cannot be written does the same.
+
+**The last lines `wb new` prints stop telling you to open a second session.** They opened with
+"Next: open the session again inside this worktree" and closed with `cd <worktree> && claude`,
+which is a step README §1-§2 promise nobody has to take: saying `/rig:go "<task>"` is enough, and the session
+that said it keeps driving. That is not only prose — `facets/instructions/workbench` §③-2 and
+`patterns/isolated-worktree` §2 are the mechanism, pinning each subagent's working directory to the
+worktree while the parent dispatches. The command was contradicting both the documentation and its
+own harness, and the documentation was the side that was right, so the output moved: it now says
+this session drives and there is nothing to reopen, that the work stays inside the worktree until
+`accept`, and — as a condition rather than as the next step — that a *second* session opened for
+this task has to be opened inside the worktree, because an agent session is filed under the
+directory it starts in (#471). The path and the `cd` are still printed; only the instruction to
+follow them is gone.
+
 **`skills/engine/SKILL.md` keeps what a first turn needs; its four longest sections moved to files
 beside it.** The SessionStart hook has the entry read the whole document before the user has said
 anything, and it had reached 104,492 B / 742 lines. §2's brick catalogue, §3.5's recipe schema,

@@ -54,7 +54,7 @@ rig の入口は1文です。Claude Code の中で：
 /rig:go "今の変更が安全か確認して"
 ```
 
-最初はこれだけでいい——**設定ゼロ**：manifest も gates.json も persona 設定も不要、CLI のインストールも不要、結果が出る前にあなたが承認を求められることもない（すべて後から足す opt-in）。安全フローは箱から出してすぐ動く。裏側では、タスクを分類 → 対応する recipe を選択 → 隔離 worktree を作成（レビュー等の読み取り専用タスクは省略）→ 実装・テスト → acceptance-gate 判定 → 次アクションつきのサマリを返す:
+最初はこれだけでいい——**設定ゼロ**。manifest も gates.json も persona 設定も要らず、CLI のインストールも要らない。結果が出る前にあなたが承認を求められることもない（すべて後から足す opt-in）。rig が唯一たずねるのは `.gitignore` だ。実行状態は `.rig/` に置かれる。その 1 行は `.gitignore` に入れておく（次のコミットに紛れ込ませない）。端末があれば 1 回だけ聞く（y/N・既定は N）。端末が無いところ（CI、`claude -p`、subagent、`/rig:go` 自身）では何も書かず、足すべき行だけを出す。`RIG_ALLOW_GITIGNORE=1` で先に答えておける。安全フローは箱から出してすぐ動く。裏側では、タスクを分類し、対応する recipe を選び、隔離 worktree を作る（レビュー等の読み取り専用タスクは省略）。あとは実装・テスト → acceptance-gate 判定と進み、次アクションつきのサマリを返す:
 
 ```
 /rig:go diff       # 何が変わったか、なぜ安全か（あるいは危ういか）を確認
@@ -1044,7 +1044,7 @@ rig-wb pack knowledge --topic backup --scope product
 | オーケストレータの単体挙動（recipe 解決と trust gate・queueing・run-state・graph・CLI 表面） | `pytest -q -n auto` — `tests/` 配下のスイート。CPU 競合下でしか落ちないアサーションが落ちられるよう並列で回す。CI（`validate.yml`）が `ruff`（指摘0件）・validator・両 selftest とあわせて強制する |
 | acceptance-gate の基準、accept/discard の機構 | `scripts/workbench.py` — リリースごとに scratch git repo で検証（詳細は `CHANGELOG.md` の各エントリ） |
 | 文書化した要求と、その裏づけの対応 | `rig-wb coverage`（正本は `evals/coverage-map.json`。既定は地図とリポジトリの整合検証で CI 強制・`--run` で決定論証拠を実行） |
-| ホスト側の前提（コンテナ隔離・`permissions.deny`・実行状態の除外・`gh` の認証とトークンスコープ・インストール版 `rig-wb` がチェックアウト外から import できるか） | `rig-wb hostcheck`（検出と報告のみ。rig は強制しない——強制はホストの責務。**検証できなかった軸は OK ではなく MISS**。この環境に対象が無い軸は `applicable: false` として「満たした」ではなく「検査していない」と明示する） |
+| ホスト側の前提（コンテナ隔離・`permissions.deny`・実行状態の除外・`gh` の認証とトークンスコープ・インストール版 `rig-wb` がチェックアウト外から import できるか） | `rig-wb hostcheck`（検出と報告のみ。rig は強制しない——強制はホストの責務。**検証できなかった軸は OK ではなく MISS**。この環境に対象が無い軸は `applicable: false` として「満たした」ではなく「検査していない」と明示する。毎回走る。全文が出るのは最初の 1 回で、判定は `.rig/hostcheck.jsonl` に残る。同じリポジトリの 2 回目以降は動いた分だけ出る。全部見るなら `--full`） |
 | テストスイート側の検知力（ミューテーション） | `rig-wb mutation`（レポートの場所と形式は自分で判定する。`elements`＝Stryker / `mutmut`＝3.x の `export-cicd-stats` / `junit`＝2.x の `junitxml`。`--run` はプロジェクト側のツール実行から行う。スコアの劣化を warning-grade の基準に。ツール本体はプロジェクトが選ぶ） |
 | プロンプト面の変更と、その裏づけの承認済み評価ケース | `rig-wb eval affected --ratchet`（正本は `evals/prompt-surfaces.json` ＋ `evals/cases/`。全 PR で CI 強制——ケース未整備の面は `coverage_debt` として報告、既存カバレッジを外す変更は fail） |
 | ASVS の章と rig の検査面の対応 | `rig-wb asvs`（正本は `evals/asvs-map.json`。`--check` で参照先の実在を検証・CI 強制。**空の章＝rig では気づけない章**を明示する） |

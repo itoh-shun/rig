@@ -633,6 +633,10 @@ Environment:
   RIG_SKIP_GH_CHECK=1                   silence the one-line note about a missing
                                         `gh` / github/gh-stack. Gates nothing: those
                                         tools are optional and never block a run
+  RIG_ALLOW_GITIGNORE=1                 standing consent for the one tracked file task
+                                        creation writes: appending `.rig/` to the repo's
+                                        `.gitignore`. Without it rig asks on a terminal
+                                        and, off one, only says which line to add
 
 Examples:
   rig-wb run bugfix --provider claude --verifier-provider codex

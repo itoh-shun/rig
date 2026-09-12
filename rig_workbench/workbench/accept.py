@@ -44,6 +44,93 @@ _MISSING_IDENTITY_RE = re.compile(
     re.I)
 
 
+#: rig's own state root, as `git status --porcelain` spells a path inside it.
+STATE_DIR = ".rig/"
+
+
+def _porcelain_path(entry: str) -> str:
+    """The path out of one `git status --porcelain` line, unquoted.
+
+    `XY <path>` is the shape of every line, and git C-quotes a path holding anything awkward.
+    A rename or copy is `R  <from> -> <to>`, and the destination is the one that exists now —
+    but only there: a file genuinely named `a -> .rig/b` is an ordinary path, and splitting
+    every line on that separator would read it as a rename into `.rig/` and exempt it. The
+    status code is what tells the two apart, so it is what is asked.
+    """
+    path = entry[3:].strip()
+    if entry[:2].strip().startswith(("R", "C")) and " -> " in path:
+        path = path.split(" -> ", 1)[1]
+    if len(path) > 1 and path.startswith('"') and path.endswith('"'):
+        path = path[1:-1]
+    return path
+
+
+def _names_state(entry: str) -> bool:
+    """Is this status line about something under `.rig/`?"""
+    path = _porcelain_path(entry)
+    return path == STATE_DIR.rstrip("/") or path.startswith(STATE_DIR)
+
+
+def _dirty_root_advice(blocking: list[str]) -> str:
+    """What to do about every path that is blocking, not about the most interesting one.
+
+    Two kinds can be in the list at once, and they need opposite things. Ordinary dirt is the
+    operator's own work: commit or stash it. `.rig/` that somebody committed is rig's run state
+    living in the repository by mistake: it has to be *untracked*, and the removal committed —
+    `git rm -r --cached` stages a deletion, which is still an uncommitted change, so advice that
+    stopped at the `rm` sent the operator back to this same refusal. Naming only one of the two
+    kinds is the same failure at a larger scale: the operator follows the instruction, accept
+    refuses again, and the second message is the one they were never shown.
+
+    The command is one recovery and not a list of things to do, because it was measured being
+    followed. `git rm -r --cached` stages a deletion — an uncommitted change — so advice that
+    stopped there came straight back here. Adding the ignore entry leaves `?? .gitignore`, so
+    advice that stopped *there* came back a second time, on the other branch of this same
+    message. Three refusals to reach one accept is not guidance, it is a maze; the untrack, the
+    entry, the staging and the commit are one line now, and the next accept succeeds.
+
+    That line also carries `-m` for the reason it is a line at all: this message is read by
+    runners as well as by people, and a bare `git commit` opens `$EDITOR`, which on a CI runner
+    is a process waiting for a keystroke nobody will send. Advice only a human at a terminal
+    can follow is advice half the readers cannot.
+    """
+    state = [entry for entry in blocking if _names_state(entry)]
+    ordinary = [entry for entry in blocking if entry not in state]
+    if not state:
+        return "Commit or stash first (check with git status)"
+    untrack = (f"{len(state)} of them {'is' if len(state) == 1 else 'are'} under `{STATE_DIR}` "
+               f"and tracked by git — that is rig's run state, not repository content. Untrack "
+               f"it, ignore it and commit, in one go: git rm -r --cached {STATE_DIR} && "
+               f"printf '{STATE_DIR}\\n' >> .gitignore && git add .gitignore && "
+               f'git commit -m "untrack {STATE_DIR}"')
+    if not ordinary:
+        return f"{untrack} (check with git status)"
+    return (f"{untrack}. Commit or stash the other "
+            f"{len(ordinary)} (check with git status)")
+
+
+def _is_untracked_state(entry: str) -> bool:
+    """True for an *untracked* `git status` line under `.rig/` — which must not block accept.
+
+    The check below exists for exactly one reason, stated where it is raised: the rollback
+    after a failed squash is a hard reset, and that would wipe uncommitted work the operator
+    had in the tree. A hard reset does not touch untracked files, and accept never stages
+    `.rig/`, so untracked run state cannot be lost by the rollback and has no business
+    stopping it.
+
+    It is not a hypothetical exemption. `wb new` writes `.rig/runs/<id>/`, the context meter
+    appends `.rig/context.jsonl` and the lock files land in `.rig/locks/` — every task, before
+    anyone can accept it. In a repository whose `.gitignore` has no `.rig/` entry (the default
+    since task creation stopped adding one unasked) that is a permanently dirty tree, and the
+    old message's advice — commit or stash — meant committing rig's execution history into the
+    repository: the PR contamination the ignore entry exists to prevent, arrived by instruction.
+
+    Tracked-and-modified `.rig/` is deliberately *not* covered. There a reset would move real
+    index content, so the check still fires; the message says to untrack rather than to commit.
+    """
+    return entry.startswith("?? ") and _names_state(entry)
+
+
 def _task_head(root: pathlib.Path, task: dict) -> str | None:
     """The task branch tip. Approvals are bound to it, so a branch that moves after
     an approval stops counting as approved (see govern.approval)."""
@@ -295,11 +382,12 @@ def _cmd_accept_locked(args: argparse.Namespace, root: pathlib.Path, task_id: st
     # `git merge --abort` doesn't work — without this pre-check, reset --hard
     # would wipe out the user's existing uncommitted changes)
     root_dirty = git(["status", "--porcelain"], cwd=root).stdout.splitlines()
-    if root_dirty:
+    blocking = [entry for entry in root_dirty if not _is_untracked_state(entry)]
+    if blocking:
         die(
-            f"The working tree has {len(root_dirty)} uncommitted change(s). "
+            f"The working tree has {len(blocking)} uncommitted change(s). "
             f"accept only runs on a clean working tree so that the squash merge can be safely rolled back. "
-            f"Commit or stash first (check with git status)"
+            + _dirty_root_advice(blocking)
         )
 
     # (3) Squash merge into the main working tree (no commit = the final decision is an explicit human/model action)

@@ -40,7 +40,7 @@ import subprocess
 
 import pytest
 
-from conftest import subprocess_timeout
+from conftest import run_git, subprocess_timeout
 
 # ── how an entry's location is derived from production code ──────────────────
 #: `accessor(root)` -> absolute path.
@@ -106,6 +106,7 @@ class Pinned:
 # queue.json                | extra cmd  | yes
 # queue.json.lock           | extra cmd (1) | no — empty flock file
 # instincts.jsonl           | extra cmd  | yes
+# hostcheck.jsonl           | extra cmd  | yes
 # org.json                  | extra cmd  | yes
 # policy/org.json           | extra cmd  | yes
 # gates.json                | no — authored by a person; rig only reads it
@@ -225,6 +226,18 @@ TOP_LEVEL_LAYOUT = (
         via=CALL_WITH_ROOT,
         shape="jsonl-object-rows",
         required_keys=("id", "text", "status", "confidence"),
+    ),
+    Pinned(
+        rel=".rig/hostcheck.jsonl",
+        kind="file",
+        written_by=("rig-wb hostcheck — one record per change in the host's verdicts, so a "
+                    "later run can print what moved instead of the whole report again"),
+        driven=True,
+        plain_run=False,
+        accessor=("rig_workbench.hostcheck", "STATE_FILE"),
+        via=RELATIVE_STRING,
+        shape="jsonl-object-rows",
+        required_keys=("at", "verdicts", "missing", "skipped"),
     ),
     Pinned(
         rel=".rig/org.json",
@@ -631,9 +644,10 @@ def driven_run(rig_cli, rig_git_repo) -> DrivenRun:
     it is what "a plain run" means everywhere in this file.
     """
     repo = rig_git_repo
-    # `wb new` drops a `.gitignore` holding `.rig/` when the repo has none, and `accept`
-    # refuses to run against a dirty main tree. Committing it up front is what a real
-    # repository looks like on its second run, and keeps the flow deterministic.
+    # `wb new` offers to ignore `.rig/` and, off a terminal, declines and prints the line
+    # instead — so the entry is written here. `accept` no longer needs it (untracked `.rig/`
+    # does not block the dirty-root check), but a repository on its second run has it, and
+    # this file is about what the layout looks like there.
     (repo / ".gitignore").write_text(".rig/\n", encoding="utf-8")
     _git(repo, "add", ".gitignore")
     _git(repo, "commit", "-q", "-m", "ignore rig state")
@@ -781,7 +795,7 @@ def test_the_top_level_paths_no_plain_run_creates_still_sit_where_production_cod
 
 def test_the_top_level_paths_written_only_by_an_extra_command_land_where_the_table_says(
         driven_run, rig_cli):
-    """`audit.jsonl`, `ledger.jsonl`, `queue.json`, `instincts.jsonl`, `org.json`.
+    """`audit.jsonl`, `ledger.jsonl`, `queue.json`, `instincts.jsonl`, `hostcheck.jsonl`, `org.json`.
 
     None of them appear in a run that simply succeeds — they need a forced accept, an
     approval, a queued task, a recorded instinct, an org binding. Each is cheap to drive,
@@ -803,9 +817,12 @@ def test_the_top_level_paths_written_only_by_an_extra_command_land_where_the_tab
     _ok(rig_cli("govern", "approve", "grant", driven_run.task_id,
                 "--note", "recorded by the layout contract", cwd=repo), "govern approve")
     _ok(rig_cli("govern", "init", "--org", "acme", "--team", "team-a", cwd=repo), "govern init")
+    # Advisory: exit 3 is a missing host prerequisite, which a tmp repository always has.
+    rig_cli("hostcheck", cwd=repo)
 
     for rel in (".rig/audit.jsonl", ".rig/ledger.jsonl", ".rig/queue.json",
-                ".rig/instincts.jsonl", ".rig/org.json", ".rig/policy/org.json"):
+                ".rig/instincts.jsonl", ".rig/hostcheck.jsonl", ".rig/org.json",
+                ".rig/policy/org.json"):
         entry = _by_rel(TOP_LEVEL_LAYOUT, rel)
         assert_parses_and_carries_its_keys(entry, repo / rel)
 
@@ -815,6 +832,164 @@ def test_the_top_level_paths_written_only_by_an_extra_command_land_where_the_tab
     assert binding["policy_layers"] == [".rig/policy/org.json"], (
         "`govern init` no longer points the org binding at .rig/policy/org.json "
         f"(it wrote {binding['policy_layers']})")
+
+
+# ── `.rig/` is state, and `accept` has to agree ─────────────────────────────
+def test_accept_is_not_blocked_by_the_untracked_state_rig_wrote_itself(rig_cli, rig_git_repo):
+    """The default repository — no `.gitignore` entry — must still reach `accept`.
+
+    Every task fills `.rig/` before anyone can accept it: `wb new` writes the run directory,
+    the context meter appends `context.jsonl`, the lock files land in `locks/`. Where the
+    entry is absent (the default since task creation stopped adding one unasked) that is a
+    permanently dirty working tree, and `accept`'s clean-tree pre-check used to refuse with
+    "Commit or stash first" — advice that, followed, commits rig's execution history into the
+    repository. That is the PR contamination the ignore entry exists to prevent, arriving by
+    instruction, once per task.
+
+    The pre-check exists to make the rollback after a failed squash safe, and that rollback is
+    a hard reset, which does not touch untracked files — so untracked `.rig/` was never what it
+    was protecting. This is the measurement that it no longer pretends otherwise.
+    """
+    repo = rig_git_repo
+    assert not (repo / ".gitignore").exists(), (
+        "this test is about the repository that has no .gitignore entry; the fixture grew one")
+
+    task_id = _seed_task(rig_cli, repo, "default-path")
+    acceptance = json.loads((repo / ".rig" / "runs" / task_id / "acceptance.json")
+                            .read_text("utf-8"))
+    sets = [arg for check in acceptance["checks"]
+            for arg in ("--set", f"{check['name']}=passed:driven by the layout contract")]
+    _ok(rig_cli("wb", "gate", task_id, *sets, cwd=repo), "wb gate")
+
+    status = run_git(repo, "status", "--porcelain").stdout.strip()
+    assert status == "?? .rig/", (
+        "the premise moved: this test is about a tree whose only dirt is rig's own state, and "
+        f"git reports {status!r}")
+    accepted = rig_cli("wb", "accept", task_id, cwd=repo)
+    printed = accepted.stdout + accepted.stderr
+    assert "uncommitted change(s)" not in printed, (
+        "accept refused the default repository because rig's own run state was sitting in it. "
+        f"Following that advice commits `.rig/` into the project.\n{printed}")
+    assert accepted.returncode == 0, printed
+
+
+def test_accept_still_refuses_a_genuinely_dirty_tree(rig_cli, rig_git_repo):
+    """The exemption is for untracked `.rig/` and nothing else: a file the operator was in the
+    middle of editing would be destroyed by the rollback, which is what the check is for."""
+    repo = rig_git_repo
+    task_id = _seed_task(rig_cli, repo, "dirty-tree")
+    acceptance = json.loads((repo / ".rig" / "runs" / task_id / "acceptance.json")
+                            .read_text("utf-8"))
+    sets = [arg for check in acceptance["checks"]
+            for arg in ("--set", f"{check['name']}=passed:driven by the layout contract")]
+    _ok(rig_cli("wb", "gate", task_id, *sets, cwd=repo), "wb gate")
+    (repo / "README.md").write_text("edited, not committed\n", encoding="utf-8")
+
+    refused = rig_cli("wb", "accept", task_id, cwd=repo)
+    printed = refused.stdout + refused.stderr
+    assert refused.returncode != 0, printed
+    assert "uncommitted change(s)" in printed and "Commit or stash first" in printed, printed
+
+
+def test_the_exemption_is_for_rig_state_and_not_for_untracked_files_in_general(
+        rig_cli, rig_git_repo):
+    """Scope, not just existence. Widening the exemption to *any* untracked path survives
+    every other test in this file, because the one they use is a tracked file the operator had
+    modified. An untracked file at the repository root is the operator's too — a note, a
+    scratch script, a half-written module — and the rollback after a failed squash is the same
+    hard reset either way; what makes `.rig/` safe to skip is that it is rig's, not that it is
+    untracked."""
+    repo = rig_git_repo
+    task_id = _seed_task(rig_cli, repo, "stray-file")
+    acceptance = json.loads((repo / ".rig" / "runs" / task_id / "acceptance.json")
+                            .read_text("utf-8"))
+    sets = [arg for check in acceptance["checks"]
+            for arg in ("--set", f"{check['name']}=passed:driven by the layout contract")]
+    _ok(rig_cli("wb", "gate", task_id, *sets, cwd=repo), "wb gate")
+    (repo / "stray.txt").write_text("not committed, not rig's\n", encoding="utf-8")
+
+    refused = rig_cli("wb", "accept", task_id, cwd=repo)
+    printed = refused.stdout + refused.stderr
+    assert refused.returncode != 0, (
+        "an untracked file that is not rig's own state was exempted from the clean-tree "
+        f"check:\n{printed}")
+    assert "uncommitted change(s)" in printed and "Commit or stash first" in printed, printed
+
+
+def test_accept_names_the_ignore_entry_when_the_dirty_paths_are_tracked_state(
+        rig_cli, rig_git_repo):
+    """Someone already committed `.rig/`, so a reset *would* move index content and the check
+    still fires. What changes is the advice: untrack it and ignore it, not commit more of it."""
+    repo = rig_git_repo
+    task_id = _seed_task(rig_cli, repo, "tracked-state")
+    acceptance = json.loads((repo / ".rig" / "runs" / task_id / "acceptance.json")
+                            .read_text("utf-8"))
+    sets = [arg for check in acceptance["checks"]
+            for arg in ("--set", f"{check['name']}=passed:driven by the layout contract")]
+    _ok(rig_cli("wb", "gate", task_id, *sets, cwd=repo), "wb gate")
+    _git(repo, "add", "-f", ".rig/context.jsonl")
+    _git(repo, "commit", "-q", "-m", "someone committed rig's state")
+    with (repo / ".rig" / "context.jsonl").open("a", encoding="utf-8") as f:
+        f.write('{"later": true}\n')
+
+    refused = rig_cli("wb", "accept", task_id, cwd=repo)
+    printed = refused.stdout + refused.stderr
+    assert refused.returncode != 0, printed
+    assert "tracked by git" in printed and ">> .gitignore" in printed, (
+        f"the message still says to commit rig's state rather than to untrack and ignore it:"
+        f"\n{printed}")
+    assert "Commit or stash first" not in printed, printed
+
+    # And the advice has to work when it is followed to the letter — on the *next* attempt,
+    # not the third. Every step of it was measured coming back here: `git rm -r --cached`
+    # stages a deletion, which is an uncommitted change; adding the ignore entry leaves
+    # `?? .gitignore`, which is another. `-m` belongs to it for the same reason the whole
+    # thing is one command line: a bare `git commit` opens $EDITOR, and on a CI runner that
+    # waits for a keystroke nobody will send.
+    assert '&& git commit -m "untrack .rig/"' in printed, (
+        f"the advice stops early, or asks for an editor session:\n{printed}")
+    _git(repo, "rm", "-r", "--cached", "-q", ".rig/")
+    with (repo / ".gitignore").open("a", encoding="utf-8") as ignore:
+        ignore.write(".rig/\n")
+    _git(repo, "add", ".gitignore")
+    _git(repo, "commit", "-q", "-m", "untrack .rig/")
+
+    followed = rig_cli("wb", "accept", task_id, cwd=repo)
+    assert followed.returncode == 0, (
+        "the operator followed the advice exactly and accept refused again. One recovery has "
+        "to leave the tree acceptable; sending somebody round this loop twice more is a maze, "
+        "not guidance:\n" + followed.stdout + followed.stderr)
+
+
+def test_accept_tells_the_operator_about_every_blocking_path_not_the_interesting_one(
+        rig_cli, rig_git_repo):
+    """Tracked `.rig/` and ordinary dirt need opposite things, and can be there together.
+
+    Naming only one kind is the same failure as advice that leaves a staged deletion behind:
+    the operator does what they were told, accept refuses again, and the second message is the
+    one they were never shown.
+    """
+    repo = rig_git_repo
+    task_id = _seed_task(rig_cli, repo, "both-kinds")
+    acceptance = json.loads((repo / ".rig" / "runs" / task_id / "acceptance.json")
+                            .read_text("utf-8"))
+    sets = [arg for check in acceptance["checks"]
+            for arg in ("--set", f"{check['name']}=passed:driven by the layout contract")]
+    _ok(rig_cli("wb", "gate", task_id, *sets, cwd=repo), "wb gate")
+    _git(repo, "add", "-f", ".rig/context.jsonl")
+    _git(repo, "commit", "-q", "-m", "someone committed rig's state")
+    with (repo / ".rig" / "context.jsonl").open("a", encoding="utf-8") as f:
+        f.write('{"later": true}\n')
+    (repo / "README.md").write_text("edited, not committed\n", encoding="utf-8")
+
+    refused = rig_cli("wb", "accept", task_id, cwd=repo)
+    printed = refused.stdout + refused.stderr
+    assert refused.returncode != 0, printed
+    assert "git rm -r --cached" in printed, (
+        f"the tracked `.rig/` half of the blocking set went unmentioned:\n{printed}")
+    assert "Commit or stash the other" in printed, (
+        f"the ordinary dirty file went unmentioned, so following this message still leaves "
+        f"accept refusing:\n{printed}")
 
 
 def test_the_person_authored_top_level_config_is_read_from_its_frozen_location(

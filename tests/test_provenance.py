@@ -69,8 +69,13 @@ def _make_acceptable_task(git_repo, task_id):
 
 
 def _commit_gitignore(git_repo):
-    """`new` appends .rig/ to .gitignore but doesn't commit it; accept requires a
-    clean root working tree, so tests that run a real accept must commit it first."""
+    """Ignore `.rig/` and commit it, because `accept` requires a clean root working tree.
+
+    Written here rather than left to `new`: `new` only *offers* to add the entry now, and
+    off a terminal it declines and prints the line instead, so a test that relied on the
+    side effect was committing a file that no longer appears.
+    """
+    (git_repo / ".gitignore").write_text(".rig/\n", encoding="utf-8")
     subprocess.run(["git", "add", "-A", "--", ".gitignore"], cwd=git_repo, check=True)
     subprocess.run(["git", "commit", "-q", "-m", "gitignore .rig/"], cwd=git_repo, check=True)
 

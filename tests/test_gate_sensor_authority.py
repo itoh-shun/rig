@@ -492,7 +492,8 @@ def test_accept_force_over_a_sensor_failure_is_written_to_the_audit_ledger(tmp_p
     """
     repo, wt_root = make_repo(tmp_path), tmp_path / "wt"
     task_id, wt = new_task(repo, wt_root)
-    # `new` appends `.rig/` to .gitignore, and `accept` requires a clean main tree
+    # `accept` requires a clean main tree, and `new` no longer ignores `.rig/` on its own
+    (repo / ".gitignore").write_text(".rig/\n", encoding="utf-8")
     _git(repo, "add", "-A")
     _git(repo, "commit", "-q", "-m", "ignore .rig")
 
@@ -635,6 +636,9 @@ def test_a_squash_with_no_committer_identity_says_so_and_advises_git_config(tmp_
     _git(repo, "add", "-A")
     _git(repo, "commit", "-q", "-m", "base")
     task_id, wt = new_task(repo, wt_root)
+    # `accept` requires a clean main tree, and `new` no longer ignores `.rig/` on its own —
+    # without the entry, `add -A` commits the run state instead of ignoring it.
+    (repo / ".gitignore").write_text(".rig/\n", encoding="utf-8")
     _git(repo, "add", "-A")
     _git(repo, "commit", "-q", "-m", "ignore .rig")
     (wt / "app.py").write_text("x = 2\n", encoding="utf-8")
@@ -665,6 +669,9 @@ def test_any_other_squash_failure_surfaces_git_stderr_and_the_exit_code(tmp_path
     what git said and what git returned rather than inventing a third diagnosis."""
     repo, wt_root = make_repo(tmp_path), tmp_path / "wt"
     task_id, wt = new_task(repo, wt_root)
+    # `accept` requires a clean main tree, and `new` no longer ignores `.rig/` on its own —
+    # without the entry, `add -A` commits the run state instead of ignoring it.
+    (repo / ".gitignore").write_text(".rig/\n", encoding="utf-8")
     _git(repo, "add", "-A")
     _git(repo, "commit", "-q", "-m", "ignore .rig")
     (wt / "app.py").write_text("x = 2\n", encoding="utf-8")
