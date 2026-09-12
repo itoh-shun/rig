@@ -187,7 +187,9 @@ gate: standard + bugfix
 <repo>/.rig/runs/rig-YYYYMMDD-HHMMSS-<slug>/                      ← run state（discard 後も残る）
   task.json        task_id / 入力 / task_type / recipe / base branch+commit / worktree path / status
   steps.json       step ごとの進行状態
-  acceptance.json  {task_id, task_type, presets, status, checks: [{name, status, detail}]}
+  acceptance.json  {task_id, task_type, presets, status, checks: [{name, status, detail, by, note?}]}
+                   `by` はその status を最後に書いた者（`gate --set` なら `operator`、測ったセンサーならその名前）。status が一度書かれてから現れる（作りたての gate には無い）
+                   `note` は `--set <criterion>=<status>:<detail>` で操作者が書いた一文。センサーは書きも書き換えもせず、その status が立っている間だけ残る
   review.json      review タスクの persona 別 verdict（/rig:go stats に反映）
   reviews/<persona>.md   その reviewer の本文全文（`review --body` で記録・任意）
   plan.md / diff.md / log.md / final.md   モデルが書く散文（計画・差分要約・決定・まとめ）
@@ -230,9 +232,65 @@ acceptance-gate は、run を反映候補として渡してよいかを判定す
 | `review` | review | `findings_are_concrete`・`severity_labeled`・`file_references_included`・`blocking_and_non_blocking_separated`・`false_positive_risk_considered` |
 | `security` | security_review（review に上乗せ） | `authn_authz_impact_checked`・`user_input_flow_checked`・`secret_exposure_checked`・`unsafe_eval_or_shell_checked`・`dependency_risk_checked` |
 
-この基準リストはプロジェクト側で **`.rig/gates.json`** から拡張できる——`extra_criteria` で preset / task_type 別に独自基準を追加（表示には `[project]` タグ）、`descriptions` で説明を付ける。設定は**加算のみ**：組み込み基準の削除・緩和キーは即座に拒否されるため、repo 内のファイルが gate を弱めることはできない。また基準は自己申告でなく機械センサー7本が裏付ける——うち5本は上記プリセットの基準を見る：`public_api_changes_documented`（refactor プリセットの `public_api_changes_documented_if_any` も同じセンサーが見る）は OpenAPI schema-diff（`openapi.json`/`swagger.json` 等を自動検出、`openapi_paths` で明示可）で、API が変わったのに diff サマリに記述が無ければ `warning` に落とす——warning-grade であり単独で gate を fail にはしない。`no_secret_leak` は task diff への決定論シークレットスキャン（`workbench.py scan-secrets`）で、検出があれば **failed** にする——抜粋は常にマスク済みで、人が確認した偽陽性は `--set no_secret_leak=passed` で明示的に解除する。`no_gate_tampering` は task diff への anti-tamper スキャン——`.rig/gates.json`・`.rig/recipes/`・CI workflow の編集は fail-grade、bugfix/feature task での既存テスト改変・assert 削除・skip マーカー追加は warning-grade（人がレビューした上での上書きは `--set no_gate_tampering=passed` で行い、check に記録される）。`no_injection_markers` は diff＋repo の prose 面へのプロンプトインジェクション・マーカースキャン（`workbench.py scan-injection`）——不可視/bidi Unicode は fail-grade・指示上書きフレーズは warning-grade で、抜粋中の不可視文字は `<U+XXXX>` エスケープで描画され、脱出口は `--set no_injection_markers=passed`（記録される）。`no_destructive_operation` は task diff への破壊的コマンドスキャン（`workbench.py scan-destructive`）——`rm -rf /`・`mkfs`・`dd of=/dev/…`・`DROP DATABASE` は fail-grade、絶対パス/変数展開への `rm -rf`・`git clean -f`・`--force-with-lease` なしの force push・`DROP TABLE`/`TRUNCATE`・大量削除は warning-grade で、脱出口は `--set no_destructive_operation=passed`（記録される）。検出対象は diff に書き込まれたコマンドであり、実行時コマンドの傍受ではない（それはホストのパーミッション機構の責務）。
+この基準リストはプロジェクト側の **`.rig/gates.json`** から拡張できる。
+`extra_criteria` は preset / task_type 別に独自基準を足し（表示には `[project]` タグ）、`descriptions` がその説明を付ける。
+設定は**加算のみ**：組み込み基準の削除・緩和キーは即座に拒否されるため、repo 内のファイルが gate を弱めることはできない。
+また基準は自己申告でなく機械センサー8本が裏付ける。
+うち5本は上記プリセットの基準を見る。
+`public_api_changes_documented` は OpenAPI schema-diff のセンサーが見る。
+refactor プリセットの `public_api_changes_documented_if_any` も同じセンサーが見る。
+`openapi.json`/`swagger.json` 等は自動検出し、`openapi_paths` で明示もできる。
+API が変わったのに diff サマリに記述が無ければ `warning` に落とす。
+warning-grade であり、単独で gate を fail にはしない。
+`no_secret_leak` は task diff への決定論シークレットスキャン（`workbench.py scan-secrets`）である。
+検出があれば **failed** にし、抜粋は常にマスク済みで出す。
+偽陽性でも測定と食い違う `--set no_secret_leak=passed` は拒否される（exit 2＝使い方の誤りで、gate 失敗の 1 とは別）。
+findings を diff から取り除いて評価し直せば、`--set no_secret_leak=passed` は測定と一致するので受け付けられる。
+センサーが自分で書くのは findings の有無までで、pass そのものは書かない。
+`no_gate_tampering` は task diff への anti-tamper スキャン。
+`.rig/gates.json`・`.rig/recipes/`・CI workflow の編集は fail-grade。
+bugfix/feature task での既存テスト改変・assert 削除・skip マーカー追加は warning-grade。
+`no_injection_markers` は diff＋repo の prose 面を走るプロンプトインジェクション・マーカースキャンである。
+実装は `workbench.py scan-injection` と同じ。
+不可視/bidi Unicode は fail-grade、指示上書きフレーズは warning-grade。
+抜粋中の不可視文字は `<U+XXXX>` エスケープで描画される。
+`no_destructive_operation` は task diff への破壊的コマンドスキャンである（`workbench.py scan-destructive`）。
+ルート直下の再帰削除・ファイルシステム初期化・デバイスノードへの直接書き込み・データベース削除は fail-grade。
+絶対パスや未展開の変数への再帰削除、強制つきの git clean は warning-grade。
+lease 指定なしの force push、テーブルの削除や切り詰め、大量削除も同じく warning-grade。
+検出対象は diff に書き込まれたコマンドであり、実行時コマンドの傍受ではない（それはホストのパーミッション機構の責務）。
+宣言で黙らせられないのは 4 本。
+`no_secret_leak`・`no_gate_tampering`・`no_injection_markers`・`no_destructive_operation` がそれである。
+センサーと食い違う `--set` は拒否され、記録に残るのはセンサーの判定のほうである。
+人がレビューした上でなお進めるなら `accept --force` だけが道になる。
+迂回した基準は `.rig/audit.jsonl` に名指しで残り、署名付き provenance にも forced として残る。
+センサーより**厳しい**宣言は生き残る。
+warning-grade の schema センサーは fail を出さないので、食い違っても gate は拒否せず注釈に留める。
 
-残る2本のセンサーが見る基準は、上記プリセット表の外にある。`prompt_regression_passed` は diff が prompt 面に触れたときだけチェックリストに自動追加され、合否は機械 eval ゲートが決める——`--set` による手動上書きを拒否する唯一の基準。`evidence_anchors_resolve` は **opt-in でどのプリセットにも入っていない**：プロジェクトが `.rig/gates.json` の `extra_criteria` で入れたときだけ有効になり、`review --body` で記録した reviewer 本文中の `file.py:42` 形式の証拠アンカーが実在する行を指すかを検査する（`workbench.py scan-anchors`）——解決は worktree→base commit の順なので、diff が削除したファイルへのアンカーは偽陽性にならない。参照先を特定できたのにアンカーが誤り（行数超過・行 0・範囲逆転）は fail-grade、ファイル自体を特定できなかったものは warning-grade で、脱出口は `--set evidence_anchors_resolve=passed`（記録される）。既定の gate では常に no-op のまま。アンカーは **task の worktree を基準に解決する**ので、入れる先は worktree を持つ task 種別が使うプリセット——`{"extra_criteria": {"standard": ["evidence_anchors_resolve"]}}` が想定形で、`standard` は実装系 task が必ず合成する土台。名前が紛らわしい `review`（や `security`）プリセットに入れても**永久に発火しない**：`review`/`security_review` の task は worktree **なし**で route されるため、解決の基準になるツリーが存在しない。このセンサーが見るのは、review fan-out が実装 task に対して記録した本文（`review <task_id> --body`）であって、単体の review task ではない。評価できないとき（worktree 無し・base commit 無し・記録された本文が無い）は、基準を黙って `pending` のまま残さず gate 出力で理由を述べる。
+残る3本のセンサーが見る基準は、上記プリセット表の外にある。
+`prompt_regression_passed` は diff が prompt 面に触れたときだけチェックリストに自動追加される。
+合否は機械 eval ゲートが決め、`--set` は status を問わず受け付けない。
+他 5 本が拒むのはセンサーと食い違う宣言だけで、ここはその区別すら無い。
+`evidence_anchors_resolve` は **opt-in でどのプリセットにも入っていない**。
+プロジェクトが `.rig/gates.json` の `extra_criteria` で入れたときだけ有効になる。
+有効時は、`review --body` で記録した reviewer 本文中の証拠アンカーを検査する。
+`file.py:42` 形式の引用が実在する行を指すかだけを見る（`workbench.py scan-anchors`）。
+解決は worktree→base commit の順なので、diff が削除したファイルへのアンカーは偽陽性にならない。
+参照先を特定できたのにアンカーが誤り（行数超過・行 0・範囲逆転）は fail-grade。
+ファイル自体を特定できなかったものは warning-grade。
+測定と食い違う `--set evidence_anchors_resolve=passed` は拒否される。
+既定の gate では常に no-op のまま。
+アンカーは **task の worktree を基準に解決する**ので、入れる先は worktree を持つ task 種別が使うプリセットになる。
+`{"extra_criteria": {"standard": ["evidence_anchors_resolve"]}}` が想定形になる。
+`standard` は実装系 task が必ず合成する土台である。
+名前が紛らわしい `review`（や `security`）プリセットに入れても**永久に発火しない**。
+`review`/`security_review` の task は worktree **なし**で route されるため、解決の基準になるツリーが存在しない。
+このセンサーが見るのは、review fan-out が実装 task に対して記録した本文（`review <task_id> --body`）であって、単体の review task ではない。
+評価できないとき（worktree 無し・base commit 無し・記録された本文が無い）は、基準を黙って `pending` のまま残さず gate 出力で理由を述べる。
+8本目は `ja_lint_clean` で、`prompt_regression_passed` と同じく diff が呼んだときだけ現れる。
+条件は diff が日本語の散文を足すことで、センサーは追加行を `rig-wb ja-lint` で判定する。
+error があれば failed、warning だけなら warning に置く。
+食い違う `--set ja_lint_clean=passed` は拒否ではなく次の評価で上書きされ、より厳しい `--set ja_lint_clean=failed` は残る。
 
 各基準は根拠つきで `passed` / `failed` / `warning` / `skipped` として記録する：
 

@@ -4,7 +4,8 @@ Covers: every named pattern class, masking (the raw secret never appears in a
 finding), the generic entropy detector (catches random base64, skips lockfile
 hash paths), clean-tree no-findings, diff-scoped scanning, and the fail-grade
 gate integration in a scratch repo (secret in the task diff → no_secret_leak
-failed with a masked excerpt; explicit --set passed is the escape hatch).
+failed with a masked excerpt, and a hand-written --set passed refused rather
+than recorded — see tests/test_gate_sensor_authority.py for that rule).
 """
 
 import json
@@ -224,21 +225,19 @@ def test_sensor_fails_check_on_secret_in_diff(tmp_path):
     assert any("no_secret_leak failed" in n for n in notes)
 
 
-def test_sensor_respects_explicit_pass_and_sticks(tmp_path):
+def test_sensor_writes_its_verdict_over_a_passed_check(tmp_path):
+    """A `passed` already on the check — from this invocation's `--set`, or from an
+    evaluation before the secret was added — is not an answer the scan defers to."""
     repo, sha = make_repo(tmp_path)
     (repo / "cfg.py").write_text("AWS = 'AKIAIOSFODNN7EXAMPLE'\n", encoding="utf-8")
     _git(repo, "add", "-A")
     _git(repo, "commit", "-q", "-m", "leak")
     task, acc = make_state(repo, sha)
-    # escape hatch: user reviewed and explicitly set passed in this invocation
     acc["checks"][0]["status"] = "passed"
-    notes = apply_secret_sensor(repo, tmp_path, task, acc, explicit_set={"no_secret_leak"})
-    assert acc["checks"][0]["status"] == "passed"
-    assert acc["checks"][0]["secret_override"] is True
-    assert any("manual override" in n for n in notes)
-    # ...and the override survives later evaluations without --set
     notes = apply_secret_sensor(repo, tmp_path, task, acc)
-    assert acc["checks"][0]["status"] == "passed"
+    assert acc["checks"][0]["status"] == "failed"
+    assert "secret_override" not in acc["checks"][0]
+    assert any("no_secret_leak failed" in n for n in notes)
 
 
 def test_sensor_resets_its_own_failure_when_secret_removed(tmp_path):
@@ -300,12 +299,14 @@ def test_gate_integration_secret_in_diff_fails_no_secret_leak(tmp_path):
     assert r.returncode == 1
     assert "aws_access_key" in r.stdout and "AKIAIOSFODNN7EXAMPLE" not in r.stdout
 
-    # documented escape hatch: explicit --set no_secret_leak=passed after review
+    # the sensor's verdict is not overridable by hand: the gate refuses the declaration
     r = cli(repo, wt_root, "gate", task_id, "--set", "no_secret_leak=passed")
-    assert r.returncode == 0, r.stdout + r.stderr
+    assert r.returncode == 2, r.stdout + r.stderr   # a usage error, not a failed gate
+    assert "you set 'passed' — the sensor measured 'failed'" in r.stdout + r.stderr
     acc = json.loads((repo / ".rig" / "runs" / task_id / "acceptance.json").read_text(encoding="utf-8"))
     check = next(c for c in acc["checks"] if c["name"] == "no_secret_leak")
-    assert check["status"] == "passed" and check.get("secret_override") is True
+    assert check["status"] == "failed"
+
 
 
 def test_scan_secrets_cli_clean_paths_exits_zero(tmp_path):

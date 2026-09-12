@@ -36,6 +36,8 @@ def _print_checks(acc: dict) -> None:
         origin = " [project]" if c.get("origin") == "project" else ""
         detail = f" — {c['detail']}" if c.get("detail") else ""
         print(f"  {CHECK_ICON[c['status']]} {c['name']}{origin}{detail}")
+        if c.get("note") and c["note"] != c.get("detail"):
+            print(f"      note (operator): {c['note']}")
         for line in c.get("api_diff") or []:
             print(f"      api: {line}")
         for line in c.get("secret_findings") or []:

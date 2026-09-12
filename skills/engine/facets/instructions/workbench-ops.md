@@ -399,14 +399,14 @@ python3 scripts/workbench.py scan-secrets --diff <task_id>
 
 1. 出力の抜粋は**常にマスク済み**（先頭4文字＋末尾2文字のみ残る）——秘密の生値は findings に含まれないため、出力はそのままユーザーに提示してよい。検出ありは exit 1。
 2. `workbench.py gate` は評価のたびにこの scanner を task diff に自動適用し、findings があれば `no_secret_leak` を **failed** にする（warning ではない＝accept を機械的に止める。schema センサーと違い fail-grade）。
-3. 人が偽陽性と確認した場合の脱出口は `gate <task_id> --set no_secret_leak=passed`（明示 pass が優先され、`secret_override` として check に記録される）。判断せず黙って通さない——必ずユーザーに findings を見せてから提案する。
+3. **この criterion に `--set` の逃がし方は無い**。`gate <task_id> --set no_secret_leak=passed` はセンサーの測定と食い違うので拒否され（exit 2＝使い方の誤りで、gate 失敗の 1 とは別）、記録に残るのはセンサーの `failed` のほうである。diff から findings を取り除いて `gate` を評価し直せば、`--set no_secret_leak=passed` は測定と一致するので受け付けられる。センサーが自分で書くのは findings の有無までで、pass そのものは書かない。人が偽陽性と確認した上で進めるなら `accept --force` だけが道で、`.rig/audit.jsonl` と provenance に残る。判断せず黙って通さない——必ずユーザーに findings を見せてから提案する。
 
 ## `/rig scan-ja-prose [<task_id>]`
 
 `python3 scripts/workbench.py scan-ja-prose <task_id>` に委譲する。gate の `ja_lint_clean` センサーと同じ検査を、task の worktree の diff（base からの追加行と未追跡 file）に限って走らせ、`file:line:col: severity [rule] message` で出す。error があれば exit 1、warning だけなら 0。diff に日本語の散文が無ければその旨を出して 0。
 
 - 検査は `rig_workbench/ja_textlint.py`（`rig-wb ja-lint`）で、規則の正本は `facets/policies/japanese-textlint-rules`。project の `.claude/ja-textlint.json` があればそれを読む。
-- **判定は書き換えない。** 表示だけ。gate の状態を動かすのは `gate` の評価であり、`--set ja_lint_clean=passed` は review 後の明示的な逃がし方として記録される。
+- **判定は書き換えない。** 表示だけ。gate の状態を動かすのは `gate` の評価で、`ja_lint_clean` はセンサーが毎回書き直すため `--set ja_lint_clean=passed` は次の評価で上書きされる。人の手が残るのはセンサーより厳しい側だけ。`--set ja_lint_clean=failed` は lint が clean でも維持される。
 - 相方の `ja_prose_ai_smell_reviewed` はこのコマンドの対象ではない。あれは `ai-smell-reviewer` の verdict（`review --set ai-smell-reviewer=…`）を写す criterion で、`scripts/prose_rhythm.py` の数値は読まない。
 
 ## `/rig scan-injection [paths…] [--diff <task_id>]`
@@ -420,7 +420,7 @@ python3 scripts/workbench.py scan-injection --diff <task_id>
 
 1. 出力の抜粋では不可視文字が `<U+XXXX>` エスケープとして描画される（生の不可視文字は findings に含まれない）ため、出力はそのままユーザーに提示してよい。検出ありは exit 1。
 2. `workbench.py gate` は評価のたびにこの scanner を自動適用し、不可視 Unicode 検出で `no_injection_markers` を **failed** に（accept を機械的に止める）、フレーズのみなら **warning** にする。同様に、gate 評価ごとに anti-tamper センサー（`no_gate_tampering`）も走る——task diff 中の `.rig/gates.json`・`.rig/recipes/`・CI workflow の編集は fail-grade、bugfix/feature task での既存テスト改変・assert 削除・skip マーカー追加は warning-grade（こちらは gate 内蔵センサーのみで単独 scan コマンドは持たない）。
-3. 人がレビューして偽陽性と確認した場合の脱出口は `gate <task_id> --set no_injection_markers=passed`（`injection_override` として check に記録され、以降の評価でも維持される。`no_gate_tampering` 側は `--set no_gate_tampering=passed`＝`tamper_override`）。判断せず黙って通さない——必ずユーザーに findings を見せてから提案する。
+3. 偽陽性だと人が確認しても、`--set no_injection_markers=passed`（`no_gate_tampering` も同じ）は拒否される（exit 2）。findings を diff から消して評価し直せば、`--set no_injection_markers=passed` は測定と一致するので受け付けられる。センサーが自分で書くのは findings の有無までで、pass そのものは書かない。そのまま進めるなら `accept --force` だけが道で、`.rig/audit.jsonl` と provenance に残る。判断せず黙って通さない——必ずユーザーに findings を見せてから提案する。
 4. **`--deps`（#320・明示opt-in）**：依存ツリー（`node_modules`/`vendor`/`third_party`）配下の**prose面のみ**（`*.md`/`*.rst`/`*.txt`——ソースコードは対象外）を走査する。サードパーティ依存のドキュメントにエージェント向けの隠し指示を仕込むサプライチェーン攻撃（依存のREADMEがエージェントに出力削除を指示していた実例）への対抗。既定面には**決して含めない**（巨大ツリーの常時走査はコストが見合わない＋AI系ライブラリのREADMEはプロンプト例を正当に含むためフレーズ検出の偽陽性が多い）。検出時の推奨アクション（文脈確認→本物ならピン止め/隔離/上流報告。不可視Unicodeは正当な用途ゼロなので即隔離）は出力自体に含まれる。
 
 ## `/rig stream-checks [<task_id>] [--watch --interval N --max-passes M]`
@@ -464,7 +464,7 @@ python3 scripts/workbench.py scan-destructive --diff <task_id>
 相対パスの `rm -rf build/` は**意図的に検出しない**（Makefile の clean target 等で日常的に正当。このセンサーが守りたいのは絶対パスと空変数展開の事故）。
 
 1. `workbench.py gate` は評価のたびにこの scanner を task diff に自動適用し、fail-grade 検出で `no_destructive_operation` を **failed** に、warning のみなら **warning** にする。
-2. 人がレビューして問題なしと確認した場合の脱出口は `gate <task_id> --set no_destructive_operation=passed`（`destructive_override` として記録・以降の評価でも維持）。必ずユーザーに findings を見せてから提案する。
+2. 人がレビューして問題なしと確認しても、`gate <task_id> --set no_destructive_operation=passed` は拒否される（exit 2）。diff から該当行を消して `gate` を評価し直すか、そのまま進めるなら `accept --force`（`.rig/audit.jsonl` と provenance に残る）。必ずユーザーに findings を見せてから提案する。
 3. **スコープの正直な明示**：これは**差分に書き込まれた**破壊的コマンド（スクリプト・CI設定・マイグレーション）の検出であり、エージェントが実行時に打つコマンドの傍受ではない（それはホストのパーミッション機構の責務）。rig が完全に管理できる成果物＝diff の中の時限爆弾を人に見せるのがこのセンサーの仕事。
 
 ## `/rig scan-anchors [paths…] [--diff <task_id>]`
@@ -478,7 +478,7 @@ python3 scripts/workbench.py scan-anchors --diff <task_id>
 
 1. 解決は **worktree が先・base commit が後**。diff が削除／改名したファイルへの引用を fail にしないための必須の2段目であり、抜けると正当な引用が偽陽性になる。
 2. 判定は3値で、**SKIPPED を黙って合格にしない**（バイナリ・生成物・symlink・読めないファイルは理由つきで別枠に出す）。grade は2段階——参照先を特定できたのにアンカーが誤り（行数超過・行 0・範囲逆転・ディレクトリ指定）は **fail-grade**、ファイル自体を特定できなかった（`streaming.py:67` のような裸の basename 等）は **warning-grade**。
-3. gate 側は **既定では走らない**。`evidence_anchors_resolve` はどのプリセットにも入っておらず、プロジェクトが `.rig/gates.json` の `extra_criteria` で追加したときだけ有効になる（未導入のうちは no-op）。有効時は fail-grade 検出で **failed**、warning のみなら **warning**。脱出口は `gate <task_id> --set evidence_anchors_resolve=passed`（`anchor_override` として記録・以降の評価でも維持）。必ずユーザーに findings を見せてから提案する。
+3. gate 側は **既定では走らない**。`evidence_anchors_resolve` はどのプリセットにも入っておらず、プロジェクトが `.rig/gates.json` の `extra_criteria` で追加したときだけ有効になる（未導入のうちは no-op）。有効時は fail-grade 検出で **failed**、warning のみなら **warning**。`--set evidence_anchors_resolve=passed` は測定と食い違えば拒否される（exit 2）。アンカーを直して評価し直すのが筋で、そのまま進めるなら `accept --force`（記録に残る）。必ずユーザーに findings を見せてから提案する。
 4. **どこに入れるか**：アンカーは **task の worktree を基準に解決する**ので、worktree を持つ task 種別のプリセットに入れる。既定は `standard`（`bugfix`/`feature`/`refactor`/`test`/`performance`/`documentation`/`design`/`investigation`/`release_support` が合成する土台）＝
 
    ```json

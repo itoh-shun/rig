@@ -44,7 +44,11 @@ def die(msg: str) -> "NoReturn":  # noqa: F821
     """rig could not produce an answer. Exits `exitcodes.ERROR` (2).
 
     The overwhelming majority of stops: a task that is not there, an unreadable file, a
-    flag that does not parse, a git command that failed. Nothing was judged.
+    flag that does not parse, a git command that failed. Nothing was judged — and where
+    something was, it is not what this reports: `cmd_gate` ends here when a `--set`
+    contradicts the sensor backing that criterion, after the gate has been evaluated and
+    written. What is refused there is the operator's declaration, never the work, which
+    is exactly why it must not come back as `reject`'s 1.
     """
     print(f"[ERROR] {msg}", file=sys.stderr)
     sys.exit(ERROR)
@@ -512,6 +516,32 @@ def build_acceptance(task_id: str, task_type: str, root: pathlib.Path | None = N
         add(name, origin="policy")
     return {"task_id": task_id, "task_type": task_type, "presets": presets,
             "status": "pending", "checks": checks, "checked_at": None}
+
+
+def record_sensor_status(check: dict, status: str, detail: str, writer: str) -> None:
+    """A sensor taking a criterion's status. It owns `status`, `detail` and `by`; it never
+    touches `note`, except to drop one the status it is replacing has taken with it.
+
+    The two fields exist because a sentence and a verdict are different things. `detail`
+    explains the status underneath it, so whoever writes the status writes the detail —
+    words that explain a different verdict explain this one wrongly, which is how a
+    refused `--set no_secret_leak=passed:"false positive"` came to sit over a failure.
+    `note` is the operator's own, written only by `cmd_gate` from the `:DETAIL` half of a
+    `--set`, and it is the durable half: an operator who records
+    `--set no_gate_tampering=warning:"the test moved to tests/test_new.py"` is saying why
+    about the very finding the sensor then grades `warning`, and that sentence has to
+    outlive any number of later evaluations. It does, for exactly as long as the status
+    it was attached to does: a sensor changing the status takes the note with it, because
+    a claim about a status that is gone is a claim about nothing.
+    """
+    # Only the status decides. A note survives a re-evaluation that finds MORE under the
+    # same status — two test-weakening patterns becoming four — on purpose: the operator
+    # wrote it about the status they declared, which still stands, and what changed is
+    # already in `detail` and in the findings list beside it. Dropping it there would
+    # delete a standing reason every time a sensor counted again.
+    if check.get("status") != status:
+        check.pop("note", None)
+    check["status"], check["detail"], check["by"] = status, detail, writer
 
 
 def gate_status(acc: dict) -> str:

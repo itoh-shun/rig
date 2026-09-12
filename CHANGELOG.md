@@ -46,6 +46,26 @@ rejected because dropping the value refuses such a lock outright, and on a fail-
 that is every `rig` run and not merely `pack`. New installs record `verified-local` or `unverified`,
 decided by the pack's own evidence — there is no third rung above them to reach for now.
 
+**A sensor-backed criterion is the sensor's to answer, and `--set` is refused where it
+contradicts one.** The five fail-grade sensors (`no_secret_leak`, `no_gate_tampering`,
+`no_injection_markers`, `no_destructive_operation`, `evidence_anchors_resolve`) used to
+treat an explicit `gate --set <criterion>=passed` as a recorded override, so a hand-written
+declaration beat the scan that had just found something. It does not now: the sensors run
+after the `--set` loop and write their own verdict, and a declaration one of them
+contradicts ends the command with exit 2 — the usage code, not the failed-gate 1 a script
+branches on — naming what was declared against what was measured. Only that criterion is
+refused; the rest of the invocation is recorded, and so is the sensor's finding. A
+declaration stricter than the sensor still stands, warning-grade sensors (the OpenAPI
+schema diff) annotate rather than refuse, `ja_lint_clean` and `ja_prose_ai_smell_reviewed`
+are tightened by a `--set` but never loosened, and a missing `ai-smell-reviewer` verdict
+stays `pending` however it is declared around. A check carries `by` once a status has been
+written to it, naming whoever wrote that status (`build_acceptance` emits none). An acceptance gate with no criteria at all is refused
+rather than passed. The one way past a finding you have reviewed and accepted is
+`accept --force`, which names the bypassed criteria in `.rig/audit.jsonl`, needs a waiver
+under a governance policy, and marks the task forced in the signed provenance record — the
+accountability a gate-time override erased, since `gate_status: passed` left `accept` with
+nothing to force.
+
 ### Added
 
 **One table of what rig can do — declaration only, nothing rewired.** `rig_workbench/registry/`
@@ -208,9 +228,10 @@ unchanged at 77 / 85 / 57.
 criteria join the acceptance gate the way `prompt_regression_passed` does — present only
 while the task's diff adds Japanese prose, judged only on the added lines the way
 `no_secret_leak` is. `ja_lint_clean` is machine-owned by `rig_workbench/workbench/ja_prose.py`:
-errors on added Japanese lines fail it, warnings leave it at `warning`, `--set
-ja_lint_clean=passed` is the recorded escape hatch, and `rig-wb wb scan-ja-prose` prints
-what it saw. `ja_prose_ai_smell_reviewed` is owned by a reviewer: the sensor transcribes
+errors on added Japanese lines fail it, warnings leave it at `warning`, a `--set
+ja_lint_clean=passed` the lint contradicts is overwritten on the next evaluation while a
+stricter `--set ja_lint_clean=failed` stands, and `rig-wb wb scan-ja-prose` prints what it
+saw. `ja_prose_ai_smell_reviewed` is owned by a reviewer: the sensor transcribes
 the `ai-smell-reviewer` verdict from `review.json` (REJECT fails, APPROVE_WITH_CONDITIONS
 warns) and a missing verdict stays `pending`, so the lane `parallel-review` now adds
 whenever the diff carries Japanese cannot be skipped by silence. Nothing in that sensor

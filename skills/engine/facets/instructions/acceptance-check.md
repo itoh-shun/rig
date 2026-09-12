@@ -62,10 +62,10 @@ criterion ごとに、これまでの step（inspect / implement / test / review
 - `tests_confirm_behavior_preserved`：`compare-behavior` step が挙動同一をテストで確認しているか。
 
 **センサーの出力で判定する。** センサーは「該当あり」を鳴らすだけで `passed` を書かない——**鳴らなかったことを `passed` として記録するのはこの step の仕事**で、放っておくとゲートは `pending` のまま残る。
-- `no_secret_leak`：`rig-wb wb scan-secrets <task_id>`。検出ゼロなら `passed`、検出ありで対応済みなら `passed`＋detail、未対応なら `failed`。
+- `no_secret_leak`：`rig-wb wb scan-secrets <task_id>`。検出ゼロなら `passed` を書ける。検出が残っているうちは `--set no_secret_leak=passed` が拒否される（exit 2）。diff から取り除いて評価し直せば測定と一致するので受け付けられる。センサーが自分で書くのは findings の有無までで、pass そのものは書かない。レビュー済みでなお進めるなら `accept --force` だけが道になる。
 - `no_destructive_operation`：`rig-wb wb scan-destructive <task_id>`。同上。
 - `no_injection_markers`：`rig-wb wb scan-injection <task_id>`。diff に混入したプロンプトインジェクション・マーカーを検出する。同上。
-- `ja_lint_clean`（diff が日本語の散文を足したときだけ現れる）：`rig-wb wb scan-ja-prose <task_id>`。センサーが `passed` / `warning` / `failed` を自分で書く。error は追加行の書き方の規約違反で、`rig-wb ja-lint --fix` で機械的に直せるものと、文を分ける・二重否定を言い換えるものがある。固有名詞なら `.claude/ja-textlint.json` の `allow` / `ignore` に宣言する。review 後の逃がし方は `--set ja_lint_clean=passed`（記録される）。
+- `ja_lint_clean`（diff が日本語の散文を足したときだけ現れる）：`rig-wb wb scan-ja-prose <task_id>`。センサーが `passed` / `warning` / `failed` を自分で書く。error は追加行の書き方の規約違反で、`rig-wb ja-lint --fix` で機械的に直せるものと、文を分ける・二重否定を言い換えるものがある。固有名詞なら `.claude/ja-textlint.json` の `allow` / `ignore` に宣言する。`--set ja_lint_clean=passed` はセンサーが次の評価で上書きするので、逃がし方にはならない。error を直すか、`accept --force`（監査に残る）で進めるかの二択になる。
 - `ja_prose_ai_smell_reviewed`（同上）：センサーは `ai-smell-reviewer` の verdict を写すだけで、無ければ `pending` のまま。review fan-out に `ai-smell-reviewer` を加え、`rig-wb wb review <task_id> --set ai-smell-reviewer=<verdict>` で記録する。REJECT は `failed`、APPROVE_WITH_CONDITIONS は `warning`。`scripts/prose_rhythm.py` の数値でこの criterion を埋めない。
 - `no_gate_tampering`：`rig-wb wb audit <task_id>`。ゲート定義・受け入れ記録そのものを緩める変更が diff に含まれていないか。含まれていれば `failed`（緩める理由が正当でも、この step が独断で `passed` にしてよい種類の判断ではない）。
 

@@ -26,7 +26,10 @@
   task.json        # task_id / input / task_type / recipe(+選択理由) / base_branch / base_commit /
                    # branch / worktree_path / status / created_at（スクリプトが管理）
   steps.json       # 実行 step の進行状態（workbench.py step --set <step>=<status>）
-  acceptance.json  # {task_id, task_type, presets, status, checks:[{name,status,detail}]}（workbench.py gate）
+  acceptance.json  # {task_id, task_type, presets, status, checks:[{name,status,detail,by,note?}]}（workbench.py gate）
+                   # `by` はその status を最後に書いた者（`gate --set` なら `operator`、測ったセンサーならその名前）。
+                   # status が一度書かれてから現れる（作りたての gate には無い）。
+                   # `note` は `--set C=STATUS:DETAIL` で操作者が書いた一文で、センサーは触らない
   review.json      # review 系タスクの persona 別 verdict（workbench.py review・stats のゴム印検知に使用・任意）
   plan.md          # 実装計画（モデルが書く）
   diff.md          # 差分の散文要約: `## Summary`/`## Risk`/`## Tests`/`## Unrelated diff` 見出し（モデルが書く。

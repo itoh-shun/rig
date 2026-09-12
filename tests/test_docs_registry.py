@@ -276,3 +276,80 @@ def test_the_wheel_ships_the_pack_detail_rows_the_catalogue_points_at():
     assert any(fnmatch.fnmatch("PACKS.md", pattern) for pattern in patterns), (
         f"pyproject's skills.engine package-data ({patterns}) does not ship PACKS.md, which "
         f"§2 calls the source of truth for the pack rows")
+
+# ── the sensor count, which has now drifted twice ─────────────────────────────
+#
+# Four documents tell a reader how many machine sensors back the gate, and the number was
+# wrong in three of them on two separate occasions: seven while the Japanese-prose lint
+# had already joined `cmd_gate`, then eight in two files and seven in the other two while
+# that was being repaired. A number written in four places and derived in none drifts
+# again, so it is derived here and the prose is checked against it.
+#
+# The source of truth is `cmd_gate` itself: the `apply_*_sensor` calls it makes, minus
+# the AI-smell one. That exclusion is the only judgement in this file, and it is the
+# judgement the prose makes too — `apply_ja_smell_sensor` transcribes a reviewer's
+# recorded verdict and measures nothing, which is why every one of these documents
+# describes `ja_prose_ai_smell_reviewed` as the reviewer's criterion rather than a sensor.
+LIFECYCLE = REPO_ROOT / "rig_workbench" / "workbench" / "lifecycle.py"
+PACKS_MD = REPO_ROOT / "skills" / "engine" / "PACKS.md"
+
+TRANSCRIBING_SENSORS = ("apply_ja_smell_sensor",)
+
+#: How each document writes the number. English spells it, Japanese uses digits.
+_NUMBER_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6,
+                 "seven": 7, "eight": 8, "nine": 9, "ten": 10}
+_COUNT_PATTERNS = (
+    re.compile(r"([A-Za-z]+|\d+) machine sensors back criteria"),
+    re.compile(r"機械センサー(?:は)?(\d+)本"),
+)
+
+
+def _measured_sensor_count() -> int:
+    source = LIFECYCLE.read_text(encoding="utf-8")
+    calls = set(re.findall(r"sensor_notes \+?= (apply_\w+_sensor)\(", source))
+    assert calls, "no apply_*_sensor calls found in cmd_gate — did the wiring move?"
+    return len(calls - set(TRANSCRIBING_SENSORS))
+
+
+def _stated_counts(path: pathlib.Path) -> list[int]:
+    text = path.read_text(encoding="utf-8")
+    out = []
+    for pattern in _COUNT_PATTERNS:
+        for raw in pattern.findall(text):
+            out.append(int(raw) if raw.isdigit() else _NUMBER_WORDS[raw.lower()])
+    return out
+
+
+def _count_documents() -> list[pathlib.Path]:
+    """The three that always carry the sentence, plus whichever of the engine's inventory
+    documents does. §2 moved from SKILL.md to BRICKS.md; `INVENTORY_MD` is the same list
+    the packaging check reads, so this follows the next move without being edited."""
+    paths = [README_EN, README_JA, PACKS_MD]
+    paths.extend(p for p in INVENTORY_MD if p.is_file() and _stated_counts(p))
+    return paths
+
+
+def test_every_document_states_the_measured_sensor_count():
+    measured = _measured_sensor_count()
+    assert measured == 8, (
+        f"cmd_gate now applies {measured} measuring sensors, not 8. That is allowed — "
+        "update the four documents and this number together, in the same commit.")
+    for path in _count_documents():
+        stated = _stated_counts(path)
+        assert stated, f"{path.name} no longer states a sensor count"
+        assert set(stated) == {measured}, (
+            f"{path.name} says {sorted(set(stated))} machine sensors; cmd_gate applies "
+            f"{measured} (excluding {', '.join(TRANSCRIBING_SENSORS)}, which transcribes "
+            "a reviewer verdict rather than measuring anything)")
+
+
+def test_the_count_is_stated_where_a_reader_would_look():
+    """The check above is only as good as the set of files it reads. These three always
+    carry the sentence; the engine's own catalog (SKILL.md today, BRICKS.md once §2
+    moves) is found by content rather than by name, and at least one of them must have
+    it — otherwise this test would pass by reading nothing."""
+    for path in (README_EN, README_JA, PACKS_MD):
+        assert _stated_counts(path), f"{path.name} states no sensor count"
+    catalogs = [p for p in INVENTORY_MD if p.is_file() and _stated_counts(p)]
+    assert catalogs, ("no engine inventory document states the sensor count — §2 carries "
+                      f"it, and the inventory is {[p.name for p in INVENTORY_MD]}")

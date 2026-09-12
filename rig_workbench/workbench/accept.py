@@ -107,6 +107,8 @@ def cmd_diff(args: argparse.Namespace) -> None:
     elif unrelated:
         print(f"  {CHECK_ICON[unrelated['status']]} {unrelated['status']}"
               + (f" — {unrelated['detail']}" if unrelated.get("detail") else ""))
+        if unrelated.get("note") and unrelated["note"] != unrelated.get("detail"):
+            print(f"  note (operator): {unrelated['note']}")
     else:
         print("  (not checked)")
 
@@ -210,8 +212,11 @@ def _cmd_accept_locked(args: argparse.Namespace, root: pathlib.Path, task_id: st
         # The acceptance gate is the verdict, and this is rig delivering it.
         reject(
             f"Cannot accept because the acceptance-gate is {status} (unmet: {', '.join(failed_checks) or 'no_unrelated_diff'}).\n"
-            f"  Satisfy the criteria and update via `workbench.py gate {task_id} --set <criterion>=passed`, or\n"
-            f"  pass --force if you understand the risk (it will be recorded)"
+            f"  Record the criteria you have judged with `workbench.py gate {task_id} --set <criterion>=<status>`.\n"
+            f"  A criterion a sensor backs is not one of them — `--set` is refused there: remove the\n"
+            f"  finding from the diff, re-run `gate`, and the same `--set` is then accepted because it\n"
+            f"  agrees with the measurement. The sensor records the finding or its absence, not the pass.\n"
+            f"  Or pass --force if you understand the risk (recorded in .rig/audit.jsonl and provenance.json)"
         )
 
     # ── governance (v2; inert unless .rig/org.json + a policy layer exist) ──

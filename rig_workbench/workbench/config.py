@@ -72,6 +72,15 @@ TASK_TYPES: dict[str, list[str]] = {
     "security_review": ["review", "security"],
 }
 
+#: `check["by"]` on an acceptance criterion: who last wrote that criterion's *status*.
+#: `WRITER_OPERATOR` for a `gate --set`, and each sensor's own `WRITER` for a status it
+#: wrote itself. It exists because "did I write this, or did a person?" cannot be inferred
+#: from the detail text: `gate --set <criterion>=<status>` without a `:detail` leaves the
+#: previous detail in place, so a sensor's own prefix survives under a hand-written status
+#: and reading the prefix says "mine" about a status the operator had just set. A criterion
+#: carrying no `by` was written before this field existed.
+WRITER_OPERATOR = "operator"
+
 VALID_STEP_STATUS = ("pending", "running", "passed", "failed", "skipped")
 VALID_CRITERION_STATUS = ("pending", "passed", "failed", "warning", "skipped")
 VALID_VERDICT = ("APPROVE", "REJECT", "APPROVE_WITH_CONDITIONS")

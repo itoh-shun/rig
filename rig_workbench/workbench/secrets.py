@@ -33,11 +33,11 @@ Gate wiring (mirrors schema_diff.apply_schema_sensor, but fail-grade):
 `cmd_gate` calls apply_secret_sensor() on every evaluation. When the gate
 contains `no_secret_leak` and the diff-scoped scan finds anything, the check
 is set to **failed** — a secret in the diff must block accept. This is NOT
-warning-grade like the schema sensor. Escape hatch: after reviewing a false
-positive, the user can run `gate <id> --set no_secret_leak=passed` — an
-explicit pass in the same invocation is respected (recorded as
-secret_override on the check) and sticks across later evaluations, exactly
-how manual overrides already work for every criterion.
+warning-grade like the schema sensor. The scan is the verdict: a
+`gate <id> --set no_secret_leak=passed` that contradicts it is refused by
+`cmd_gate` (lifecycle.sensor_contradictions, whose docstring carries the
+reasoning), and a reviewed false positive is carried through `accept --force`,
+where the bypass is audited, waived, and signed into the provenance record.
 """
 
 import argparse
@@ -47,7 +47,7 @@ import pathlib
 import re
 import sys
 
-from .state import die, effective_base, git, load_task, repo_root
+from .state import die, effective_base, git, load_task, record_sensor_status, repo_root
 
 SENSOR_CRITERION = "no_secret_leak"
 
@@ -315,10 +315,12 @@ def scan_worktree_diff(wt: pathlib.Path, base_commit: str) -> list[dict]:
 
 # ── the sensor (called from cmd_gate) ─────────────────────────────────────────
 _SENSOR_DETAIL_PREFIX = "(secret sensor)"
+#: config.WRITER_OPERATOR's counterpart: this sensor as the writer of a status.
+WRITER = "secret-sensor"
 
 
-def apply_secret_sensor(root: pathlib.Path, run_d: pathlib.Path, task: dict, acc: dict,
-                        explicit_set: set[str] | frozenset[str] = frozenset()) -> list[str]:
+def apply_secret_sensor(root: pathlib.Path, run_d: pathlib.Path, task: dict,
+                       acc: dict) -> list[str]:
     """Machine-back `no_secret_leak` with a diff-scoped secret scan.
 
     Mutates `acc` in place (caller persists it) and returns printable notes.
@@ -326,10 +328,9 @@ def apply_secret_sensor(root: pathlib.Path, run_d: pathlib.Path, task: dict, acc
 
     Findings → the check is set to **failed** (fail-grade: a secret in the
     diff must block accept), with the masked findings recorded on the check
-    under "secret_findings". Escape hatch: an explicit
-    `--set no_secret_leak=passed` in the current invocation is respected and
-    recorded as secret_override=True, which keeps later evaluations from
-    re-failing the check while the findings stay visible.
+    under "secret_findings". The scan is the verdict, and it is written over
+    whatever the gate's `--set` put there; `cmd_gate` refuses an invocation
+    whose hand-written status this contradicts rather than recording either one.
     """
     check = next((c for c in acc.get("checks", []) if c["name"] == SENSOR_CRITERION), None)
     if check is None:
@@ -348,10 +349,8 @@ def apply_secret_sensor(root: pathlib.Path, run_d: pathlib.Path, task: dict, acc
     if not findings:
         # Secret gone from the diff: clear our state; un-fail only what WE failed.
         if check.pop("secret_findings", None) is not None:
-            check.pop("secret_override", None)
             if check["status"] == "failed" and str(check.get("detail", "")).startswith(_SENSOR_DETAIL_PREFIX):
-                check["status"] = "pending"
-                check["detail"] = ""
+                record_sensor_status(check, "pending", "", WRITER)
                 return [f"{_SENSOR_DETAIL_PREFIX} previously detected secrets are no longer "
                         f"in the diff → {SENSOR_CRITERION} reset to pending"]
         return []
@@ -360,23 +359,13 @@ def apply_secret_sensor(root: pathlib.Path, run_d: pathlib.Path, task: dict, acc
     check["secret_findings"] = lines
     n = len(findings)
     notes: list[str] = []
-    if SENSOR_CRITERION in explicit_set and check["status"] == "passed":
-        check["secret_override"] = True
-        if str(check.get("detail", "")).startswith(_SENSOR_DETAIL_PREFIX):
-            # replace our stale failure instruction (keep any user-supplied detail)
-            check["detail"] = (f"{_SENSOR_DETAIL_PREFIX} {n} finding(s) manually overridden "
-                               "after review (secret_override)")
-        notes.append(f"{_SENSOR_DETAIL_PREFIX} {n} potential secret(s) still in the diff, but "
-                     f"{SENSOR_CRITERION} was explicitly set to passed — manual override recorded:")
-    elif check.get("secret_override") and check["status"] == "passed":
-        notes.append(f"{_SENSOR_DETAIL_PREFIX} {n} potential secret(s) in the diff — "
-                     "manual override previously recorded, keeping passed:")
-    else:
-        check["status"] = "failed"
-        check["detail"] = (f"{_SENSOR_DETAIL_PREFIX} {n} potential secret(s) detected in the diff — "
-                           f"remove them, or after review override with --set {SENSOR_CRITERION}=passed")
-        notes.append(f"{_SENSOR_DETAIL_PREFIX} {n} potential secret(s) detected in the diff → "
-                     f"{SENSOR_CRITERION} failed:")
+    record_sensor_status(
+        check, "failed",
+        f"{_SENSOR_DETAIL_PREFIX} {n} potential secret(s) detected in the diff — remove them; "
+        f"a reviewed false positive is carried by `accept --force`, which records the bypass",
+        WRITER)
+    notes.append(f"{_SENSOR_DETAIL_PREFIX} {n} potential secret(s) detected in the diff → "
+                 f"{SENSOR_CRITERION} failed:")
     notes.extend(f"  {ln}" for ln in lines)
     return notes
 

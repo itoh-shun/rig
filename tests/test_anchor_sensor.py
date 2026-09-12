@@ -5,10 +5,11 @@ gate (the whole point — a project opts in through `.rig/gates.json`
 extra_criteria, and default gate behaviour is unchanged), activation through
 that file, the fail/warning grade split, the reset-to-pending path, the
 no-op cases (criterion absent — the one that stays silent — plus no worktree,
-no base commit and no bodies, which explain themselves), the explicit
-`--set evidence_anchors_resolve=passed` escape hatch (anchor_override,
-sticky), and the fail-grade gate integration in a scratch repo through the
-CLI — the only path that proves the call actually sits inside cmd_gate.
+no base commit and no bodies, which explain themselves), the sensor's verdict
+standing over a `passed` already on the check (a hand-written `--set` that
+contradicts it is refused by the gate — tests/test_gate_sensor_authority.py),
+and the fail-grade gate integration in a scratch repo through the CLI — the
+only path that proves the call actually sits inside cmd_gate.
 """
 
 import json
@@ -282,20 +283,16 @@ def test_a_verdict_without_a_body_file_is_not_a_finding(tmp_path):
     assert any("no reviewer bodies recorded" in n for n in notes)  # …but not silent either
 
 
-# ── (e) explicit --set passed is recorded and sticks ──────────────────────────
-def test_explicit_pass_is_recorded_and_sticks(tmp_path):
+# ── (e) the sensor's verdict stands over a passed check ───────────────────────
+def test_sensor_writes_its_verdict_over_a_passed_check(tmp_path):
     repo, sha = make_repo(tmp_path)
     write_body(tmp_path, "security", "1. （`src/app.py:99`）\n")
     task, acc = make_state(repo, sha)
     acc["checks"][0]["status"] = "passed"
-    notes = apply_anchor_sensor(repo, tmp_path, task, acc, explicit_set={SENSOR_CRITERION})
-    assert acc["checks"][0]["status"] == "passed"
-    assert acc["checks"][0]["anchor_override"] is True
-    assert any("manual override" in n for n in notes)
-    # ...and the override survives later evaluations without --set
     notes = apply_anchor_sensor(repo, tmp_path, task, acc)
-    assert acc["checks"][0]["status"] == "passed"
-    assert any("manual override previously recorded" in n for n in notes)
+    assert acc["checks"][0]["status"] == "failed"
+    assert "anchor_override" not in acc["checks"][0]
+    assert any(f"{SENSOR_CRITERION} failed" in n for n in notes)
 
 
 # ── end to end through cmd_gate (scratch repo, real worktree, real CLI) ───────
@@ -338,12 +335,50 @@ def test_gate_integration_opt_in_criterion_fails_on_a_broken_anchor(tmp_path):
     assert r.returncode == 0, r.stderr
     assert "anchor: reviews/security.md:3 [line_out_of_range/fail]" in r.stdout
 
-    # documented escape hatch, through the CLI
+    # the sensor's verdict is not overridable by hand, through the CLI
     r = cli(repo, wt_root, "gate", task_id, "--set", f"{SENSOR_CRITERION}=passed")
-    assert r.returncode == 0, r.stdout + r.stderr
+    assert r.returncode == 2, r.stdout + r.stderr   # a usage error, not a failed gate
+    assert "you set 'passed' — the sensor measured 'failed'" in r.stdout + r.stderr
     acc = json.loads((repo / ".rig" / "runs" / task_id / "acceptance.json").read_text(encoding="utf-8"))
     check = next(c for c in acc["checks"] if c["name"] == SENSOR_CRITERION)
-    assert check["status"] == "passed" and check.get("anchor_override") is True
+    assert check["status"] == "failed"
+
+
+def test_gate_integration_an_agreeing_rationale_survives_the_warning(tmp_path):
+    """Warning-grade here means "we could not locate the file", which is exactly the kind
+    of finding a person can explain. When their `--set` records the same `warning` the
+    sensor measures, they are annotating that finding, not contradicting it, and the
+    sentence they wrote lives in `note` — its own field, which no sensor writes or
+    rewrites, so it survives every later evaluation (state.record_sensor_status).
+    """
+    repo, _sha = make_repo(tmp_path, extra_files=((".rig/gates.json", GATES_JSON),))
+    wt_root = tmp_path / "wt"
+    r = cli(repo, wt_root, "new", "add a thing", "--type", "feature", "--slug", "thing")
+    assert r.returncode == 0, r.stderr
+    task_id = re.search(r"task_id: (\S+)", r.stdout).group(1)
+
+    body = tmp_path / "security.md"
+    # a bare basename the sensor cannot locate → warning-grade, never fail-grade
+    body.write_text("判定: APPROVE\n1. 所見（`streaming.py:67`）\n", encoding="utf-8")
+    r = cli(repo, wt_root, "review", task_id, "--set", "security=APPROVE",
+            "--body", f"security=@{body}")
+    assert r.returncode == 0, r.stderr
+
+    reason = "reviewed - streaming.py lives in the sibling service, not this repo"
+    r = cli(repo, wt_root, "gate", task_id, "--set", f"{SENSOR_CRITERION}=warning:{reason}")
+    assert r.returncode == 0, r.stdout + r.stderr          # agreement, so no refusal
+    acc = json.loads((repo / ".rig" / "runs" / task_id / "acceptance.json").read_text(encoding="utf-8"))
+    check = next(c for c in acc["checks"] if c["name"] == SENSOR_CRITERION)
+    assert check["status"] == "warning"
+    assert check["note"] == reason                         # the person's words survive
+    assert check["detail"].startswith("(anchor sensor)")   # the machine's, entirely
+    assert reason not in check["detail"]
+    assert check["by"] == "anchor-sensor"
+
+    # and a later evaluation that finds the same thing leaves the note alone
+    assert cli(repo, wt_root, "gate", task_id).returncode == 0
+    acc = json.loads((repo / ".rig" / "runs" / task_id / "acceptance.json").read_text(encoding="utf-8"))
+    assert next(c for c in acc["checks"] if c["name"] == SENSOR_CRITERION)["note"] == reason
 
 
 def test_gate_integration_default_repo_never_sees_the_criterion(tmp_path):

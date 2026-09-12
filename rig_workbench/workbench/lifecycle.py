@@ -11,12 +11,16 @@ from rig_workbench import caller
 from rig_workbench.govern import identity as govern_identity
 from rig_workbench.packs.model import PackError
 
+from .anchors import SENSOR_CRITERION as ANCHOR_CRITERION
 from .anchors import apply_anchor_sensor
 from .config import (CHECK_ICON, TASK_TYPES, VALID_CRITERION_STATUS,
-                     VALID_STEP_STATUS, VALID_VERDICT)
+                     VALID_STEP_STATUS, VALID_VERDICT, WRITER_OPERATOR)
 from .capabilities import resolve_task_route
+from .destructive import SENSOR_CRITERION as DESTRUCTIVE_CRITERION
 from .destructive import apply_destructive_sensor
+from .hardening import SENSOR_CRITERION as TAMPER_CRITERION
 from .hardening import apply_tamper_sensor
+from .injection import SENSOR_CRITERION as INJECTION_CRITERION
 from .injection import apply_injection_sensor
 from .issue_link import IssueRefError
 from . import issue_link
@@ -32,6 +36,7 @@ from .prompt_regression import (CRITERION as PROMPT_REGRESSION_CRITERION,
                                 apply_prompt_regression_sensor,
                                 ensure_prompt_criterion)
 from .schema_diff import apply_schema_sensor
+from .secrets import SENSOR_CRITERION as SECRET_CRITERION
 from .secrets import apply_secret_sensor, shared_diff_cache
 from .state import (build_acceptance, current_branch, die, gate_status, git, invocation_root,
                     load_json, load_task, make_slug,
@@ -362,6 +367,99 @@ def cmd_step(args: argparse.Namespace) -> None:
                   + " ".join(f"{s['name']}={s['status']}" for s in data["steps"]))
 
 
+#: The criteria whose sensor is fail-grade: a finding there is a reason the gate must not
+#: pass, so a `--set` that says otherwise is refused loudly instead of quietly overwritten.
+#: Warning-grade sensors are deliberately absent. `apply_schema_sensor` downgrades
+#: `public_api_changes_documented` to `warning` whenever the API moved and diff.md does not
+#: say so (README.md:234) — an annotation, not a verdict — and refusing a whole `gate`
+#: invocation over it would turn a note into a blocker. `ja_lint_clean` and
+#: `ja_prose_ai_smell_reviewed` are absent for the narrower reason that they are wholly
+#: machine-owned: the sensor rewrites them on every evaluation whatever anyone declares.
+#:
+#: Nothing here is what stops a declaration from beating a sensor — the sensors run after
+#: the `--set` loop and write over it, so every sensor-backed criterion carries its own
+#: answer whether or not it is in this set. This set only decides which disagreements are
+#: worth stopping the operator for.
+REFUSABLE_CRITERIA = frozenset({SECRET_CRITERION, TAMPER_CRITERION, INJECTION_CRITERION,
+                                DESTRUCTIVE_CRITERION, ANCHOR_CRITERION})
+
+
+def sensor_contradictions(known: dict[str, dict],
+                          declared: dict[str, str]) -> list[tuple[str, str, dict]]:
+    """The `REFUSABLE_CRITERIA` this `gate` invocation set by hand that its sensor then
+    disagreed with.
+
+    Returns (name, declared status, the check as the sensor left it) for every such
+    criterion whose status after the sensor pass is not the one the `--set` pair asked
+    for. A criterion no sensor touches keeps exactly what was declared, so it never
+    appears here — the declaration-only criteria are untouched by this rule.
+
+    WHY A CONTRADICTED `--set` IS REFUSED RATHER THAN ACCEPTED OR SILENTLY OVERWRITTEN
+    (the choice between "agree with the sensor or be refused" and "let --set only record
+    a warning-grade entry", made by reading what `gate` and `accept` each own):
+
+    `cmd_gate` is the measurement. It runs the sensors, and the check it writes into
+    acceptance.json is what `accept` and the signed provenance record later read back as
+    the gate's verdict. `_cmd_accept_locked` is the decision, and it is where a bypass
+    already lives and is accountable: `--force` appends an `accept_force` entry naming
+    the bypassed criteria to `.rig/audit.jsonl`, needs a live waiver per bypassed
+    criterion under a governance policy (`govern_enforce.check_accept(..., force=True)`),
+    sets `forced: true` in task.json, and is signed into provenance.json.
+
+    A sensor override at gate time defeats every one of those. Writing `passed` over a
+    sensor's `failed` makes `gate_status` "passed", so `accept` sees nothing to force:
+    no audit entry, no waiver, `forced: false`, and a provenance record that says the
+    criterion passed. The bypass becomes invisible exactly where an audit looks. So the
+    escape hatch does not belong here, and the weaker option — letting `--set` record a
+    `warning:未確認`-grade entry over a finding — has the same defect in smaller print,
+    since `passed_with_warnings` is also a status `accept` lets through unforced.
+
+    Refusing (rather than silently overwriting the declaration with the sensor's answer)
+    is what makes the disagreement visible: the operator asked for something the machine
+    contradicts, and the gate says so instead of quietly recording one of the two. The
+    refusal is a `die`, not a `reject`: `reject`'s exit 1 is reserved for a verdict on
+    the work (state.py:28-42), and a script branching on it must not read "you wrote a
+    status the sensor contradicts" as "this task's gate failed".
+    """
+    out: list[tuple[str, str, dict]] = []
+    for name in sorted(declared):
+        if name not in REFUSABLE_CRITERIA:
+            continue
+        check = known[name]
+        if check["status"] != declared[name]:
+            out.append((name, declared[name], check))
+    return out
+
+
+def render_contradictions(task_id: str, contradicted: list[tuple[str, str, dict]]) -> str:
+    """The refusal in full: the difference per criterion — what was declared, what the
+    sensor measured, and the findings it measured it from (any `*_findings` list a sensor
+    recorded) — and where the decision to accept a finding anyway does belong.
+
+    One string rather than printed lines, because the caller hands it to `die`: the whole
+    refusal is one message on stderr with one exit code, and the workbench package gains
+    no print site of its own for it.
+    """
+    lines = [f"{task_id}: {len(contradicted)} criterion(s) were set by hand to something the "
+             f"sensor backing them contradicts. The sensor's answer is what was recorded."]
+    for name, want, check in contradicted:
+        lines.append(f"  ✗ {name}: you set '{want}' — the sensor measured '{check['status']}'")
+        if check.get("detail"):
+            # The detail as the check now holds it — the sensor's, since a sensor that
+            # overwrites the status writes its own detail with it.
+            lines.append(f"      detail: {check['detail']}")
+        for key, value in sorted(check.items()):
+            if key.endswith("_findings") and isinstance(value, list):
+                lines.extend(f"      {item}" for item in value)
+    lines.append("  Remove the finding from the diff, re-run `gate`, and this same --set is then "
+                 "accepted because it agrees with the measurement — what the sensor records is the "
+                 "finding or its absence, never the pass. If the finding is reviewed and accepted "
+                 "anyway, that decision belongs to `accept --force`, which records it in "
+                 ".rig/audit.jsonl, requires a waiver under a governance policy, and marks the "
+                 "task forced in provenance.json.")
+    return "\n".join(lines)
+
+
 def cmd_gate(args: argparse.Namespace) -> None:
     root = repo_root()
     task_id = resolve_task_id(root, args.task_id)
@@ -376,7 +474,16 @@ def cmd_gate(args: argparse.Namespace) -> None:
             ensure_ja_prose_criteria(root, task, acc)
 
         known = {c["name"]: c for c in acc["checks"]}
-        explicit_set: set[str] = set()
+        if not known:
+            # An empty gate must not read as a gate that was cleared. `gate_status`
+            # answers "skipped" for an empty check list, and the transition below then
+            # moves the task to `gate_passed` — a pass that nothing was measured for,
+            # which `accept` goes on to treat as met (accept.py's `gate_ok`).
+            die(f"{task_id}: this task's acceptance gate has no criteria, so there is nothing "
+                f"to judge and nothing that can pass. Its acceptance.json holds an empty check "
+                f"list; delete that file to rebuild the gate from the presets for task_type "
+                f"'{task['task_type']}', or restore the one it was written from.")
+        declared: dict[str, str] = {}
         for pair in args.set or []:
             if "=" not in pair:
                 die(f"--set must be given as <criterion>=<status>[:detail] (got: {pair!r})")
@@ -391,45 +498,67 @@ def cmd_gate(args: argparse.Namespace) -> None:
             if name == PROMPT_REGRESSION_CRITERION:
                 die("prompt_regression_passed is machine-controlled and cannot be set manually")
             known[name]["status"] = status
+            # `note` is the operator's own sentence and nothing else writes it: a `--set`
+            # that carries a `:DETAIL` records one, and a `--set` that does not removes
+            # the one that was there — a fresh declaration with no reason is not still
+            # explained by the reason given for the last one. `detail` keeps its old
+            # shape for the criteria no sensor touches, where the two say the same thing.
             if detail:
                 known[name]["detail"] = detail
-            explicit_set.add(name)
+                known[name]["note"] = detail
+            else:
+                # A declaration with no reason leaves none behind. The words underneath
+                # explain the status they were written for, and under a new one they
+                # explain it wrongly — whether they came from a sensor (`--set
+                # no_secret_leak=passed` once read "1 potential secret(s) detected" under a
+                # pass) or from this same operator an hour ago on a criterion no sensor
+                # touches. "No explanation" is the honest state to leave a status in; a
+                # stale one is not. The sensors follow the same rule from their side
+                # (state.record_sensor_status).
+                known[name].pop("note", None)
+                known[name]["detail"] = ""
+            # Whose status this now is, recorded rather than left to be guessed from the
+            # detail: `--set <criterion>=<status>` with no `:detail` leaves a detail behind
+            # that its writer never revised (config.WRITER_OPERATOR).
+            known[name]["by"] = WRITER_OPERATOR
+            declared[name] = status
 
         # The sensors below all scan the same worktree diff; shared_diff_cache
         # dedupes their identical git diff / ls-files calls for the duration of
         # this one evaluation (#321 — measured 8 redundant subprocesses without it).
+        #
+        # None of them is told what was just set by hand: a sensor-backed criterion is
+        # the sensor's to answer, and each writes its own verdict over whatever the
+        # `--set` loop above put there. What the operator declared is kept in `declared`
+        # and compared with the result afterwards — see sensor_contradictions().
         with shared_diff_cache():
             # Machine sensor (issue #288): verify public_api_changes_documented
             # against the actual base↔worktree OpenAPI diff before evaluating.
             sensor_notes = apply_schema_sensor(root, d, task, acc)
             # Machine sensor (issue #273): diff-scoped secret scan backing
-            # no_secret_leak. Fail-grade: findings block accept; an explicit
-            # --set no_secret_leak=passed in this invocation is the escape hatch.
-            sensor_notes += apply_secret_sensor(root, d, task, acc, explicit_set=explicit_set)
+            # no_secret_leak. Fail-grade: findings block accept.
+            sensor_notes += apply_secret_sensor(root, d, task, acc)
             # Anti-tamper sensor: gate/CI-config edits in the diff are fail-grade,
-            # test-weakening patterns warning-grade; --set no_gate_tampering=passed
-            # is the recorded escape hatch (tamper_override).
-            sensor_notes += apply_tamper_sensor(root, d, task, acc, explicit_set=explicit_set)
+            # test-weakening patterns warning-grade.
+            sensor_notes += apply_tamper_sensor(root, d, task, acc)
             # Injection-marker sensor: invisible Unicode is fail-grade,
-            # instruction-override phrases warning-grade; --set
-            # no_injection_markers=passed is the recorded escape hatch.
-            sensor_notes += apply_injection_sensor(root, d, task, acc, explicit_set=explicit_set)
+            # instruction-override phrases warning-grade.
+            sensor_notes += apply_injection_sensor(root, d, task, acc)
             # Destructive-command sensor (#315): unambiguous destroyers (rm -rf /,
             # mkfs, dd of=/dev, DROP DATABASE) are fail-grade, context-dependent
-            # patterns and mass deletions warning-grade; --set
-            # no_destructive_operation=passed is the recorded escape hatch.
-            sensor_notes += apply_destructive_sensor(root, d, task, acc, explicit_set=explicit_set)
+            # patterns and mass deletions warning-grade.
+            sensor_notes += apply_destructive_sensor(root, d, task, acc)
             # Evidence-anchor sensor: do the `file.py:42` anchors in this task's
             # recorded reviewer bodies point at lines that exist? Opt-in — the
             # criterion is in no preset, only in `.rig/gates.json` extra_criteria —
             # so this is a no-op on a default gate.
-            sensor_notes += apply_anchor_sensor(root, d, task, acc, explicit_set=explicit_set)
+            sensor_notes += apply_anchor_sensor(root, d, task, acc)
             sensor_notes += apply_prompt_regression_sensor(root, task, acc)
-            # Japanese-prose sensors: errors on added Japanese lines are fail-grade
-            # (--set ja_lint_clean=passed is the recorded escape hatch); the AI-smell
-            # criterion is the ai-smell-reviewer's recorded verdict, never a rhythm score.
-            sensor_notes += apply_ja_lint_sensor(root, d, task, acc, explicit_set=explicit_set)
-            sensor_notes += apply_ja_smell_sensor(root, d, task, acc, explicit_set=explicit_set)
+            # Japanese-prose sensors: errors on added Japanese lines are fail-grade;
+            # the AI-smell criterion is the ai-smell-reviewer's recorded verdict,
+            # never a rhythm score.
+            sensor_notes += apply_ja_lint_sensor(root, d, task, acc)
+            sensor_notes += apply_ja_smell_sensor(root, d, task, acc)
 
         acc["status"] = gate_status(acc)
         acc["checked_at"] = now_iso()
@@ -445,8 +574,20 @@ def cmd_gate(args: argparse.Namespace) -> None:
             origin = " [project]" if c.get("origin") == "project" else ""
             detail = f" — {c['detail']}" if c.get("detail") else ""
             print(f"  {CHECK_ICON[c['status']]} {c['name']}{origin}{detail}")
+            # The operator's own sentence, when it is not already the detail
+            if c.get("note") and c["note"] != c.get("detail"):
+                print(f"      note (operator): {c['note']}")
         for note in sensor_notes:
             print(note)
+        # After the listing, so the operator sees the gate as recorded before being told
+        # which of their declarations did not survive it. Everything else in this
+        # invocation is applied and saved above — a refused declaration costs the operator
+        # the one criterion they were wrong about, not the batch it travelled in, and the
+        # sensor's finding is on the record either way.
+        contradicted = sensor_contradictions(known, declared)
+        if contradicted:
+            die(render_contradictions(task_id, contradicted))
+
         # #497: a reader who has just run a recipe sees a shorter `acceptance:` list in the
         # recipe than the list above and concludes one of the two is wrong. Neither is. The
         # list above is what `accept` requires; a recipe's list is what that flow's own steps

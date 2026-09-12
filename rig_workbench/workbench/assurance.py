@@ -386,6 +386,11 @@ def _gates(acceptance: dict | None) -> dict:
     for c in checks:
         entry = {"name": c.get("name"), "status": c.get("status"),
                  "detail": c.get("detail") or ""}
+        # The operator's own sentence about this criterion, which the sensor never
+        # writes and never rewrites — the half of the record a reader is owed when a
+        # machine verdict and a person's reason are both on one check.
+        if c.get("note"):
+            entry["note"] = c["note"]
         # A criterion a human set to passed over a sensor that said otherwise is the
         # single most important thing on this page, so it is a field rather than
         # something to be inferred from prose in `detail`.
@@ -930,12 +935,18 @@ def render_markdown(receipt: dict) -> str:
         counts = " · ".join(f"{v} {_text(k)}" for k, v in sorted(gates["counts"].items()))
         lines += [f"**{_text(gates['status'])}** ({counts}) — "
                  f"presets {', '.join(_text(x) for x in gates['presets'])}", ""]
-        lines += ["| criterion | status | note |", "|---|---|---|"]
+        # Two columns, because a machine verdict and a person's reason are two things:
+        # `detail` explains the status (whoever wrote it wrote this too), `note` is the
+        # operator's own sentence from a `--set`, which no sensor writes or rewrites. The
+        # markdown receipt carried only the first, so a reason a person recorded reached
+        # `--json` and never the page anybody reads.
+        lines += ["| criterion | status | detail | note |", "|---|---|---|---|"]
         for c in gates["criteria"]:
-            note = _text(c["detail"])
+            detail = _text(c["detail"])
             if c.get("overridden"):
-                note = f"**overridden** — {note}"
-            lines.append(f"| {_code(c['name'])} | {_text(c['status'])} | {note} |")
+                detail = f"**overridden** — {detail}"
+            lines.append(f"| {_code(c['name'])} | {_text(c['status'])} | {detail} | "
+                         f"{_text(c.get('note') or '')} |")
     lines += ["", "## Approvals", ""]
     approvals = receipt["approvals"]
     if not approvals.get("observed"):

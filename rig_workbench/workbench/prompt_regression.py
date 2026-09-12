@@ -11,10 +11,12 @@ from rig_workbench.eval.cases import EvalCaseError
 from rig_workbench.eval.gate import evaluate_gate
 from rig_workbench.eval.source_graph import SOURCE_TREE_GRAPH
 
-from .state import effective_base
+from .state import effective_base, record_sensor_status
 
 
 CRITERION = "prompt_regression_passed"
+#: config.WRITER_OPERATOR's counterpart: this sensor as the writer of a status.
+WRITER = "prompt-regression-sensor"
 
 
 def _judged(path: str) -> bool:
@@ -97,8 +99,8 @@ def apply_prompt_regression_sensor(root: pathlib.Path, task: dict, acc: dict) ->
     try:
         _has_prompt_diff(root, task)
     except EvalCaseError as exc:
-        check["status"] = "failed"
-        check["detail"] = f"machine eval gate infrastructure error: {exc}"
+        record_sensor_status(check, "failed",
+                             f"machine eval gate infrastructure error: {exc}", WRITER)
         return ["  prompt-regression sensor: failed"]
     # Where `affected-run` now leaves its signed evidence. It used to stage under
     # `.rig/`, which is gitignored — fine while CI measured for itself, wrong once
@@ -120,18 +122,13 @@ def apply_prompt_regression_sensor(root: pathlib.Path, task: dict, acc: dict) ->
             repo, base=base, head="working", evidence_dir=evidence_dir, ratchet=True,
             graph=SOURCE_TREE_GRAPH,
         )
-        if code != 0:
-            check["status"] = "failed"
-        elif report["status"] == "debt":
-            check["status"] = "warning"
-        else:
-            check["status"] = "passed"
+        status = "failed" if code != 0 else "warning" if report["status"] == "debt" else "passed"
         detail = f"machine eval gate: {report['status']}"
-        if check["status"] == "warning":
+        if status == "warning":
             debt = report.get("coverage_debt") or []
             detail += f" — no evaluation case yet for {', '.join(debt)}"
-        check["detail"] = detail
+        record_sensor_status(check, status, detail, WRITER)
     except EvalCaseError as exc:
-        check["status"] = "failed"
-        check["detail"] = f"machine eval gate infrastructure error: {exc}"
+        record_sensor_status(check, "failed",
+                             f"machine eval gate infrastructure error: {exc}", WRITER)
     return [f"  prompt-regression sensor: {check['status']}"]
