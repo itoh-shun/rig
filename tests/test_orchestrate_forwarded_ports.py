@@ -353,34 +353,40 @@ def nonexecutable_recipe(project: pathlib.Path,
 
 def test_the_tripwire_is_armed(project: pathlib.Path, run_state: pathlib.Path,
                                no_ambient_ports: None, no_ambient_clock: None,
-                               no_ambient_env: None, no_ambient_files: None,
-                               no_ambient_process: None) -> None:
-    """The five mechanisms, so no assertion below passes because a trap was never set.
+                               no_ambient_files: None, no_ambient_process: None) -> None:
+    """Four of the five mechanisms, so no assertion below passes because a trap was set.
 
     One probe per disarmed adapter, each reaching it the way a forgotten keyword would —
-    through the parameter default, not through a name this file spells.
+    through the parameter default, not through a name this file spells. Each refusal is
+    matched by the adapter it names, because a probe that died on the *wrong* trap would
+    otherwise read as proof of the one it was written for. `OsEnv` is armed in the test
+    below rather than here for exactly that reason: `cmd_models` reads the environment
+    before it writes, so disarming both would make the `FileStore` probe pass on the
+    `Env` refusal and prove nothing.
     """
     # Presenter, through `cmd_status`'s default.
-    with pytest.raises(PortNotForwarded):
+    with pytest.raises(PortNotForwarded, match="ConsolePresenter"):
         commands.cmd_status([str(run_state)])
 
-    # Clock, through `cmd_resume`'s default. It is reached before any check runs, on the
-    # mtime gap the digest reports.
-    with pytest.raises(PortNotForwarded):
+    # Clock, through `cmd_resume`'s default, on the mtime gap the digest reports.
+    with pytest.raises(PortNotForwarded, match="SystemClock"):
         commands.cmd_resume([str(run_state)], out=Recorder())
 
-    # Env, through `cmd_install_shim`'s default.
-    with pytest.raises(PortNotForwarded):
-        commands.cmd_install_shim(["--to", str(project / "bin" / "rig")], out=Recorder())
-
-    # FileStore, through `cmd_models`' default. `--save` is the one write it makes, and
-    # `env=` is injected at the one read that would otherwise refuse first.
-    with pytest.raises(PortNotForwarded):
+    # FileStore, through `cmd_models`' default. `--save` is the one write it makes.
+    with pytest.raises(PortNotForwarded, match="LocalFileStore"):
         providers.cmd_models(["--save", "--json"], out=Recorder())
 
     # ProcessRunner, through `_git_diff_evidence`'s default.
-    with pytest.raises(PortNotForwarded):
+    with pytest.raises(PortNotForwarded, match="SubprocessRunner"):
         providers._git_diff_evidence({"cwd": str(project)})
+
+
+def test_the_environment_tripwire_is_armed(project: pathlib.Path,
+                                           no_ambient_ports: None,
+                                           no_ambient_env: None) -> None:
+    """The fifth, alone, for the reason the test above gives."""
+    with pytest.raises(PortNotForwarded, match="OsEnv"):
+        commands.cmd_install_shim(["--to", str(project / "bin" / "rig")], out=Recorder())
 
 
 # ── the presenter, across the verbs the shell dispatches ────────────────────
