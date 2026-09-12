@@ -6,8 +6,8 @@
 
 1. **task 登録** — `scripts/workbench.py new "<input>" --type <task_type> --slug <slug>` が task-id を発行し、`.rig/runs/<task-id>/` に run state を初期化、worktree と作業 branch を作成する。
 2. **隔離実行** — implement / verify 等の全 step を worktree の中で実行する（subagent への dispatch 時に worktree path を作業ディレクトリとして明示する）。メイン作業ツリーには一切書かない。
-3. **ゲート判定** — `workbench.py gate <task-id> --set <criterion>=<passed|failed|warning|skipped>` で基準ごとの合否を記録する。gate 全体は `passed`/`passed_with_warnings`/`failed`/`pending`/`skipped` に集約される。**failed か pending が1つでもあれば accept はコードが拒否する**（散文の自制ではなくランナーが強制）。
-4. **accept 前提の確認** — `accept` はまず `worktree_exists`/`base_branch_recorded`/`diff_summary_generated`/`acceptance_gate_not_failed`/`no_unrelated_diff` の accept_requirements チェックリストを表示する。最初の3つは**構造的な前提**であり `--force` でも上書きできない（特に `diff_summary_generated`＝`diff.md` の存在は accept の必須条件）。
+3. **ゲート判定** — 基準ごとの合否は `workbench.py gate <task-id> --set <criterion>=<status>` で記録する。`status` は `passed`/`failed`/`warning`/`skipped` である。gate 全体は `passed`/`passed_with_warnings`/`failed`/`pending`/`skipped` に集約される。**`failed`・`pending`・`skipped`（全件 skip）のいずれかなら accept はコードが拒否する。**散文の自制ではなくランナーが強制する。step 4 の `acceptance_gate_not_failed` がこの3つを落とす項目である。
+4. **accept 前提の確認** — `accept` はまず accept_requirements チェックリストを表示する。**構造的な前提**は `worktree_exists`・`base_branch_recorded`・`diff_summary_generated` の3件で、`--force` でも上書きできない。特に `diff_summary_generated`＝`diff.md` の存在は accept の必須条件である。判断が伴うのは `acceptance_gate_not_failed`・`no_unrelated_diff`・`gate_judged_this_head` の3件になる。
 5. **反映 or 破棄** — `accept` は branch をメイン作業ツリーへ **squash merge（staged・コミットなし）**する＝最終確定は必ず人（またはユーザーが明示した commit 操作）に残す。`discard` は worktree / branch を削除し、run log だけを残す。
 
 ## task-id と配置

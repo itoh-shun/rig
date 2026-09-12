@@ -49,6 +49,7 @@ WORKBENCH = REPO_ROOT / "scripts" / "workbench.py"
 # integers and nothing else, and comparing the source tree to itself pins nothing.
 REJECTED = 1  # rig judged the work and the answer is no — here, a failed gate
 ERROR = 2     # rig could not produce an answer — bad usage, state that is not there
+PENDING = 3   # rig ran and there is no verdict yet — criteria are still `pending`
 
 # Every scenario below trips the anti-tamper sensor, whose trigger is a PATH in the task
 # diff (`.rig/gates.json`, a deleted test file) rather than a pattern in file content. The
@@ -159,6 +160,10 @@ def test_a_detecting_sensor_refuses_a_hand_written_pass(tmp_path):
     assert check["status"] == "failed"
     assert check["tamper_findings"]
     assert status_of(repo, task_id, "task_intent_satisfied")["status"] == "passed"
+    # And so is the head the sensors measured it on. The refusal comes after the save, so a
+    # refused `--set` is still an evaluation — a gate whose head went unrecorded here would
+    # be refused by `accept` as unknown for a reason that has nothing to do with the work.
+    assert acceptance(repo, task_id)["evaluated_head"] == _git_out(wt, "rev-parse", "HEAD").strip()
 
 
 def test_a_warning_grade_finding_cannot_be_declared_passed(tmp_path):
@@ -270,7 +275,10 @@ def test_taking_a_criterion_over_from_a_sensor_drops_the_sensors_explanation(tmp
     (wt / "tests" / "test_app.py").unlink()          # warning-grade tamper finding
     commit(wt, "delete the test file")
     r = cli(repo, wt_root, "gate", task_id)
-    assert r.returncode == 0, r.stdout + r.stderr   # warning-grade: the gate is pending, not failed
+    # A warning-grade finding is not a failure: the gate is PENDING (3, the not-yet-judged
+    # code) because the other fourteen criteria are unrecorded — not REJECTED, and not the
+    # ERROR a refused declaration takes.
+    assert r.returncode == PENDING, r.stdout + r.stderr
     sensor_written = status_of(repo, task_id, "no_gate_tampering")
     assert sensor_written["status"] == "warning"
     assert sensor_written["detail"].startswith("(tamper sensor)")
@@ -324,9 +332,9 @@ def test_the_operators_note_is_its_own_field_and_outlives_the_sensors_detail(tmp
 
     reason = "reviewed - the test moved to tests/test_new.py"
     r = cli(repo, wt_root, "gate", task_id, "--set", f"no_gate_tampering=warning:{reason}")
-    assert r.returncode == 0, r.stdout + r.stderr          # agreement, so no refusal
+    assert r.returncode == PENDING, r.stdout + r.stderr    # agreement, so no refusal
     for _ in range(3):                                     # (a) three more bare runs
-        assert cli(repo, wt_root, "gate", task_id).returncode == 0
+        assert cli(repo, wt_root, "gate", task_id).returncode == PENDING
     check = status_of(repo, task_id, "no_gate_tampering")
     assert check["status"] == "warning"
     assert check["note"] == reason                         # untouched, run after run
@@ -403,7 +411,7 @@ def test_the_schema_sensor_keeps_an_agreeing_operators_note(tmp_path):
     reason = "documented in the ADR, not in diff.md"
     r = cli(repo, wt_root, "gate", task_id,
             "--set", f"public_api_changes_documented=warning:{reason}")
-    assert r.returncode == 0, r.stdout + r.stderr
+    assert r.returncode == PENDING, r.stdout + r.stderr
     check = status_of(repo, task_id, "public_api_changes_documented")
     assert check["status"] == "warning"
     assert check["note"] == reason
@@ -557,14 +565,14 @@ def test_a_note_survives_the_same_status_finding_more(tmp_path):
     commit(wt, "delete one test")
     reason = "reviewed - both moved to tests/test_new.py"
     assert cli(repo, wt_root, "gate", task_id,
-               "--set", f"no_gate_tampering=warning:{reason}").returncode == 0
+               "--set", f"no_gate_tampering=warning:{reason}").returncode == PENDING
     before = status_of(repo, task_id, "no_gate_tampering")
     assert before["note"] == reason
 
     # a second warning-grade finding appears; the status does not move
     (wt / "tests" / "test_two.py").write_text("def test_y():\n    pass\n", encoding="utf-8")
     commit(wt, "weaken the other test")
-    assert cli(repo, wt_root, "gate", task_id).returncode == 0
+    assert cli(repo, wt_root, "gate", task_id).returncode == PENDING
 
     after = status_of(repo, task_id, "no_gate_tampering")
     assert after["status"] == "warning"
@@ -577,8 +585,10 @@ def test_an_empty_criteria_set_does_not_pass_vacuously(tmp_path):
     """The non-vacuity check for everything above: a gate whose criteria list is empty has
     no sensor to contradict and no declaration to refuse, and it must not therefore be a
     gate that passes. `gate_status` answers "skipped" for an empty check list, which
-    `cmd_gate` used to carry into task.json as `gate_passed` and which accept.py's
-    `gate_ok` still counts as met — a pass nothing was measured for."""
+    `cmd_gate` used to carry into task.json as `gate_passed` — a pass nothing was
+    measured for. The other half of that hole, a gate whose every criterion was declared
+    `skipped` by hand, is pinned by
+    `test_a_gate_whose_every_criterion_is_skipped_is_refused_by_accept` below."""
     repo, wt_root = make_repo(tmp_path), tmp_path / "wt"
     task_id, wt = new_task(repo, wt_root)
 
@@ -597,6 +607,398 @@ def test_an_empty_criteria_set_does_not_pass_vacuously(tmp_path):
     assert "PASSED" not in r.stdout
     task = json.loads((repo / ".rig" / "runs" / task_id / "task.json").read_text(encoding="utf-8"))
     assert task["status"] == "running"
+
+
+def test_a_gate_whose_every_criterion_is_skipped_is_refused_by_accept(tmp_path):
+    """`skipped` was the third status accept.py's `gate_ok` counted as satisfaction.
+
+    Measured before the fix: fifteen `--set <criterion>=skipped` pairs, a gate that
+    reports SKIPPED, and `accept` squash-merging with `✓ acceptance_gate_not_failed` and
+    no `--force` — no audit entry, no `forced: true`, and a provenance record saying the
+    task was accepted cleanly. `--set` cannot write `passed` over a sensor (the rule the
+    rest of this file pins), but `skipped` is a status every criterion accepts, so the
+    whole gate could be declared away one word at a time.
+
+    The empty-criteria refusal above and this one are the two halves of the same hole:
+    there, nothing was asked; here, nothing was answered.
+    """
+    repo, wt_root = make_repo(tmp_path), tmp_path / "wt"
+    task_id, wt = new_task(repo, wt_root)
+    (repo / ".gitignore").write_text(".rig/\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "ignore .rig")
+    (wt / "feature.py").write_text("def f():\n    return 42\n", encoding="utf-8")
+    commit(wt, "add a feature")
+
+    everything = ("no_secret_leak", "no_gate_tampering", "no_injection_markers",
+                  "no_destructive_operation", "public_api_changes_documented",
+                  *DECLARATION_ONLY)
+    r = cli(repo, wt_root, "gate", task_id,
+            *(a for n in everything for a in ("--set", f"{n}=skipped")))
+    # 3, the no-verdict code: a gate everybody declined to answer is not a green one, and
+    # `gate` must not tell a caller the opposite of what `accept` is about to say.
+    assert r.returncode == PENDING, r.stdout + r.stderr
+    assert acceptance(repo, task_id)["status"] == "skipped"
+    assert "15 criteria skipped (not judged, never a pass)" in r.stdout
+    # And the task does not move to `gate_passed`: `eval/capture.py` counts that state with
+    # no failed checks as `explicitly_successful`, which would file this as a success.
+    task_state = json.loads((repo / ".rig" / "runs" / task_id / "task.json")
+                            .read_text(encoding="utf-8"))
+    assert task_state["status"] == "running"
+    (repo / ".rig" / "runs" / task_id / "diff.md").write_text(
+        "# diff summary\n\nthe task's own work.\n", encoding="utf-8")
+
+    refused = cli(repo, wt_root, "accept", task_id)
+    out = refused.stdout + refused.stderr
+    # A verdict on the work, so `reject`'s 1 — not the usage-error 2 a refused `--set`
+    # takes, and not a 0 with a merge behind it.
+    assert refused.returncode == REJECTED, out
+    assert "✗ acceptance_gate_not_failed" in out
+    assert "the gate judged nothing" in out
+    # The refusal names no unmet criterion, because there is none to name: every check
+    # carries the status the operator chose for it.
+    assert "unmet:" not in out
+    # And it stops at the fact. The tail that used to follow it ("…and a gate that judged
+    # nothing is not a gate that was met") restated the sentence it was attached to.
+    assert "is not a gate that was met" not in out
+    assert _git_out(repo, "status", "--porcelain") == ""
+
+    # And the one door past it is the audited one.
+    forced = cli(repo, wt_root, "accept", task_id, "--force")
+    assert forced.returncode == 0, forced.stdout + forced.stderr
+    audit = [json.loads(line) for line in
+             (repo / ".rig" / "audit.jsonl").read_text(encoding="utf-8").splitlines() if line]
+    entry = next(e for e in audit if e["action"] == "accept_force")
+    assert entry["gate_status"] == "skipped"
+    assert "acceptance_gate_not_failed" in entry["bypassed"]
+    task = json.loads((repo / ".rig" / "runs" / task_id / "task.json")
+                      .read_text(encoding="utf-8"))
+    assert task["forced"] is True
+
+
+# ── a verdict is about the commits it was measured against ───────────────────
+def _repo_ready_for_accept(tmp_path):
+    """A repo whose main tree is clean and ignores `.rig/`, plus a task with one commit."""
+    repo, wt_root = make_repo(tmp_path), tmp_path / "wt"
+    task_id, wt = new_task(repo, wt_root)
+    (repo / ".gitignore").write_text(".rig/\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "ignore .rig")
+    (wt / "app.py").write_text("x = 2\n", encoding="utf-8")
+    commit(wt, "the task's own work")
+    return repo, wt_root, task_id, wt
+
+
+def test_a_gate_that_judged_an_older_head_is_not_spent_on_a_newer_one(tmp_path):
+    """`accept` squashes the branch as it stands; the gate judged it as it stood.
+
+    Nothing connected the two. Measured before the fix: pass the whole gate, commit again
+    in the worktree, and `accept` applied the second commit under a verdict — sensors
+    included — that had never seen it. acceptance.json recorded `checked_at` and no head,
+    so there was nothing to compare and no way for a later reader to tell which commits
+    the verdict was about.
+
+    This is a head-identity check, not a sensor re-run: the criteria keep exactly the
+    statuses `gate` wrote, and re-running `gate` is what clears it.
+    """
+    repo, wt_root, task_id, wt = _repo_ready_for_accept(tmp_path)
+    _ready_to_accept(repo, wt_root, task_id)
+
+    judged = acceptance(repo, task_id)["evaluated_head"]
+    assert judged == _git_out(wt, "rev-parse", "HEAD").strip()
+
+    (wt / "app.py").write_text("x = 3\n", encoding="utf-8")
+    commit(wt, "one more change the gate never saw")
+    moved = _git_out(wt, "rev-parse", "HEAD").strip()
+    assert moved != judged
+
+    refused = cli(repo, wt_root, "accept", task_id)
+    out = refused.stdout + refused.stderr
+    assert refused.returncode == REJECTED, out
+    assert "✗ gate_judged_this_head" in out
+    # The branch moved with the worktree, so the refusal is about the ref that is squashed.
+    assert f"judged {judged[:12]}" in out
+    assert f"which accept squashes, is at {moved[:12]}" in out
+    assert "Re-run" in out and "gate" in out
+    # The gate's own answers are untouched — this refusal is about identity, not verdicts.
+    assert acceptance(repo, task_id)["status"] == "passed"
+    assert _git_out(repo, "status", "--porcelain") == ""
+
+    # Re-running the gate over the head that is actually about to be squashed clears it.
+    _ready_to_accept(repo, wt_root, task_id)
+    assert acceptance(repo, task_id)["evaluated_head"] == moved
+    accepted = cli(repo, wt_root, "accept", task_id)
+    assert accepted.returncode == 0, accepted.stdout + accepted.stderr
+
+
+def test_forcing_past_a_moved_head_writes_both_shas_into_the_audit_ledger(tmp_path):
+    """The bypass stays accountable, and an auditor reading it later does not have to go
+    back to a worktree that may no longer exist to learn which commits were measured."""
+    repo, wt_root, task_id, wt = _repo_ready_for_accept(tmp_path)
+    _ready_to_accept(repo, wt_root, task_id)
+    judged = acceptance(repo, task_id)["evaluated_head"]
+    (wt / "app.py").write_text("x = 3\n", encoding="utf-8")
+    commit(wt, "one more change the gate never saw")
+    moved = _git_out(wt, "rev-parse", "HEAD").strip()
+
+    forced = cli(repo, wt_root, "accept", task_id, "--force")
+    assert forced.returncode == 0, forced.stdout + forced.stderr
+    entry = next(json.loads(line) for line in
+                 (repo / ".rig" / "audit.jsonl").read_text(encoding="utf-8").splitlines()
+                 if line and json.loads(line)["action"] == "accept_force")
+    assert "gate_judged_this_head" in entry["bypassed"]
+    assert entry["evaluated_head"] == judged
+    assert entry["worktree_head"] == moved
+
+
+def test_a_run_whose_acceptance_json_records_no_head_is_unknown_not_matching(tmp_path):
+    """An acceptance.json written before the gate recorded a head — an older run, or one
+    a tool wrote by hand. rig cannot show a difference it never measured, and must not
+    therefore report a match: unknown is refused, and `--force` is the same one door."""
+    repo, wt_root, task_id, wt = _repo_ready_for_accept(tmp_path)
+    _ready_to_accept(repo, wt_root, task_id)
+
+    acc_path = repo / ".rig" / "runs" / task_id / "acceptance.json"
+    acc = json.loads(acc_path.read_text(encoding="utf-8"))
+    assert acc.pop("evaluated_head")
+    acc_path.write_text(json.dumps(acc), encoding="utf-8")
+
+    refused = cli(repo, wt_root, "accept", task_id)
+    out = refused.stdout + refused.stderr
+    assert refused.returncode == REJECTED, out
+    assert "✗ gate_judged_this_head" in out
+    assert "records no head" in out
+    assert "rig treats that as unmet, not as a match" in out
+    assert _git_out(repo, "status", "--porcelain") == ""
+
+    forced = cli(repo, wt_root, "accept", task_id, "--force")
+    assert forced.returncode == 0, forced.stdout + forced.stderr
+
+
+def test_a_branch_moved_under_a_detached_worktree_is_refused(tmp_path):
+    """The measured bypass: the head check guarded the wrong ref.
+
+    `accept` squashes `task["branch"]`. The first version of this check compared the gate's
+    recorded head with the WORKTREE's HEAD, and those are two refs. Detach the worktree at
+    the judged sha and point the branch at a commit the gate never saw, and every signal
+    the check looked at agreed: the worktree was clean, its HEAD equalled `evaluated_head`,
+    `✓ gate_judged_this_head` printed, accept exited 0, and the unmeasured file was staged
+    into the main tree with no audit entry behind it.
+    """
+    repo, wt_root, task_id, wt = _repo_ready_for_accept(tmp_path)
+    _ready_to_accept(repo, wt_root, task_id)
+    judged = _git_out(wt, "rev-parse", "HEAD").strip()
+    assert acceptance(repo, task_id)["evaluated_head"] == judged
+
+    # The reviewer's sequence, exactly: commit the unmeasured change, put the worktree back
+    # on the judged commit, and move the branch to the new one.
+    (wt / "evil.py").write_text("# never measured by any sensor\n", encoding="utf-8")
+    commit(wt, "a change the gate never saw")
+    evil = _git_out(wt, "rev-parse", "HEAD").strip()
+    _git(wt, "checkout", "--detach", judged)
+    _git(repo, "branch", "-f", f"rig/{task_id}", evil)
+    assert _git_out(wt, "rev-parse", "HEAD").strip() == judged     # the old check's input
+    assert _git_out(repo, "rev-parse", f"rig/{task_id}").strip() == evil   # what gets squashed
+
+    refused = cli(repo, wt_root, "accept", task_id)
+    out = refused.stdout + refused.stderr
+    assert refused.returncode == REJECTED, out
+    assert "✗ gate_judged_this_head" in out
+    # All three shas, because the operator cannot act on a difference they cannot see.
+    assert judged[:12] in out and evil[:12] in out
+    assert "accept squashes the branch, not the worktree HEAD" in out
+    # Nothing reached the main tree, and nothing was recorded as a force.
+    assert _git_out(repo, "status", "--porcelain") == ""
+    assert not (repo / ".rig" / "audit.jsonl").exists()
+    assert not (repo / "evil.py").exists()
+
+
+def test_a_worktree_that_is_not_on_its_branch_tip_is_refused_on_its_own(tmp_path):
+    """The narrower half of the same fact, with the branch left where the gate found it.
+
+    The worktree is detached one commit behind its own branch tip. The gate judged the
+    branch tip, so `evaluated_head` and the tip agree — and the tree the operator is
+    looking at is still not the change being merged, which is a refusal of its own.
+    """
+    repo, wt_root, task_id, wt = _repo_ready_for_accept(tmp_path)
+    behind = _git_out(wt, "rev-parse", "HEAD").strip()
+    (wt / "second.py").write_text("x = 2\n", encoding="utf-8")
+    commit(wt, "a second commit")
+    tip = _git_out(wt, "rev-parse", "HEAD").strip()
+    _ready_to_accept(repo, wt_root, task_id)
+    assert acceptance(repo, task_id)["evaluated_head"] == tip
+
+    _git(wt, "checkout", "--detach", behind)
+
+    refused = cli(repo, wt_root, "accept", task_id)
+    out = refused.stdout + refused.stderr
+    assert refused.returncode == REJECTED, out
+    assert "✗ gate_judged_this_head" in out
+    assert behind[:12] in out and tip[:12] in out
+    assert "are not the same commit" in out
+    assert _git_out(repo, "status", "--porcelain") == ""
+
+
+def test_a_gate_run_against_a_detached_worktree_records_the_branch_it_was_not_about(tmp_path):
+    """What `gate` itself measured, when the two refs already disagreed at evaluation time.
+
+    The verdict is about the worktree diff, so it is about the worktree's HEAD. Recording
+    the branch tip alongside it is what lets the refusal say *why* the verdict cannot be
+    spent here, instead of showing a difference with no account of where it came from.
+    """
+    repo, wt_root, task_id, wt = _repo_ready_for_accept(tmp_path)
+    judged = _git_out(wt, "rev-parse", "HEAD").strip()
+    (wt / "later.py").write_text("x = 9\n", encoding="utf-8")
+    commit(wt, "a later commit")
+    later = _git_out(wt, "rev-parse", "HEAD").strip()
+    _git(wt, "checkout", "--detach", judged)
+
+    _ready_to_accept(repo, wt_root, task_id)
+    acc = acceptance(repo, task_id)
+    assert acc["evaluated_head"] == judged
+    assert acc["evaluated_branch_tip"] == later
+
+    refused = cli(repo, wt_root, "accept", task_id)
+    out = refused.stdout + refused.stderr
+    assert refused.returncode == REJECTED, out
+    assert "The gate itself measured a detached worktree" in out
+
+    # Back on the branch, a re-run of `gate` clears the field and the refusal with it.
+    _git(wt, "checkout", f"rig/{task_id}")
+    _ready_to_accept(repo, wt_root, task_id)
+    assert "evaluated_branch_tip" not in acceptance(repo, task_id)
+    assert cli(repo, wt_root, "accept", task_id).returncode == 0
+
+
+def test_a_no_worktree_run_records_the_main_trees_head_and_accepts(tmp_path):
+    """`state.task_head`'s fallback, driven through the CLI instead of a hand-written fixture.
+
+    A `--no-worktree` task has no worktree and no branch, so the head the gate records is
+    the main tree's and there is nothing for the branch-tip comparison to resolve. Every
+    other test of this file reaches that branch by writing `worktree_path` into task.json
+    by hand, which proves the fixture and not the code.
+    """
+    repo, wt_root = make_repo(tmp_path), tmp_path / "wt"
+    (repo / ".gitignore").write_text(".rig/\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "ignore .rig")
+    r = cli(repo, wt_root, "new", "a change made in the main tree", "--type", "feature",
+            "--slug", "no-worktree", "--no-worktree")
+    assert r.returncode == 0, r.stdout + r.stderr
+    task_id = re.search(r"task_id: (\S+)", r.stdout).group(1)
+    task = json.loads((repo / ".rig" / "runs" / task_id / "task.json").read_text(encoding="utf-8"))
+    assert task["worktree_path"] is None and task["branch"] is None
+
+    (repo / "app.py").write_text("x = 2\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "the work, in the main tree")
+
+    _ready_to_accept(repo, wt_root, task_id)
+    assert acceptance(repo, task_id)["evaluated_head"] == _git_out(repo, "rev-parse", "HEAD").strip()
+
+    # accept gets past the checklist — `gate_judged_this_head` is met — and stops on the
+    # one thing that is actually missing, which is a worktree to take a diff from.
+    r = cli(repo, wt_root, "accept", task_id)
+    out = r.stdout + r.stderr
+    assert "✓ gate_judged_this_head" in out
+    assert "has no worktree" in out
+
+
+def test_the_squash_is_given_the_sha_the_check_approved_not_the_branch_name(tmp_path, monkeypatch):
+    """The check and the sink have to read one value, not the same name twice.
+
+    `gate_judged_this_head` resolves the branch to a sha and compares it. Everything
+    between that and `git merge --squash` is a window in which the ref can move, and
+    passing the NAME to the merge made the sink resolve it a second time. Measured at a
+    0.25s delay, one attempt in one: `git update-ref refs/heads/rig/<task> <evil>` inside
+    that window staged an unmeasured commit, rc=0, no audit line.
+
+    Driven in process rather than through the CLI because the window is the point: the
+    `git` helper is wrapped so the ref moves *between* the two reads, deterministically,
+    instead of hoping a subprocess lands inside ~40ms.
+    """
+    import argparse as _argparse
+
+    from rig_workbench.workbench import accept as accept_mod
+
+    repo, wt_root, task_id, wt = _repo_ready_for_accept(tmp_path)
+    _ready_to_accept(repo, wt_root, task_id)
+    judged = _git_out(wt, "rev-parse", "HEAD").strip()
+
+    # A commit the gate never saw, parked on a detached ref so the branch still points at
+    # the judged commit when `accept` runs its check.
+    _git(wt, "checkout", "--detach", judged)
+    (wt / "evil.py").write_text("# never measured by any sensor\n", encoding="utf-8")
+    commit(wt, "the racer's commit")
+    evil = _git_out(wt, "rev-parse", "HEAD").strip()
+    _git(wt, "checkout", f"rig/{task_id}")
+    assert _git_out(repo, "rev-parse", f"rig/{task_id}").strip() == judged
+
+    real_git, calls = accept_mod.git, []
+
+    def racing_git(argv, **kwargs):
+        calls.append(list(argv))
+        if argv[:2] == ["merge", "--squash"]:
+            # The window, closed by hand: the ref moves after the check approved it and
+            # before the merge runs.
+            _git(repo, "update-ref", f"refs/heads/rig/{task_id}", evil)
+        return real_git(argv, **kwargs)
+
+    monkeypatch.setattr(accept_mod, "git", racing_git)
+    monkeypatch.chdir(repo)
+    accept_mod.cmd_accept(_argparse.Namespace(task_id=task_id, force=False))
+
+    # The argv the sink was given is the sha the check approved, not the name it read.
+    squash = next(c for c in calls if c[:2] == ["merge", "--squash"])
+    assert squash == ["merge", "--squash", judged], squash
+    assert f"rig/{task_id}" not in squash
+
+    # And the measured outcome: the racer's commit did not reach the main tree.
+    staged = _git_out(repo, "diff", "--staged", "--name-only").split()
+    assert "evil.py" not in staged, staged
+    assert not (repo / "evil.py").exists()
+
+
+# ── a criterion nobody judged is not a criterion that passed ─────────────────
+def test_one_passed_and_the_rest_skipped_is_not_a_passed_gate(tmp_path):
+    """The narrower bypass under the all-skipped one, and the reason the fix is in
+    `gate_status` rather than in another refusal.
+
+    Measured: `--set` one criterion `passed` and the other fourteen `skipped`, and the gate
+    scored `passed` outright — `accept` then applied it with nothing in the output, nothing
+    in the audit ledger and nothing in provenance to say that fourteen of the fifteen were
+    never judged. Blocking it would have been wrong (a skip is often the honest answer, and
+    "warning never blocks accept" is a rule this run does not get to rewrite); making it
+    unmissable is the fix.
+    """
+    repo, wt_root, task_id, wt = _repo_ready_for_accept(tmp_path)
+    everything = ("no_secret_leak", "no_gate_tampering", "no_injection_markers",
+                  "no_destructive_operation", "public_api_changes_documented",
+                  *DECLARATION_ONLY)
+    declared = {n: ("passed" if n == "task_intent_satisfied" else "skipped") for n in everything}
+    r = cli(repo, wt_root, "gate", task_id,
+            *(a for n, v in declared.items() for a in ("--set", f"{n}={v}")))
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "[PASSED_WITH_WARNINGS]" in r.stdout
+    assert "14 criteria skipped (not judged, never a pass)" in r.stdout
+    assert acceptance(repo, task_id)["status"] == "passed_with_warnings"
+    (repo / ".rig" / "runs" / task_id / "diff.md").write_text(
+        "# diff summary\n\nthe task's own work.\n", encoding="utf-8")
+
+    # It still accepts unforced — a warning has never blocked accept — and it says so.
+    accepted = cli(repo, wt_root, "accept", task_id)
+    out = accepted.stdout + accepted.stderr
+    assert accepted.returncode == 0, out
+    assert "14 criteria nobody judged" in out
+    assert "no_secret_leak" in out
+    assert not (repo / ".rig" / "audit.jsonl").exists()          # not a force
+
+    # And the signed record carries the names, where a later reader looks.
+    prov = json.loads((repo / ".rig" / "runs" / task_id / "provenance.json")
+                      .read_text(encoding="utf-8"))["record"]
+    assert prov["gate_status"] == "passed_with_warnings"
+    assert prov["skipped_criteria"] == sorted(n for n, v in declared.items() if v == "skipped")
+    assert "task_intent_satisfied" not in prov["skipped_criteria"]
 
 
 # ── a squash that never ran is not a conflict ────────────────────────────────

@@ -60,10 +60,17 @@ def test_key_is_persisted_and_reused(tmp_path):
 # ---- end-to-end via workbench.py accept / verify-provenance ------------------
 
 def _make_acceptable_task(git_repo, task_id):
+    """Everything `accept` requires except the squash itself. Call it AFTER the task's
+    own commit: `evaluated_head` is the head the gate is claimed to have judged, and
+    `accept`'s `gate_judged_this_head` compares it with the worktree's HEAD."""
     d = git_repo / ".rig" / "runs" / task_id
     acc = json.loads((d / "acceptance.json").read_text(encoding="utf-8"))
     for c in acc["checks"]:
         c["status"] = "passed" if c["name"] in ("no_unrelated_diff",) else "skipped"
+    task = json.loads((d / "task.json").read_text(encoding="utf-8"))
+    acc["evaluated_head"] = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=task["worktree_path"], check=True,
+        capture_output=True, text=True).stdout.strip()
     (d / "acceptance.json").write_text(json.dumps(acc), encoding="utf-8")
     (d / "diff.md").write_text("## Summary\nx\n", encoding="utf-8")
 
@@ -84,13 +91,13 @@ def test_accept_writes_provenance_and_verify_passes(git_repo):
     run_cli(["new", "test task", "--type", "feature"], git_repo)
     _commit_gitignore(git_repo)
     task_id = next((git_repo / ".rig" / "runs").iterdir()).name
-    _make_acceptable_task(git_repo, task_id)
 
     task = json.loads((git_repo / ".rig" / "runs" / task_id / "task.json").read_text(encoding="utf-8"))
     wt = pathlib.Path(task["worktree_path"])
     (wt / "g.txt").write_text("change\n", encoding="utf-8")
     subprocess.run(["git", "add", "g.txt"], cwd=wt, check=True)
     subprocess.run(["git", "commit", "-q", "-m", "work"], cwd=wt, check=True)
+    _make_acceptable_task(git_repo, task_id)
 
     r = run_cli(["accept", task_id], git_repo)
     assert r.returncode == 0, r.stdout + r.stderr
@@ -110,13 +117,13 @@ def test_verify_provenance_detects_tampering(git_repo):
     run_cli(["new", "test task", "--type", "feature"], git_repo)
     _commit_gitignore(git_repo)
     task_id = next((git_repo / ".rig" / "runs").iterdir()).name
-    _make_acceptable_task(git_repo, task_id)
 
     task = json.loads((git_repo / ".rig" / "runs" / task_id / "task.json").read_text(encoding="utf-8"))
     wt = pathlib.Path(task["worktree_path"])
     (wt / "g.txt").write_text("change\n", encoding="utf-8")
     subprocess.run(["git", "add", "g.txt"], cwd=wt, check=True)
     subprocess.run(["git", "commit", "-q", "-m", "work"], cwd=wt, check=True)
+    _make_acceptable_task(git_repo, task_id)
     run_cli(["accept", task_id], git_repo)
 
     prov_path = git_repo / ".rig" / "runs" / task_id / "provenance.json"

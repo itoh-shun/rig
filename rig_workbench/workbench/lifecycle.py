@@ -43,7 +43,8 @@ from .secrets import apply_secret_sensor, shared_diff_cache
 from .state import (build_acceptance, current_branch, die, gate_status, git, invocation_root,
                     load_json, load_task, make_slug,
                     make_task_id, now_iso, repo_root, resolve_task_id, run_dir,
-                    runs_dir, save_json, save_task, task_lock)
+                    runs_dir, save_json, save_task, task_branch_tip, task_head,
+                    task_lock)
 
 
 #: How to start a session, per harness rig can actually name one for. `caller.detect` only
@@ -658,14 +659,44 @@ def cmd_gate(args: argparse.Namespace) -> None:
 
         acc["status"] = gate_status(acc)
         acc["checked_at"] = now_iso()
+        # WHICH COMMITS THIS VERDICT IS ABOUT. `checked_at` says when the gate ran and
+        # nothing said what it ran over, so a verdict recorded against one tip stayed
+        # readable as a verdict about whatever the branch held later — and `accept`
+        # squashes the branch as it is now, not as it was measured. The sensors all scan
+        # the worktree diff, so this is the head they scanned; `accept` compares it with
+        # the head it is about to squash and refuses a mismatch unless forced.
+        #
+        # Recorded on every evaluation, including a refused `--set` (the save above this
+        # is the same one) — the gate as written is always the gate as measured here.
+        acc["evaluated_head"] = task_head(root, task)
+        # And the branch tip, when the worktree is not sitting on it. `accept` squashes the
+        # BRANCH, so that is the commit its head check has to be about; recording the tip
+        # here only when it differs keeps the common case one field and makes the odd case
+        # (a detached worktree) part of the record rather than a thing to reconstruct.
+        evaluated_tip = task_branch_tip(root, task)
+        if evaluated_tip and evaluated_tip != acc["evaluated_head"]:
+            acc["evaluated_branch_tip"] = evaluated_tip
+        else:
+            acc.pop("evaluated_branch_tip", None)
         save_json(d / "acceptance.json", acc)
 
-        if task["status"] == "running" and acc["status"] in ("passed", "passed_with_warnings", "failed", "skipped"):
+        # `skipped` is deliberately absent: it is the verdict of a gate that judged nothing,
+        # and moving the task to `gate_passed` for it recorded that non-verdict as a pass in
+        # every reader downstream — `eval/capture.py` counts `gate_passed` with no failed
+        # checks as `explicitly_successful`. It now leaves the task exactly where a `pending`
+        # gate leaves it, which is `running`.
+        if task["status"] == "running" and acc["status"] in ("passed", "passed_with_warnings", "failed"):
             task["status"] = "gate_failed" if acc["status"] == "failed" else "gate_passed"
             save_task(d, task)
 
         print(f"## acceptance-gate: {task_id}  [{acc['status'].upper()}]")
-        print(f"presets: {' + '.join(acc['presets'])}")
+        # The skipped roll-up rides the presets line rather than taking a print site of its
+        # own: a criterion nobody judged is the fact most easily lost in a fifteen-line
+        # listing, and it is the one `gate_status` now refuses to call `passed`.
+        declined = [c["name"] for c in acc["checks"] if c["status"] == "skipped"]
+        print(f"presets: {' + '.join(acc['presets'])}"
+              + (f"\n{len(declined)} criteria skipped (not judged, never a pass): "
+                 f"{', '.join(declined)}" if declined else ""))
         for c in acc["checks"]:
             origin = " [project]" if c.get("origin") == "project" else ""
             detail = f" — {c['detail']}" if c.get("detail") else ""
@@ -700,6 +731,27 @@ def cmd_gate(args: argparse.Namespace) -> None:
                   "them with `--set`, or `warning:未確認` when you cannot judge.")
         if acc["status"] == "failed":
             sys.exit(1)
+        if acc["status"] in ("pending", "skipped"):
+            # NOT 0. Neither of these is a verdict, and 0 is the code a CI step, a Makefile
+            # and another agent's harness read as "green" — so `gate` returning it here let
+            # "nobody has judged this yet" be consumed as "this passed", which is the same
+            # vacuous pass the empty-criteria refusal above exists to prevent, arriving
+            # through `$?` instead of through acceptance.json.
+            #
+            # The two share the code because they are one condition seen from two sides:
+            # `pending` is a criterion nobody answered, `skipped` (every criterion skipped)
+            # is a gate everybody declined to answer. `accept` refuses both without
+            # `--force`, so a `gate` that answered 0 for one of them would tell a caller the
+            # opposite of what `accept` is about to say.
+            #
+            # 3 rather than 1, because 1 is a verdict on the work and this is the absence of
+            # one: a caller that folded them would treat an unanswered gate as a rejected
+            # task and act on it. It is the number rig already gives that meaning — `wb
+            # contract` answers 3 for `pending`, and the orchestrator answers 3 for a step
+            # parked on a human gate — and it stays inside the 0-3 band
+            # tests/test_exit_code_surface.py pins. The verdict line and the list of what is
+            # still pending are printed above, so the status never arrives bare.
+            sys.exit(3)
 
 
 # A --body persona becomes a filename, so it may not carry a path separator or

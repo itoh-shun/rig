@@ -213,7 +213,7 @@ def test_debt_does_not_make_the_criterion_settable(tmp_path):
     assert "machine-controlled" in completed.stderr
 
 
-def test_the_gate_command_reports_debt_as_a_warning_and_exits_zero(tmp_path):
+def test_the_gate_command_reports_debt_as_a_warning_and_does_not_fail_the_gate(tmp_path):
     repo, _task, task_id = _fixture(tmp_path)
     _touch(repo, INSTRUCTION)
     environment = {"PYTHONPATH": str(REPO_ROOT), "RIG_HOME": str(REPO_ROOT)}
@@ -221,7 +221,9 @@ def test_the_gate_command_reports_debt_as_a_warning_and_exits_zero(tmp_path):
         [sys.executable, str(REPO_ROOT / "scripts" / "workbench.py"), "gate", task_id],
         cwd=repo, env=environment, capture_output=True, text=True,
     )
-    assert completed.returncode == 0
+    # 3 is PENDING (the rest of the gate is unrecorded), not the 1 a failed gate takes:
+    # prompt-regression debt is warning-grade and does not decide the gate.
+    assert completed.returncode == 3
     assert "⚠ prompt_regression_passed" in completed.stdout
     assert "prompt-regression sensor: warning" in completed.stdout
 

@@ -536,6 +536,49 @@ word. Every prose line that spelled it `rig-wb review` is corrected to the form 
 
 ### Fixed
 
+**Three acceptance-gate integrity holes, each measured on a scratch `feature` task before it
+was closed.**
+
+- **A criterion nobody judged no longer counts as one that passed.** `accept.py`'s `gate_ok`
+  counted `skipped` alongside `passed` and `passed_with_warnings`, so fifteen
+  `--set <criterion>=skipped` pairs produced a SKIPPED gate that `accept` squash-merged unforced —
+  no `.rig/audit.jsonl` entry, and task.json and provenance recording `forced: false`. A
+  sensor-backed criterion could never be declared `passed`, but `skipped` is a status every
+  criterion accepts, so the gate could be declared away criterion by criterion. `accept` now refuses an all-skipped gate unless `--force`,
+  which records the bypass the same way it records a failed gate; and because one `passed` plus
+  fourteen `skipped` still scored `passed` outright, **any** skipped criterion now caps the
+  verdict at `passed_with_warnings`. That still accepts without `--force` — a warning has never
+  blocked accept — and the skipped names are now printed by `gate`, printed by `accept`, and
+  listed in provenance.json under `skipped_criteria`.
+- **`gate` no longer exits 0 without a verdict.** Measured: all passed `0`, passed with
+  warnings `0`, one failed `1`, a `--set` the sensor contradicts `2` — and *some still pending*
+  `0`, which let a CI step read "nobody has judged this yet" as green. Pending is now `3`, and so
+  is an all-skipped gate, which is the same condition from the other side; `rig-wb wb contract`
+  already answers 3 for `pending` and the orchestrator for a step parked on a human gate. An
+  all-skipped gate also stops moving task.json to `gate_passed`, which `rig_workbench/eval/
+  capture.py` counted as `explicitly_successful`. The other three codes are unchanged.
+- **`accept` now checks which commits the gate judged.** acceptance.json recorded `checked_at`
+  and nothing about what the gate ran over, so a clean gate followed by another commit carried an
+  unmeasured change through the squash under a verdict that never saw it. `gate` records
+  `evaluated_head` on every evaluation (and `evaluated_branch_tip` when the worktree is detached),
+  and `accept_requirements` gains `gate_judged_this_head`. It compares against **the branch
+  `accept` squashes**, not only the worktree's HEAD: guarding the worktree alone was bypassable by
+  detaching it at the judged sha and moving the task branch onto an unmeasured commit, which
+  measured as a clean accept. A run with no recorded head is refused as unknown rather than
+  treated as a match. This is a head-identity check and not a sensor re-run — the criteria keep
+  exactly the statuses `gate` wrote, and re-running `gate` clears it. The sha the check approved
+  is the sha handed to `git merge --squash`; passing the branch NAME let the sink resolve it a
+  second time, and a `git update-ref` inside that window staged an unmeasured commit with a
+  clean exit.
+
+  **What `evaluated_head` is worth.** acceptance.json is an ordinary file in a tree the task's own
+  author can write, so the recorded head is *reported*, not measured: the check catches a branch
+  that moved under a gate, not an author who edited the record. The `accept_force` audit entry
+  names all three refs (`evaluated_head` as reported, `branch_tip` and `worktree_head` as read
+  from git at accept time) so a later reader can tell which is which. Known debt, predating this
+  run: `govern.check_accept` binds approvals to the worktree HEAD, so the detached-worktree gap
+  still applies to approvals.
+
 **A `textlint-disable` marker inside a code span no longer switches `rig-wb ja-lint` off.**
 `suppressions()` scanned raw lines, so a document that only showed the marker's syntax in
 backticks suppressed every finding from that line to the end of the file — `BRICKS.md`'s

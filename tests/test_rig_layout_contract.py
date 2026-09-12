@@ -392,7 +392,17 @@ RUN_DIR_LAYOUT = (
         accessor=None,
         via=NO_ACCESSOR,
         shape="json-object",
-        required_keys=("task_id", "task_type", "presets", "status", "checks", "checked_at"),
+        # `evaluated_head` joins the required keys because `accept` reads it to decide:
+        # it is the worktree HEAD the gate was measured against, and a file without one
+        # is refused as unknown rather than accepted (`gate_judged_this_head`).
+        #
+        # `evaluated_branch_tip` is deliberately NOT here. `gate` writes it only when the
+        # worktree it measured was not sitting on the task branch's tip, and removes it
+        # again when they agree, so it is a conditional key: requiring it would fail every
+        # ordinary run. A reader must treat its absence as "the two agreed", never as
+        # "this file is old". `accept` reads it for the refusal wording only.
+        required_keys=("task_id", "task_type", "presets", "status", "checks", "checked_at",
+                       "evaluated_head"),
     ),
     Pinned(
         rel=".rig/runs/{task}/diff.md",

@@ -342,7 +342,9 @@ def test_gate_integration_test_deletion_on_bugfix_is_warning_not_failed(tmp_path
     _git(wt, "commit", "-q", "-m", "delete the failing test")
 
     r = cli(repo, wt_root, "gate", task_id)
-    assert r.returncode == 0, r.stdout + r.stderr  # warning-grade never fails the gate on its own
+    # 3 (PENDING), not 1: a warning-grade finding never fails the gate on its own, and the
+    # unrecorded criteria are what leave this gate without a verdict.
+    assert r.returncode == 3, r.stdout + r.stderr
     assert "test_file_deleted" in r.stdout
     acc = json.loads((repo / ".rig" / "runs" / task_id / "acceptance.json").read_text(encoding="utf-8"))
     check = next(c for c in acc["checks"] if c["name"] == "no_gate_tampering")

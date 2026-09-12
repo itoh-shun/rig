@@ -154,9 +154,13 @@ WB_CAPABILITIES: tuple[Capability, ...] = (
         ),
         output_schema=None,
         exit_codes=(
-            ExitCode(code=0, meaning="the gate is not in a failed state"),
+            ExitCode(code=0, meaning="every criterion is recorded, at least one was judged, "
+                                     "and the gate is not failed"),
             ExitCode(code=1, meaning="rig judged the criteria and the gate is failed"),
             _ERROR,
+            ExitCode(code=3, meaning="no verdict was reached: criteria are still pending, or "
+                                     "every one of them was skipped. rig ran; a caller must "
+                                     "not read either as a pass"),
         ),
     ),
     Capability(

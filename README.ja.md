@@ -316,7 +316,7 @@ Next:
 Review /rig:go diff, then choose accept or discard.
 ```
 
-`failed` か `pending` が1件でも残っていれば `accept` は機械的に拒否される（exit 1）。`warning` は accept を止めないが、常に提示され黙って握りつぶされることはない。
+`gate` 自身も `$?` で答える。決着した gate（`passed` / `passed_with_warnings`）は 0、`failed` は 1 になる。センサーと食い違う `--set` は 2 である。判定に届かなかったとき（`pending` が1件でも残るか、全件が `skipped` のとき）は 3 になる。「まだ判定していない」を「通った」と読ませないためで、3 は `wb contract` と orchestrator が既に同じ意味で使っている。`failed` か `pending` が1件でも残っていれば `accept` は機械的に拒否される（exit 1）。全 criterion が `skipped` の gate も同じく止まる。何も判定していない gate を充足として読まないためで、通す道は `--force` だけ（他の force と同じく記録に残る）。`warning` は accept を止めないが、常に提示され黙って握りつぶされることはない。
 
 ### read-only verifier
 
@@ -430,9 +430,10 @@ Recommended:
   ✓ diff_summary_generated
   ✓ acceptance_gate_not_failed
   ✓ no_unrelated_diff
+  ✓ gate_judged_this_head
 ```
 
-`worktree_exists`/`base_branch_recorded`/`diff_summary_generated` は**構造的な前提**——`diff.md` が無ければ accept できない、`--force` でも例外なし。`acceptance_gate_not_failed`/`no_unrelated_diff` は判断が伴う項目で `--force` による上書きが可能（`forced: true` として記録される＝消えない）。チェックリストを通過したら、task branch を作業ツリーへ **squash merge（staged・コミットなし）**で反映する。
+最初の3件は**構造的な前提**である。`diff.md` が無ければ accept できず、`--force` でも例外はない。残る3件は判断が伴う項目で、`--force` による上書きが可能である（`forced: true` として記録される＝消えない）。`gate_judged_this_head` は 3 つの commit を突き合わせる。gate が記録した `evaluated_head`・accept が squash する branch の先端・worktree の HEAD である。3 つが同一 commit でなければ未達になる。決め手は branch のほうである。accept が squash するのは worktree の HEAD ではなく branch だからだ。head を記録していない acceptance.json は「一致」ではなく「不明」として扱う。どの場合も `gate` を評価し直せば解ける。`--force` で越えた場合は監査エントリに 3 つの sha が残る。チェックリストを通過したら、task branch を作業ツリーへ **squash merge（staged・コミットなし）**で反映する。
 
 **`/rig:go discard <id> --yes`** は常に変更ファイル一覧を先に表示する（`--yes` なしは削除しないプレビュー）。worktree/branch を削除するが run log（`.rig/runs/<task-id>/`）は残る。
 

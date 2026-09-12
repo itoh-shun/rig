@@ -878,7 +878,7 @@ S2 は `BRICKS.md` の主語欠落で、適用範囲のほうが動いた。残�
 | T3 | 経路の無いレシピは全プリセット語彙で判定される | `acceptance:` を持つ 26 枚のうち 17 枚が `ROUTED_GATE_CRITERIA` に無い（中継された 15 枚は再現しない）。語彙は 34 基準 | 開いたまま。26 / 17 / 34 を数え直して一致 |
 | T3 | `extends` の継承 step は親の経路で判定される | `recipes.py:716` が `ROUTED_GATE_CRITERIA.get(path.stem)` を渡す。該当は design-first → release-flow の 1 組だけ | 開いたまま。`extends:` を持つ出荷レシピは design-first の 1 枚だけ |
 | T3 | pack のレシピは `check_recipe` を通らない | `validation/cli.py:97` が見るのは `RECIPES.glob("*.md")` だけ。`packs/` 配下は 12 枚、うち `acceptance:` 持ちは 3 枚 | 開いたまま。pack の recipe は 12 枚、`acceptance:` 持ちは 3 枚 |
-| T13 | `accept.py:156` の `gate_ok` が `skipped` を充足として数える | `status in ("passed", "passed_with_warnings", "skipped")` | 開いたまま。`accept.py` の `gate_ok` は同じ式のままで、行番号だけが動いた |
+| T13 | `rig_workbench/workbench/accept.py` の `gate_ok` が `skipped` を充足として数える | `status in ("passed", "passed_with_warnings", "skipped")` | 閉じた。`dd54baf` が `gate_ok` を 2 値にした。全件 `skipped` の gate は `accept --force` でしか通らず、1 件でも `skipped` があれば `gate_status` は `passed` を返さない |
 | T13 | 退役した `--set` 迂回を案内する散文が残る | 6 ファイル 12 行。`README.md:234,236`・`README.ja.md:233,235`・`PACKS.md:31`・`workbench-ops.md:402,409,423,467,481`・`acceptance-check.md:68`・`japanese-textlint-rules.md:191` | 閉じた。`96ec92b` が 6 枚とも +76/−16 行で書き替え、`tests/test_docs_registry.py` が数を突き合わせる |
 
 **決定: 9 件を 2 / 5 / 2 に分ける。** `accept.py` の `gate_ok` が `skipped` を充足に数える穴は、
@@ -887,12 +887,15 @@ T13 の着地直後に 1 run で塞ぐ。退役した `--set` 迂回を案内す
 17 枚・`extends` の継承 step・pack レシピの未検査である。runtime の呼び出し元が無い
 `plan_dispatch` と glob 対 glob の 2 件は、限界として記録したまま残す。
 
-**9 件のうち、いま閉じているのは 1 件。** 閉じたのは退役した `--set` 迂回を案内する 12 行で、
-T13 自身の最後の commit 群が 6 ファイルとも書き替えた。
-`accept.py` の `gate_ok` が `skipped` を数える穴は、T13 の直後に塞ぐと書いた。塞がっていない。
-`accept.py` の `gate_ok` は `status in ("passed", "passed_with_warnings", "skipped")` のままで、
-動いたのは行番号だけ。2 / 5 / 2 の見込みのうち、最初の 2 は 1 件しか進んでいない。残り 7 件は上表の
-「いま」欄のとおりで、どれも再測して同じ値が出た。
+**9 件のうち、いま閉じているのは 2 件。** 1 件目は退役した `--set` 迂回を案内する 12 行で、
+T13 自身の最後の commit 群が 6 ファイルとも書き替えた。2 件目が `accept.py` の `gate_ok` で、
+`status in ("passed", "passed_with_warnings")` になった。全 criterion を `skipped` と宣言した
+gate は、accept_requirements の `acceptance_gate_not_failed` を満たさない。2 / 5 / 2 の見込みの
+うち、最初の 2 は両方とも進んだ。残り 7 件は上表の「いま」欄のとおりで、どれも再測して同じ値が出た。
+
+**新しい債務を 1 件記録する。** `govern.check_accept` は承認を worktree の HEAD に束ねている。
+accept 側の head 判定が branch の先端を見るようになった後も、そちらは worktree の HEAD のままである。
+detached worktree の抜け道は承認にも残る。本 run より前からある問題で、本 run では直していない。
 
 #### 本節で直した、本ブリーフ自身の数値
 

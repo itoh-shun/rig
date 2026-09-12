@@ -24,8 +24,8 @@ one when the *behaviour a caller depends on* moves, whatever the internals now l
 Two groups, selectable by name:
 
     pytest -k generic    the three core codes, one command each
-    pytest -k specific   the command-specific codes (gh-check, contract, govern, the
-                         orchestrator's human gate, design-constraints, ja-lint, bench)
+    pytest -k specific   the command-specific codes (gh-check, contract, gate, govern,
+                         the orchestrator's human gate, design-constraints, ja-lint, bench)
 
 `NOT_PINNED` below records what could not be driven to a code without a production
 change or the network, with the reason. It is deliberately a constant and not a
@@ -440,6 +440,76 @@ def test_specific_contract_exits_two_with_an_execution_error_rather_than_a_verdi
     payload = json.loads(result.stdout)
     assert payload["status"] == "execution-error"
     assert payload["receipt"] is None
+
+
+# ── specific: wb gate (0 / 1 / 2 / 3) ────────────────────────────────────────
+def test_specific_gate_keeps_judged_failed_and_not_yet_judged_apart(rig_cli, rig_git_repo):
+    """Five gate states, one task, in the order an operator meets them.
+
+      pending       3    no verdict: criteria nobody has answered
+      failed        1    a verdict on the work
+      skipped       3    no verdict: a gate everybody declined to answer
+      pw/warnings   0    a verdict, with something unsettled in it
+      passed        0    a verdict, clean
+
+    3 is the code this test was written for: `gate` used to answer 0 while criteria were
+    still `pending`, so a CI step or another agent branching on `$?` read "nobody has
+    judged this yet" as "this passed" — the vacuous pass, arriving through the exit status
+    instead of through acceptance.json. An all-`skipped` gate shares it because it is the
+    same condition from the other side, and because `accept` refuses both: a 0 there would
+    tell a caller the opposite of what the next command is about to say. It is the same
+    meaning 3 already carries for `wb contract` (`pending`) and for the orchestrator (a
+    step parked on a human gate).
+
+    The fourth code, 2, is the refused `--set` of a sensor-backed criterion. It is driven
+    in tests/test_gate_sensor_authority.py, which has the sensors' own fixtures, and it
+    belongs to the operator's declaration rather than to the gate's verdict.
+    """
+    task_id, worktree = _new_task(rig_cli, rig_git_repo, "not-yet-judged")
+    (worktree / "NEW.md").write_text("a real change\n", encoding="utf-8")
+    _git(worktree, "add", "-A")
+    _git(worktree, "commit", "-q", "-m", "add NEW.md")
+
+    # Nothing recorded: every criterion is pending.
+    pending = rig_cli("wb", "gate", task_id, cwd=rig_git_repo)
+    assert pending.returncode == 3, pending.stdout + pending.stderr
+    assert "[PENDING]" in pending.stdout
+    assert "criteria still pending" in pending.stdout
+    # And it is not the verdict codes: a caller that folded 3 into either would act on a
+    # judgement nobody made.
+    assert pending.returncode != OK and pending.returncode != REJECTED
+
+    # One criterion judged `failed`, the rest still pending: `failed` outranks `pending`,
+    # and a verdict is a 1.
+    failed = rig_cli("wb", "gate", task_id, "--set", "task_intent_satisfied=failed",
+                     cwd=rig_git_repo)
+    assert failed.returncode == REJECTED, failed.stdout + failed.stderr
+    assert "[FAILED]" in failed.stdout
+
+    # Every criterion declined: a gate that judged nothing, which is not a verdict either.
+    skipped = rig_cli("wb", "gate", task_id,
+                      *(arg for name in _FEATURE_GATE_CRITERIA
+                        for arg in ("--set", f"{name}=skipped")),
+                      cwd=rig_git_repo)
+    assert skipped.returncode == 3, skipped.stdout + skipped.stderr
+    assert "[SKIPPED]" in skipped.stdout
+
+    # All fifteen recorded, one of them a warning: `passed_with_warnings` is a decided
+    # gate and shares 0 with a clean pass, because a warning does not block accept.
+    warned = rig_cli("wb", "gate", task_id,
+                     *(arg for name in _FEATURE_GATE_CRITERIA
+                       for arg in ("--set", f"{name}=passed")),
+                     "--set", "task_intent_satisfied=warning:未確認",
+                     cwd=rig_git_repo)
+    assert warned.returncode == OK, warned.stdout + warned.stderr
+    assert "[PASSED_WITH_WARNINGS]" in warned.stdout
+
+    passed = rig_cli("wb", "gate", task_id,
+                     *(arg for name in _FEATURE_GATE_CRITERIA
+                       for arg in ("--set", f"{name}=passed")),
+                     cwd=rig_git_repo)
+    assert passed.returncode == OK, passed.stdout + passed.stderr
+    assert "[PASSED]" in passed.stdout
 
 
 # ── specific: govern can (0 / 3) ─────────────────────────────────────────────

@@ -218,6 +218,11 @@ def accepting_repo(tmp_path):
     acc = json.loads((d / "acceptance.json").read_text(encoding="utf-8"))
     for c in acc["checks"]:
         c["status"] = "passed" if c["name"] == "no_unrelated_diff" else "skipped"
+    # The head the gate is claimed to have judged — `accept` refuses an acceptance.json
+    # that names none, and this fixture exists to reach the telemetry write past accept.
+    acc["evaluated_head"] = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=wt, check=True,
+        capture_output=True, text=True).stdout.strip()
     (d / "acceptance.json").write_text(json.dumps(acc), encoding="utf-8")
     (d / "diff.md").write_text("## Summary\nx\n", encoding="utf-8")
 

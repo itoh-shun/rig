@@ -79,6 +79,12 @@ def make_acceptable(repo, task_id, leave_failing=None):
             c["status"] = "failed"
         else:
             c["status"] = "passed" if c["name"] == "no_unrelated_diff" else "skipped"
+    # The head the gate is claimed to have judged: `accept`'s `gate_judged_this_head`
+    # compares it with the worktree's HEAD, and an acceptance.json naming none is refused
+    # as unknown — which would block this fixture on the gate instead of on governance.
+    acc["evaluated_head"] = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo, check=True,
+        capture_output=True, text=True).stdout.strip()
     (d / "acceptance.json").write_text(json.dumps(acc), encoding="utf-8")
     (d / "diff.md").write_text("## Summary\nx\n", encoding="utf-8")
     task = json.loads((d / "task.json").read_text(encoding="utf-8"))

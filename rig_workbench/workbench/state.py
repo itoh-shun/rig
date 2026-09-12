@@ -545,7 +545,18 @@ def record_sensor_status(check: dict, status: str, detail: str, writer: str) -> 
 
 
 def gate_status(acc: dict) -> str:
-    """Evaluate with priority: failed > pending > (skipped if all skipped) > warning > passed."""
+    """Evaluate with priority: failed > pending > (skipped if all skipped) > warning-or-skip > passed.
+
+    A SKIPPED CRITERION NEVER REACHES `passed`. `skipped` means "not judged", and a gate
+    that reports `passed` with one of them in it says the whole set was judged and cleared,
+    which is the one thing it is not. `accept` refuses an all-skipped gate, but that only
+    ever covered the whole-gate case: one criterion declared `passed` and the other fourteen
+    `skipped` scored `passed` outright and bought an accept nothing recorded as unusual.
+    Declining to judge is now a warning-grade fact instead — `passed_with_warnings`, which
+    `accept` still lets through without `--force` (a warning has never blocked accept) but
+    which carries the skipped names into the gate's summary, into accept's own output and
+    into the signed provenance record, where a reader of the record sees them.
+    """
     statuses = [c["status"] for c in acc["checks"]]
     if not statuses:
         return "skipped"
@@ -555,12 +566,47 @@ def gate_status(acc: dict) -> str:
         return "pending"
     if all(s == "skipped" for s in statuses):
         return "skipped"
-    if any(s == "warning" for s in statuses):
+    if any(s in ("warning", "skipped") for s in statuses):
         return "passed_with_warnings"
     return "passed"
 
 
 # ── worktree ─────────────────────────────────────────────────────────────────
+def task_head(root: pathlib.Path, task: dict) -> str | None:
+    """The commit this task's work currently sits on: the worktree's HEAD, or the main
+    tree's when the task has none (`--no-worktree`).
+
+    Two callers, and they are two halves of one fact. `cmd_gate` records the answer into
+    acceptance.json as `evaluated_head` — the commits the verdict was measured against —
+    and `accept` asks again before squashing, so a gate that judged an older tip cannot be
+    spent on a newer one. `None` (git could not answer) is not a head and never compares
+    equal to one: the caller treats it as unknown rather than as a match.
+    """
+    wt = task.get("worktree_path")
+    cwd = pathlib.Path(wt) if wt and pathlib.Path(wt).is_dir() else root
+    proc = git(["rev-parse", "HEAD"], cwd=cwd, check=False)
+    return proc.stdout.strip() or None if proc.returncode == 0 else None
+
+
+def task_branch_tip(root: pathlib.Path, task: dict) -> str | None:
+    """The commit `accept` will actually squash: the tip of the task's own branch.
+
+    Resolved in the MAIN tree, not in the worktree, because that is where
+    `git merge --squash <branch>` runs and what it resolves. The distinction is the whole
+    point of the function: a worktree can be detached at one commit while the branch it was
+    cut for points at another, and a check that asked the worktree what it was sitting on
+    would answer about a commit nothing is going to merge.
+
+    `None` when the task records no branch (a `--no-worktree` run has none) or when the
+    name no longer resolves — both "unknown", never a match.
+    """
+    branch = task.get("branch")
+    if not branch:
+        return None
+    proc = git(["rev-parse", "--verify", f"{branch}^{{commit}}"], cwd=root, check=False)
+    return proc.stdout.strip() or None if proc.returncode == 0 else None
+
+
 def default_worktree_path(root: pathlib.Path, task_id: str) -> pathlib.Path:
     import os
     wt_root = os.environ.get("RIG_WORKTREE_ROOT")

@@ -101,7 +101,7 @@ RECOMMENDATION = {
     "pending": "Evaluate the remaining acceptance criteria before accepting.",
     "passed_with_warnings": "Review the warnings, then accept if they are acceptable.",
     "passed": "Safe to accept.",
-    "skipped": "This task has no gate criteria configured — verify manually before accepting.",
+    "skipped": "Every criterion was skipped, so the gate judged nothing — `accept` refuses it without `--force`.",
 }
 
 ACTIVE_STATUSES = ("running", "gate_passed", "gate_failed")

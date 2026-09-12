@@ -163,13 +163,22 @@ python3 scripts/workbench.py diff [<task_id>]
 python3 scripts/workbench.py accept [<task_id>]
 ```
 
-`accept` はまず **accept_requirements チェックリスト**を表示する（`worktree_exists` / `base_branch_recorded` / `diff_summary_generated` / `acceptance_gate_not_failed` / `no_unrelated_diff`）。**accept 前に必ず**:
+`accept` はまず **accept_requirements チェックリスト**を表示する。項目は6件:
+
+- `worktree_exists`
+- `base_branch_recorded`
+- `diff_summary_generated`
+- `acceptance_gate_not_failed`
+- `no_unrelated_diff`
+- `gate_judged_this_head`
+
+**accept 前に必ず**:
 1. `workbench.py diff <task_id>` の内容（Summary/Risk/Tests/Unrelated diff）をユーザーに要約提示する。
 2. `worktree_exists`/`base_branch_recorded`/`diff_summary_generated` は**構造的な前提**であり `--force` でも上書きできない（diff.md が無ければ先に書く以外に道はない）。
-3. `acceptance_gate_not_failed`/`no_unrelated_diff` が未達（gate が `pending`/`failed`）の場合、スクリプトはエラーで拒否する（exit 1）。**`--force` は安全側のガードレールを外す明示操作**であり、以下を満たさない限り提案しない：
+3. 後半の3件が未達なら、スクリプトはエラーで拒否する（exit 1）。`acceptance_gate_not_failed` の未達とは、gate が `pending`／`failed`／全 criterion `skipped` のいずれかであることを指す。`gate_judged_this_head` の未達とは、3 つの commit が一致しないことを指す。3 つとは `evaluated_head`・squash 対象 branch の先端・worktree の HEAD である。head を記録していない run も「不明」＝未達である。この1件だけが未達なら、`gate` を評価し直すのが筋になる。`gate` 自身の終了コードは、決着した gate が 0、`failed` が 1、センサーと食い違う `--set` が 2 になる。判定に届かないうちは 3 を返す。`pending` が残るか、全件が `skipped` のときである。`wb contract` の `pending` と同じ 3 で、未判定を 0 と読ませない。**`--force` は安全側のガードレールを外す明示操作**であり、以下を満たさない限り提案しない：
    - ユーザーが未達基準を確認した上で明示的にリスクを許容している
    - `--force` 使用は `task.json.forced: true` として記録される旨を伝える
-4. gate が `passed_with_warnings`（`warning` 判定の criterion が残っている）場合も accept 自体はスクリプトが許可するが、**未解決の警告を要約提示してから**実行する。
+4. gate が `passed_with_warnings` の場合も accept 自体はスクリプトが許可する。ただし**未解決の項目を要約提示してから**実行する。この状態になるのは `warning` の criterion が残っているときである。`skipped` の criterion が1件でもあるときも同じ状態になる（判定していないものを `passed` にはしない）。`accept` は「N criteria nobody judged」の行で skip した criterion 名を出す。同じ名前が provenance.json の `skipped_criteria` にも残る。
 
 accept 成功後（squash merge → **staged**・コミットはしない）:
 - `git diff --staged` で確認できる旨と、コミットは人（またはユーザーの明示指示）が行う旨を案内する。

@@ -261,7 +261,7 @@ Next:
 Review /rig:go diff, then choose accept or discard.
 ```
 
-`failed` or `pending` on any criterion blocks `accept` outright (exit 1). `warning` doesn't block, but it's surfaced every time — no silently-swept warnings.
+`gate` itself answers through `$?` as well: 0 when the gate is decided (`passed` or `passed_with_warnings`), 1 when it failed, 2 when a `--set` contradicts the sensor backing that criterion, and **3 when no verdict was reached — any criterion still `pending`, or every one of them `skipped`** — because "not yet judged" is not "green", and 3 is the code `wb contract` and the orchestrator already use for it. `failed` or `pending` on any criterion blocks `accept` outright (exit 1). A gate whose criteria are *every one* `skipped` blocks it too: the gate judged nothing, and `accept` does not read that as satisfaction — `--force` is the one way past, recorded like any other force. `warning` doesn't block, but it's surfaced every time — no silently-swept warnings.
 
 ### Read-only verifier
 
@@ -377,9 +377,10 @@ Recommended:
   ✓ diff_summary_generated
   ✓ acceptance_gate_not_failed
   ✓ no_unrelated_diff
+  ✓ gate_judged_this_head
 ```
 
-`worktree_exists`, `base_branch_recorded`, and `diff_summary_generated` are **structural** — no `diff.md`, no accept, full stop, `--force` included. `acceptance_gate_not_failed` and `no_unrelated_diff` are judgment calls the gate makes, and `--force` can override them (recorded as `forced: true` — it doesn't disappear). Once past the checklist, `accept` squash-merges the task branch into your working tree as a **staged** change — never an auto-commit.
+`worktree_exists`, `base_branch_recorded`, and `diff_summary_generated` are **structural** — no `diff.md`, no accept, full stop, `--force` included. `acceptance_gate_not_failed`, `no_unrelated_diff` and `gate_judged_this_head` are judgment calls the gate makes, and `--force` can override them (recorded as `forced: true` — it doesn't disappear). `gate_judged_this_head` compares `evaluated_head` — the commit the gate recorded — against **both** the tip of the branch `accept` squashes and the worktree's HEAD, and all three have to be one commit. The branch is the one that decides: `accept` squashes the branch, not the worktree's HEAD. A run whose acceptance.json holds no head at all is unknown rather than matching. The remedy is always to re-run `gate`; forcing past it names all three shas in the audit entry. Once past the checklist, `accept` squash-merges the task branch into your working tree as a **staged** change — never an auto-commit.
 
 **`/rig:go discard <id> --yes`** always shows the changed-files list first; without `--yes` it's a dry-run preview. It deletes the worktree/branch — the run log (`.rig/runs/<task-id>/`) stays.
 

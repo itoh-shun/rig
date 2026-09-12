@@ -6,7 +6,7 @@
 
 これを取り違えると「recipe の一覧を全部埋めたのに accept できない」に必ず突き当たるので、先に書く。
 
-* **タスクのゲート＝要求の正本。** `build_acceptance()` が `TASK_TYPES[task_type]` → `GATE_PRESETS`（＋ `.rig/gates.json` の `extra_criteria`、＋ 組織ポリシー）から `acceptance.json` を組む。**recipe は一切参照しない。** この集合が完全かつ拘束的で、`rig-wb wb accept` は1件でも `pending`/`failed` があれば拒否する（記録された `--force` がある場合を除く。`warning`/`skipped` は通り、`passed_with_warnings` として残る）。recipe 側からこの集合に足すことも引くこともできない——`wb gate --set` はゲートに無い名前を受け付けない。
+* **タスクのゲート＝要求の正本。** `build_acceptance()` が `acceptance.json` を組む。素材は `TASK_TYPES[task_type]` → `GATE_PRESETS` で、`.rig/gates.json` の `extra_criteria` と組織ポリシーが加わる。**recipe は一切参照しない。** この集合が完全かつ拘束的で、`rig-wb wb accept` は1件でも `pending`/`failed` があれば拒否する（記録された `--force` がある場合を除く）。個々の criterion の `warning`/`skipped` は通り、`warning` が残れば `passed_with_warnings` になる。ただし**全件が `skipped`** の gate は何も判定していない。accept はこれも同じく拒否する。`gate` の終了コードは、決着した gate が 0、`failed` が 1、食い違う `--set` が 2 である。`pending` が残るうち、および全件 `skipped` のときは 3 になる。recipe 側からこの集合に足すことも引くこともできない——`wb gate --set` はゲートに無い名前を受け付けない。
 * **recipe の `acceptance[]`＝作業一覧。** そのフローの step が自分で証拠を作る基準だけを並べたもの（#486 の規則）。**accept の条件ではない。** 宣言どおりに埋めれば残りが `pending` で残るのが**期待される状態**で、`wb accept` はそのとき何が足りないかを名指しで断る。
 
 だから「recipe に15件並べる」は解決ではない。フローが証拠を作れない基準を宣言することになり、ゴム印か行き止まりを買う（#497 / #486）。
@@ -108,4 +108,4 @@ SKILL.md §6「acceptance-gate criterion 単位の合否表示」と同じ体裁
    → 型エラーを修正して再試行
 ```
 
-`failed` が1件でもあれば `patterns/acceptance-gate` の収束ループ（`max_retries` まで再試行 → 未達なら user エスカレーション）に従う。`warning`/`skipped` のみ（`failed` 0件）は gate を通す（`workbench.py accept` も許可するが `passed_with_warnings` として記録に残る）。
+`failed` が1件でもあれば収束ループに従う。`patterns/acceptance-gate` の規定で、`max_retries` まで再試行し、未達なら user へエスカレーションする。`failed` が0件で `passed` が1件以上あり、残りが `warning`/`skipped` なら gate は通る。`workbench.py accept` も許可し、`warning` が残れば `passed_with_warnings` として記録に残る。**全件が `skipped`** はこれに含まれない。判定が1件も無いので `gate` は 3 を返す。`accept` も `--force` 無しでは拒否する。1件でも `skipped` が残る gate は `passed` にならず `passed_with_warnings` になる。accept はその名前を「N criteria nobody judged」の行で出し、provenance.json の `skipped_criteria` にも残す。判定しなかったことは記録の読み手に見える。

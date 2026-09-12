@@ -366,7 +366,9 @@ def test_gate_integration_an_agreeing_rationale_survives_the_warning(tmp_path):
 
     reason = "reviewed - streaming.py lives in the sibling service, not this repo"
     r = cli(repo, wt_root, "gate", task_id, "--set", f"{SENSOR_CRITERION}=warning:{reason}")
-    assert r.returncode == 0, r.stdout + r.stderr          # agreement, so no refusal
+    # 3, not 0: agreement with the sensor means no refusal, and the gate is still PENDING
+    # because the rest of the criteria are unrecorded (`gate` returns 3 for that).
+    assert r.returncode == 3, r.stdout + r.stderr
     acc = json.loads((repo / ".rig" / "runs" / task_id / "acceptance.json").read_text(encoding="utf-8"))
     check = next(c for c in acc["checks"] if c["name"] == SENSOR_CRITERION)
     assert check["status"] == "warning"
@@ -376,7 +378,7 @@ def test_gate_integration_an_agreeing_rationale_survives_the_warning(tmp_path):
     assert check["by"] == "anchor-sensor"
 
     # and a later evaluation that finds the same thing leaves the note alone
-    assert cli(repo, wt_root, "gate", task_id).returncode == 0
+    assert cli(repo, wt_root, "gate", task_id).returncode == 3
     acc = json.loads((repo / ".rig" / "runs" / task_id / "acceptance.json").read_text(encoding="utf-8"))
     assert next(c for c in acc["checks"] if c["name"] == SENSOR_CRITERION)["note"] == reason
 
@@ -393,7 +395,7 @@ def test_gate_integration_default_repo_never_sees_the_criterion(tmp_path):
     cli(repo, wt_root, "review", task_id, "--set", "security=REJECT", "--body", f"security=@{body}")
 
     r = cli(repo, wt_root, "gate", task_id)
-    assert r.returncode == 0, r.stdout + r.stderr
+    assert r.returncode == 3, r.stdout + r.stderr   # nothing recorded yet: PENDING
     assert SENSOR_CRITERION not in r.stdout
     acc = json.loads((repo / ".rig" / "runs" / task_id / "acceptance.json").read_text(encoding="utf-8"))
     assert SENSOR_CRITERION not in [c["name"] for c in acc["checks"]]

@@ -22,7 +22,8 @@ from .state import (_diff_lines, audit_append, build_acceptance,
                     gate_status, git, load_access_control,
                     load_json, load_task, now_iso, parse_diff_md, reject, repo_root,
                     resolve_task_id, runs_dir, save_json, save_task, sign_provenance,
-                    task_lock, verify_provenance, warn, worktree_dirty)
+                    task_branch_tip, task_head, task_lock, verify_provenance, warn,
+                    worktree_dirty)
 from . import runtime as runtime_mod
 from .telemetry import record_task_run
 
@@ -133,11 +134,81 @@ def _is_untracked_state(entry: str) -> bool:
 
 def _task_head(root: pathlib.Path, task: dict) -> str | None:
     """The task branch tip. Approvals are bound to it, so a branch that moves after
-    an approval stops counting as approved (see govern.approval)."""
-    wt = task.get("worktree_path")
-    cwd = pathlib.Path(wt) if wt and pathlib.Path(wt).is_dir() else root
-    proc = git(["rev-parse", "HEAD"], cwd=cwd, check=False)
-    return proc.stdout.strip() or None if proc.returncode == 0 else None
+    an approval stops counting as approved (see govern.approval), and the acceptance
+    gate's verdict is bound to it for the same reason (`state.task_head`)."""
+    return task_head(root, task)
+
+
+def _gate_refusal_headline(status: str, failed_checks: list[str]) -> str:
+    """The first line of `accept`'s gate refusal, in the gate's own words.
+
+    Two shapes, because `skipped` has no unmet criterion to name: every check carries a
+    status, and the one it carries is the one the operator chose. Naming criteria that are
+    not unmet would read as a bug in the gate rather than as what happened, which is that
+    the gate was asked to judge nothing.
+    """
+    if status == "skipped":
+        return ("Cannot accept because every criterion in this task's acceptance-gate is "
+                "skipped: the gate judged nothing.")
+    return (f"Cannot accept because the acceptance-gate is {status} "
+            f"(unmet: {', '.join(failed_checks) or 'no_unrelated_diff'}).")
+
+
+def _sha(value: str | None, absent: str = "an unreadable ref") -> str:
+    return value[:12] if value else absent
+
+
+def _head_refusal_lines(task_id: str, acc: dict, branch: str | None,
+                        worktree_head: str | None, branch_tip: str | None) -> list[str]:
+    """Why `accept` will not spend this gate on these commits.
+
+    Four shapes, because the remedy is the same and the fact is not.
+
+    The one that matters most is the branch tip. `accept` squashes `task["branch"]`, so
+    that — not the worktree's HEAD — is the commit its verdict has to be about. A check
+    that asked only the worktree was measured to pass while the branch carried something
+    else entirely: detach the worktree at the judged sha, `git branch -f` the task branch
+    onto a commit the gate never saw, and the worktree is clean, its HEAD equals the
+    recorded head, and the squash applies the unmeasured commit.
+
+    The worktree HEAD is still compared, and its own disagreement with the branch tip is
+    its own refusal naming all three shas: a working tree that is not on the branch being
+    merged is not the change anyone reviewed, whichever of the two the gate happened to
+    measure. No recorded head at all is an older run, and "unknown" is the honest version
+    of that: rig cannot show a difference it never measured, and must not therefore report
+    a match.
+
+    All four comparisons are sha equality, so an amend that rebuilds an identical tree is
+    refused too. Re-running `gate` is the remedy for every one of them, and costs a
+    re-measurement rather than an argument about which commits are "the same".
+    """
+    evaluated_head, evaluated_tip = acc.get("evaluated_head"), acc.get("evaluated_branch_tip")
+    named = branch or "this task's branch"
+    if not evaluated_head:
+        first = ("Cannot accept because this task's acceptance.json records no head, so which "
+                 "commits the gate judged is unknown — a run from before the gate recorded one. "
+                 "rig treats that as unmet, not as a match.")
+    elif branch_tip is not None and worktree_head != branch_tip:
+        first = (f"Cannot accept because this task's worktree HEAD ({_sha(worktree_head)}), the "
+                 f"tip of {named} ({_sha(branch_tip)}) and the commit the gate judged "
+                 f"({_sha(evaluated_head)}) are not the same commit. accept squashes the branch, "
+                 f"not the worktree HEAD.")
+    elif branch_tip is not None and evaluated_head != branch_tip:
+        first = (f"Cannot accept because the acceptance-gate judged {_sha(evaluated_head)} and "
+                 f"{named}, which accept squashes, is at {_sha(branch_tip)}: the commits about to "
+                 f"be squashed are not the commits that were measured.")
+    else:
+        first = (f"Cannot accept because the acceptance-gate judged {_sha(evaluated_head)} and "
+                 f"this task's worktree is at {_sha(worktree_head)}: the commits about to be "
+                 f"squashed are not the commits that were measured.")
+    lines = [first]
+    if evaluated_tip:
+        lines.append(f"  The gate itself measured a detached worktree: at evaluation time its "
+                     f"HEAD was {_sha(evaluated_head)} and {named} was at {_sha(evaluated_tip)}, "
+                     f"so the verdict was never about the branch.")
+    lines.append(f"  Re-run `workbench.py gate {task_id}` so the verdict is measured against the "
+                 f"commits accept will apply.")
+    return lines
 
 
 def _semantic_diff_section(root: pathlib.Path, task: dict, names: list) -> list:
@@ -260,7 +331,34 @@ def _cmd_accept_locked(args: argparse.Namespace, root: pathlib.Path, task_id: st
     diff_summary_ok = diff_md.exists() and diff_md.read_text(encoding="utf-8").strip() != ""
     unrelated = next((c for c in acc["checks"] if c["name"] == "no_unrelated_diff"), None)
     unrelated_ok = (unrelated is None) or (unrelated["status"] in ("passed", "warning", "skipped"))
-    gate_ok = status in ("passed", "passed_with_warnings", "skipped")
+    # `skipped` is deliberately absent. It is not a third way of passing: `gate_status`
+    # answers it when every criterion was left `skipped`, which is a gate that judged
+    # nothing, and the receipt already calls that pair `accepted-without-gate`
+    # (`assurance.py`'s `_FINAL_STATUS`). Counting it as satisfaction made
+    # `--set <every criterion>=skipped` an unaudited way past the gate — no `forced: true`,
+    # no `.rig/audit.jsonl` entry, no waiver, and a provenance record that says the task
+    # was accepted cleanly. The reviewed-and-accepted-anyway decision has one door, and it
+    # is `--force`, which records all four.
+    gate_ok = status in ("passed", "passed_with_warnings")
+    # WHICH COMMITS THE VERDICT IS ABOUT. `accept` squashes the branch as it stands now;
+    # the gate judged the worktree as it stood when `gate` last ran. Nothing tied the two
+    # together, so a clean gate followed by another commit in the worktree carried an
+    # unmeasured change through accept under a verdict that never saw it — the sensors
+    # included. A run whose acceptance.json predates `evaluated_head` records no head at
+    # all, and that is unknown rather than equal: "the gate judged something" is not
+    # evidence that it judged this.
+    #
+    # This is a head-identity check and not a re-run: the gate's own answers, and the
+    # sensor authority behind them, are left exactly as `gate` wrote them.
+    evaluated_head = acc.get("evaluated_head")
+    worktree_head = _task_head(root, task)
+    # The ref the squash below actually resolves. A task with no branch recorded
+    # (`--no-worktree`) has nothing to squash and nothing to compare, so it keeps the
+    # worktree-HEAD comparison alone and is stopped further down by its own message.
+    branch_tip = task_branch_tip(root, task) if task.get("branch") else None
+    head_ok = bool(evaluated_head) and (
+        evaluated_head == branch_tip == worktree_head if task.get("branch")
+        else evaluated_head == worktree_head)
 
     # ── accept_requirements checklist (Phase 3: show all items first, then judge) ──
     hard = [
@@ -271,6 +369,7 @@ def _cmd_accept_locked(args: argparse.Namespace, root: pathlib.Path, task_id: st
     soft = [
         ("acceptance_gate_not_failed", gate_ok),
         ("no_unrelated_diff", unrelated_ok),
+        ("gate_judged_this_head", head_ok),
     ]
     print(f"## rig accept: {task_id} — accept_requirements")
     for name, ok in hard + soft:
@@ -314,15 +413,24 @@ def _cmd_accept_locked(args: argparse.Namespace, root: pathlib.Path, task_id: st
     # not a governance message about an approval they do not yet need.
     if soft_fail and not args.force:
         failed_checks = [c["name"] for c in acc["checks"] if c["status"] in ("failed", "pending")]
-        # The acceptance gate is the verdict, and this is rig delivering it.
-        reject(
-            f"Cannot accept because the acceptance-gate is {status} (unmet: {', '.join(failed_checks) or 'no_unrelated_diff'}).\n"
-            f"  Record the criteria you have judged with `workbench.py gate {task_id} --set <criterion>=<status>`.\n"
-            f"  A criterion a sensor backs is not one of them — `--set` is refused there: remove the\n"
-            f"  finding from the diff, re-run `gate`, and the same `--set` is then accepted because it\n"
-            f"  agrees with the measurement. The sensor records the finding or its absence, not the pass.\n"
-            f"  Or pass --force if you understand the risk (recorded in .rig/audit.jsonl and provenance.json)"
-        )
+        # The acceptance gate is the verdict, and this is rig delivering it. Each unmet
+        # requirement contributes its own reason, because they call for different moves:
+        # judge the criteria, narrow the diff, or re-run the gate over the head that is
+        # actually about to be squashed.
+        lines: list[str] = []
+        if not gate_ok or not unrelated_ok:
+            lines += [
+                _gate_refusal_headline(status, failed_checks),
+                f"  Record the criteria you have judged with `workbench.py gate {task_id} --set <criterion>=<status>`.",
+                "  A criterion a sensor backs is not one of them — `--set` is refused there: remove the",
+                "  finding from the diff, re-run `gate`, and the same `--set` is then accepted because it",
+                "  agrees with the measurement. The sensor records the finding or its absence, not the pass.",
+            ]
+        if not head_ok:
+            lines += _head_refusal_lines(task_id, acc, task.get("branch"),
+                                         worktree_head, branch_tip)
+        lines.append("  Or pass --force if you understand the risk (recorded in .rig/audit.jsonl and provenance.json)")
+        reject("\n".join(lines))
 
     # ── governance (v2; inert unless .rig/org.json + a policy layer exist) ──
     # Permission to accept, the approval quorum, and — when forcing — the right to
@@ -330,7 +438,8 @@ def _cmd_accept_locked(args: argparse.Namespace, root: pathlib.Path, task_id: st
     # anything is written or merged, so a refusal leaves the tree and the run-state
     # exactly as they were.
     unmet_criteria = sorted({c["name"] for c in acc["checks"] if c["status"] in ("failed", "pending")}
-                            | ({"no_unrelated_diff"} if "no_unrelated_diff" in soft_fail else set()))
+                            | {name for name in ("no_unrelated_diff", "gate_judged_this_head")
+                               if name in soft_fail})
     gov = govern_enforce.check_accept(root, task, bypassed=unmet_criteria,
                                       force=bool(soft_fail), head=_task_head(root, task))
     for line in gov.lines:
@@ -340,7 +449,10 @@ def _cmd_accept_locked(args: argparse.Namespace, root: pathlib.Path, task_id: st
         reject(f"governance: {gov.blocked}")
 
     if soft_fail:
-        warn(f"Accepting with unmet requirements overridden by --force ({', '.join(soft_fail)}). Recording forced: true in task.json")
+        warn(f"Accepting with unmet requirements overridden by --force ({', '.join(soft_fail)}). "
+             f"Recording forced: true in task.json. --force records no reason of its own — "
+             f'write one with `workbench.py note {task_id} "<why this was acceptable>"`, which '
+             f"lands in the run log beside this decision.")
         task["forced"] = True
         audit_append(root, {
             "ts": now_iso(),
@@ -352,11 +464,27 @@ def _cmd_accept_locked(args: argparse.Namespace, root: pathlib.Path, task_id: st
             "gate_status": status,
             "failed_checks": [c["name"] for c in acc["checks"]
                               if c["status"] in ("failed", "pending")],
+            # All three refs, always, and not only when they differ: an audit reading a
+            # forced accept has to be able to see which commits the verdict was measured
+            # against without going back to a worktree that may no longer exist.
+            # `evaluated_head` is REPORTED, not measured: acceptance.json is an ordinary
+            # file in a tree the task's own author can write, so it is what the gate says
+            # it judged. `branch_tip` and `worktree_head` are read from git here and now.
+            "evaluated_head": evaluated_head,
+            "worktree_head": worktree_head,
+            "branch_tip": branch_tip,
             "invoker": __import__("os").environ.get("RIG_INVOKER") or "direct",
         })
+    skipped_criteria = sorted(c["name"] for c in acc["checks"] if c["status"] == "skipped")
     if status == "passed_with_warnings":
         warns = [f"{c['name']} ({c.get('detail') or 'no detail'})" for c in acc["checks"] if c["status"] == "warning"]
-        warn("Accepting with unresolved warnings: " + " / ".join(warns))
+        # Skips ride the same line as warnings, because they are the same kind of fact —
+        # something this gate did not settle — and because naming them only in the criteria
+        # listing is how fourteen of them travelled under a `passed` unremarked.
+        unsettled = ([f"unresolved warnings: {' / '.join(warns)}"] if warns else []) + (
+            [f"{len(skipped_criteria)} criteria nobody judged: {', '.join(skipped_criteria)}"]
+            if skipped_criteria else [])
+        warn("Accepting with " + "; ".join(unsettled))
 
     if not task.get("worktree_path"):
         die("This task has no worktree (--no-worktree run). There is no diff to accept")
@@ -372,7 +500,16 @@ def _cmd_accept_locked(args: argparse.Namespace, root: pathlib.Path, task_id: st
             f"Commit them in the worktree before accepting (git -C {wt} add -A && git -C {wt} commit)"
         )
     branch = task["branch"]
-    ahead = git(["rev-list", "--count", f"{eff_base}..{branch}"], cwd=root).stdout.strip()
+    # ONE VALUE FROM THE CHECK TO THE SINK. `gate_judged_this_head` above resolved the
+    # branch to `branch_tip` and compared that sha with the gate's verdict; passing the
+    # NAME to the commands below would have each of them resolve it again, and everything
+    # between the check and the squash is a window in which the ref can move. Measured:
+    # a `git update-ref refs/heads/rig/<task> <evil>` during that window (~40ms, driven at
+    # a 0.25s delay) staged an unmeasured commit with rc=0 and no audit line, because the
+    # sha the check approved and the sha `git merge --squash` resolved were two reads.
+    # The name is kept for the messages, where it is what the operator recognises.
+    squash_ref = branch_tip or branch
+    ahead = git(["rev-list", "--count", f"{eff_base}..{squash_ref}"], cwd=root).stdout.strip()
     if ahead == "0":
         die(f"branch {branch} has no commits on top of base (no diff to accept)")
 
@@ -391,7 +528,7 @@ def _cmd_accept_locked(args: argparse.Namespace, root: pathlib.Path, task_id: st
         )
 
     # (3) Squash merge into the main working tree (no commit = the final decision is an explicit human/model action)
-    proc = git(["merge", "--squash", branch], cwd=root, check=False)
+    proc = git(["merge", "--squash", squash_ref], cwd=root, check=False)
     if proc.returncode != 0:
         # Why the squash failed decides what the operator should do next, and git answers
         # that on two separate channels. A content conflict prints "CONFLICT (content): …"
@@ -489,6 +626,10 @@ def _cmd_accept_locked(args: argparse.Namespace, root: pathlib.Path, task_id: st
         "forced": bool(task.get("forced")),
         "checks": sorted([{"name": c["name"], "status": c["status"]} for c in acc["checks"]],
                          key=lambda c: c["name"]),
+        # Derivable from `checks`, and listed anyway: a reader asking "what did nobody
+        # judge?" should not have to filter a fifteen-entry array to find out, and this is
+        # the field a conformance check or a later audit can read by name.
+        "skipped_criteria": skipped_criteria,
     }
     signature = sign_provenance(root, provenance_record)
     save_json(d / "provenance.json", {"record": provenance_record, "signature": signature, "algo": "HMAC-SHA256"})
