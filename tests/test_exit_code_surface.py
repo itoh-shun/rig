@@ -865,6 +865,38 @@ def test_specific_bench_exits_two_when_it_was_asked_for_something_it_cannot_run(
     assert "invalid choice" in result.stderr
 
 
+# ── specific: validate (0 / 2) ───────────────────────────────────────────────
+def test_specific_validate_refuses_an_unknown_flag_instead_of_validating(rig_cli, tmp_path):
+    """Measured before it was fixed: `rig-wb validate --bogus` dropped the flag, walked
+    the tree, printed 92 lines ending in `PASS: 71 / WARN: 15 / FAIL: 0` and exited 0 in
+    1.4 seconds. A CI step reading `$?` got "no FAIL" for a command it had misspelt.
+
+    Both halves are asserted because either alone is weak. The 2 says rig refused; the
+    absent report says it refused *before doing the work*, which is what separates this
+    from a validator that ran and happened to find something. The control arm underneath
+    is the same command one flag different: `--help` still exits 0, so the 2 belongs to
+    the unknown flag and not to the word `validate`."""
+    result = rig_cli("validate", "--bogus", cwd=tmp_path)
+    context = (f"--- stdout ---\n{result.stdout}\n--- stderr ---\n{result.stderr}")
+
+    assert result.returncode == ERROR, context
+    assert result.returncode != REJECTED
+    assert "Traceback" not in result.stderr, context
+    # One line, on stderr, in the form gh-check already uses for the same condition.
+    said = [line for line in result.stderr.splitlines() if line.strip()]
+    assert len(said) == 1, context
+    assert said[0].startswith("[ERROR] validate: unknown flag"), context
+    assert "--bogus" in said[0], context
+    assert "usage: rig-wb validate [selftest]" in said[0], context
+    # Nothing was read: no report header, no tally, no result line.
+    assert "rig --validate report" not in result.stdout, context
+    assert "PASS: " not in result.stdout and "[PASS]" not in result.stdout, context
+
+    helped = rig_cli("validate", "--help", cwd=tmp_path)
+    assert helped.returncode == OK, helped.stdout + helped.stderr
+    assert helped.stdout.startswith("usage: rig-wb validate"), helped.stdout
+
+
 # ── the record of what could not be driven ───────────────────────────────────
 def test_specific_the_unpinnable_codes_are_recorded_with_the_reason_they_are_unpinnable():
     """Not a behaviour assertion — a guard on the note above.

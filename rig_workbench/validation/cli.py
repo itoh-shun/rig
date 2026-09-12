@@ -27,7 +27,11 @@ of them.
 **Words leave through the `Presenter`.** No function here calls `print`: the report
 header, every accumulated result line, the tally and the verdict all go through `out`, and
 so does the one line a missing PyYAML produces. Which stream a line goes to is unchanged —
-everything this file said went to stdout and still does, `out.out`. A module-level adapter
+everything this file said went to stdout and still does, `out.out`. The one line this file
+did not say before goes to `out.err`: the refusal of an unknown flag, in the form
+`gh_requirement.py` already uses for the same condition (`[ERROR] <command>: unknown flag
+…`), on stderr so a caller piping the report is not handed a usage line in the middle
+of it. A module-level adapter
 reached for from inside any of them would be the same global under a different name, and
 the point of the port is that a caller (a test, an embedding harness) can hand in a
 different one.
@@ -81,7 +85,7 @@ USAGE = (
     "  selftest    run the golden self-verification of the orchestrator instead",
     "  -h, --help  print this and exit, without running any check",
     "",
-    "exit: 0 = no FAIL (there may be WARNs) / 1 = at least one FAIL",
+    "exit: 0 = no FAIL (there may be WARNs) / 1 = at least one FAIL / 2 = unknown flag",
 )
 
 
@@ -107,6 +111,22 @@ def cmd_validate(argv: list[str], *, out: Presenter = ConsolePresenter(),
         for line in USAGE:
             out.out(line)
         return 0
+
+    unknown = [arg for arg in argv if arg.startswith("-")]
+    if unknown:
+        # Measured before this landed: `rig-wb validate --bogus` dropped the flag, walked
+        # the tree, printed 92 lines of report and exited 0 — a status that says "no FAIL"
+        # to a CI step that asked for something this command does not have. Answered where
+        # `--help` is answered, above `require_yaml` and above any read, so a misspelt flag
+        # costs a line instead of a second and cannot be mistaken for a verdict.
+        #
+        # FLAGS ONLY, on purpose. `selftest` is the one word this command takes and a bare
+        # run is the other shape; a token that is neither is left exactly as it was (the
+        # validator runs), because nothing measured says a stray positional is a typo
+        # rather than a caller's habit. A leading `-` cannot be either of those two.
+        flags = ", ".join(repr(flag) for flag in unknown)
+        out.err(f"[ERROR] validate: unknown flag {flags}; {USAGE[0]}")
+        return 2
 
     try:
         # The pillar's one optional dependency. This used to be a `try/except ImportError`

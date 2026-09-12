@@ -476,6 +476,7 @@ CLI_CAPABILITIES: tuple[Capability, ...] = (
         exit_codes=(
             ExitCode(code=0, meaning="no FAIL, though there may be WARNs to address"),
             ExitCode(code=1, meaning="at least one check failed"),
+            ExitCode(code=2, meaning="an unknown flag; nothing was read and nothing checked"),
         ),
     ),
     # ── the nineteen `_orch_delegates` reachable only through orchestrate ────
@@ -842,7 +843,10 @@ CLI_CAPABILITIES: tuple[Capability, ...] = (
             Flag(name="--note", type="string", help="the reason, recorded with the decision"),
             Flag(name="--actor", type="string", help="decide as this actor instead of the ambient one"),
         ),
-        exit_codes=(_OK, ExitCode(code=1, meaning="the decision was refused: quorum, role or freshness"), _ERROR),
+        exit_codes=(_OK, ExitCode(code=1, meaning="the decision was refused: quorum, role or freshness"),
+                    _ERROR,
+                    ExitCode(code=3, meaning="the decision was recorded and the run is still parked: "
+                                             "quorum unmet, or denied")),
     ),
     Capability(
         id="next",

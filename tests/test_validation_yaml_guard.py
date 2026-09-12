@@ -123,6 +123,27 @@ def test_the_shell_reports_it_on_stdout_and_exits_one(no_pyyaml: None) -> None:
     assert seen.err_lines == []
 
 
+def test_an_unknown_flag_is_refused_before_the_dependency_guard(no_pyyaml: None) -> None:
+    """The ORDER of the two refusals, which nothing else in the suite can see.
+
+    `--bogus` and a missing PyYAML are both true here, and only one answer can come back.
+    The unknown flag is checked first, so it is 2 (bad usage) and not 1 (this machine
+    cannot validate): a caller who misspelt a flag gets told that, on any machine. Move
+    the check below `require_yaml()` and every other assertion in this repository still
+    passes — the report is skipped either way — while this one flips to 1 and says which
+    of the two guards moved.
+
+    The line also goes to the stream the refusal uses, not the one the dependency message
+    uses, so the two are told apart by more than their status.
+    """
+    seen = Recorder()
+    assert cmd_validate(["--bogus"], out=seen) == 2
+    assert seen.out_lines == []
+    assert len(seen.err_lines) == 1
+    assert seen.err_lines[0].startswith("[ERROR] validate: unknown flag")
+    assert MESSAGE not in seen.err_lines
+
+
 def test_the_selftest_verb_is_refused_the_same_way(no_pyyaml: None) -> None:
     """`validate selftest` parses frontmatter too, so the guard is in front of it."""
     seen = Recorder()

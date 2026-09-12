@@ -919,11 +919,26 @@ branch の先端と突き合わせる。
 | `_usage_for` が `models`・`probe`・`queue` で module docstring に落ちる | 3 本とも 89 行を印字する。ほかの 18 本は 1〜9 行。落ちる原因は slicer ではなく、slicer が読む docstring に 3 本の記載が無いこと | 閉じた。`fa65ef3` が docstring に 3 本を足した。`models` 4 行・`probe` 4 行・`queue` 6 行になり、登録済み 21 動詞すべてに usage がある。最長は `plan` の 9 行。未知の動詞への fallback は残した |
 
 **直さずに記録した 4 件。** どれもレビューが本 run の外だと判断したもので、実測だけ置く。
+先頭の 2 件は後続の run が閉じた。
 
-- `rig-wb validate --bogus` は未知の flag を黙って捨てる。92 行の検証を最後まで走らせ、exit 0 を返す。本 run が先回りして答える形にしたのは `--help` だけで、ほかの未知語はいま素通りである。
-- `orchestrate/cli.py:103` の Exit code の行に 2 が無い。書いてあるのは `0=success / 1=error or ESCALATE / 3=run parked at a human gate` である。本 run が足した拒否はすべて 2 で終わる。行のほうが実装に追いついていない。
+- `rig-wb validate --bogus` は未知の flag を黙って捨てる。92 行の検証を最後まで走らせ、exit 0 を返す。1.4 秒。`python3 scripts/validate.py --bogus` も同じ。閉じた。`9d280bf` が `--help` と同じ位置で答えるようにした。`require_yaml` の手前である。いまは stderr に 1 行だけ出す。`[ERROR] validate: unknown flag '--bogus'; usage: rig-wb validate [selftest]` である。`gh-check` と同じ書式で、exit は 2 である。木は読まない。見るのは先頭が `-` の token だけで、`selftest` と引数無しの実行は変えていない。
+- `orchestrate/cli.py:103` の Exit code の行に 2 が無い。書いてあるのは `0=success / 1=error or ESCALATE / 3=run parked at a human gate` である。本 run が足した拒否はすべて 2 で終わる。行のほうが実装に追いついていない。閉じた。`6d990d4` が 2 を足し、`92ee659` が 3 の但し書きを直した。3 を割り当てた動詞は `run`・`next`・`resume`・`approve` の 4 本である。能力表が 3 を宣言し、かつ gated run で実際に 3 が返ったものを採った。suite が測っているのはこのうち `next` の 1 本で、残る 3 本は本 run が手で叩いて確かめた。`approve` は記録した判断でまだ park のままのとき（quorum 未達、または deny）に 3 になる。`check` は入っていない。0 以外の exit は 1 だけで、park した step では `[ERROR] no running step` と出して 1 を返す。`AWAIT_APPROVAL` の尾は `resume` と `next` のものである。`tests/test_capability_registry_vs_surfaces.py` が `COMMANDS` と docstring を ast で読み、両方向で突き合わせる。実プロセスで観測した status がこの行に無ければ落ちる。行が名指しした動詞に、実測にも能力表にも無い status を負わせていても落ちる。
 - `_state_path` は先頭が `-` の token を flag と見て既定値へ落とす。`-state.json` という名前のファイルは指定できなくなった。実在しない形なので直していない。
 - `scripts/orchestrate.py` 側でこの拒否を固定しているのは `status` と `resume` の 2 本だけである（`tests/test_cli_smoke.py`）。ほかの 4 本は `rig-wb` の綴りで固定してある。同じ関数に同じ引数で入るので、経路ごとの二重掛けはしていない。
+
+**本節が記録していなかった 2 件。** 同じレビューが `rig_workbench/workbench/secrets.py` に
+見つけた。2 件とも閉じた。実測は直す前と後の両方を実プロセスで取っている。
+
+- `ALLOW_DIR_PARTS` の `.git` は 2 つの入口のどちらからも届かない。木側は `scan_paths` のディレクトリ分岐が `WALK_SKIP_DIRS` で `.git` を先に捨てる。`.git/` に置いた値は finding がそもそも出ない（同じ中身を `plain.txt` に置けば出る）。diff 側は git が自分のディレクトリの中のパスを名指せない。`add -f` のあとでも `git diff` も `git ls-files` も `.git/...` を渡さない。届く入口は 3 つ目、コマンドラインで名指しされたファイルだけである。`scan_paths` はそれを `scan_file` へ直接渡し、`WALK_SKIP_DIRS` を見ない。閉じた。`ac29294` が entry を外した。ここだけ挙動が変わる。高エントロピーの値を入れた `.git/x` を `rig-wb wb scan-secrets .git/x` に渡す。前は finding 0 件で exit 0 だった。いまは `high_entropy` 1 件で exit 1 である。名前付きパターン（`AKIA…` や PEM header）は前後どちらでも報告される。entry が黙らせていたのはエントロピー判定だけだからである。本リポジトリ自身の木を entry 有り無しで走らせて findings は同一だった（`ac29294` 時点の木で 263 件。件数は木に応じて動く。一致することは動かない）。`node_modules` は残す。vendored tree を commit したリポジトリなら `node_modules/...` が diff 側へ実際に届くからである。
+- `shared_diff_cache` の docstring は "Never nest-sensitive" と書いていた。実際には内側の `with` が exit で `_diff_memo = None` を無条件に書き、外側の memo を落としていた。stale ではなく uncached への劣化である。閉じた。`bb9e013` が外側の memo を覚えて戻す 1 行に替えた。同じ (worktree, base) で外・内・外と読むと git の subprocess は 2 回で、直す前は 3 回だった。最外の `with` を出ればキャッシュが消える点は変えていない。
+
+**本 run が直さずに記録する 5 件。** どれも上の 4 件のレビューが見つけたもので、実測だけ置く。
+
+- `python3 scripts/orchestrate.py --help` は exit 1 を返す。同じ docstring の Exit code の行は 1 を「error or ESCALATE」と書いている。help の要求はどちらでもない。
+- `rig-wb next --help` はこの Exit code の行を見せない。`_usage_for` が動詞の節だけを切り出すので、末尾の行はどの動詞の `--help` にも出ない。行が出るのは引数無しの `scripts/orchestrate.py` である。
+- `rig-wb validate -- --bogus` は POSIX の option 終端 `--` も未知の flag として拒否する。先頭が `-` の token を数えるだけだからである。
+- `rig-wb validate bogus` は未知の positional をいまも黙って捨て、検証を最後まで走らせる。設計どおりだが、その「変えていない」を固定する test は無い。
+- `gh-check` の能力表にも同じ文面の `code=2` がある。場所は `rig_workbench/registry/entries_cli.py:412` で、`validate` の 2 と綴りまで同じである。ただしこの 2 を実プロセスで観測している test は無い。宣言を消しても落ちるものが無い。
 
 #### 本節で直した、本ブリーフ自身の数値
 

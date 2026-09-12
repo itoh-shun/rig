@@ -100,7 +100,10 @@ The model does each step's "work", but this runner decides "what happens next":
   selftest                           Self-verification of determinism (proves same input -> same transitions)
 
 Dependencies: Python3 + PyYAML (same as validate.py).
-Exit code 0=success / 1=error or ESCALATE / 3=run parked at a human gate (`run` only; not a failure).
+Exit code 0=success / 1=error or ESCALATE / 2=refused before the run moved (bad usage, an
+unreadable or missing run-state, a BLOCKED state) / 3=parked at a human gate, awaiting an
+approval. Returned by `run`, `next`, `resume`, and by `approve` when the decision it
+records leaves the run parked (quorum unmet, or denied). 3 is not a failure.
 """
 
 import sys

@@ -724,6 +724,51 @@ acceptance gate, a governance block (permission, quorum, a missing waiver) and a
 the caller's side — it already translated the old 1 into its own `execution-error` 2, and
 now simply passes the same code through while still printing the result record.
 
+**Four debts the architecture reviews recorded and left open, each reproduced with the real
+CLI before it was touched.**
+
+- **`rig-wb validate` refuses an unknown flag instead of validating anyway.** Measured:
+  `rig-wb validate --bogus` (and `python3 scripts/validate.py --bogus`) dropped the flag,
+  walked the tree, printed 92 lines ending in `PASS: 71 / WARN: 15 / FAIL: 0` and exited 0
+  in 1.4 seconds — "no FAIL" for a command the caller had misspelt. Now one
+  `[ERROR] validate: unknown flag '--bogus'; usage: rig-wb validate [selftest]` on stderr
+  and exit 2, in the form `gh-check` already uses, and answered where `--help` is
+  answered: above the PyYAML guard and above any read.
+  Flags only — `selftest` and the bare run are untouched, and a stray positional still runs
+  the validator as before.
+- **The orchestrator's `--help` names every status its verbs return, and no others.** The
+  line read `0=success / 1=error or ESCALATE / 3=run parked at a human gate (run only)`
+  while `check`, `next`, `verdict`, `approve` and `init` were each observed returning 2.
+  It now names 2, and attributes the parked 3 to the four verbs the capability table
+  declares it for and a gated run returned it from: `run`, `next`, `resume`, and `approve`
+  when the decision it records leaves the run parked (quorum unmet, or denied). The suite
+  measures one of those four — the parked 3 it drives comes out of `next` — and the other
+  three were driven by hand on a gated run for this entry. `check` is not one of them: its
+  only non-zero exit is 1, and at a parked step that is what it returns
+  (`[ERROR] no running step`); the `AWAIT_APPROVAL` tail that shape suggests belongs to
+  `resume` and `next`. The registry now also declares `approve`'s 3. The test reads the
+  `COMMANDS` table and the docstring out of `orchestrate/cli.py` and compares both ways —
+  a status a real process returned that the line omits, and a verb the line blames for a
+  status neither the measurements nor the capability table give it.
+- **The `.git` entry is out of the secret scanner's entropy allowlist, and one caller
+  changes.** Neither feed could reach it: the tree walk drops `.git` before opening a file
+  (a planted credential there yields no finding at all), and git never hands the diff side
+  a path inside its own directory, even after `add -f`. The third way in does reach it —
+  a file named on the command line, which `scan_paths` sends straight to `scan_file`.
+  Measured there: `rig-wb wb scan-secrets .git/x`, where `x` holds a high-entropy token,
+  reported nothing and exited 0; it now reports one `high_entropy` finding and exits 1 —
+  more findings, never fewer. Named patterns (`AKIA…`, PEM headers) were reported under
+  `.git/` before and after: the allowlist only ever silenced the entropy heuristic.
+  Scanning this repository's own tree with and without the entry gives the same findings
+  on both runs (263 on the run's own tree at `ac29294`; the number moves with the tree,
+  the equality does not). `node_modules` stays: a committed vendored tree does reach the
+  diff side.
+- **`shared_diff_cache` is nest-safe, as its docstring already claimed.** An inner `with`
+  set the memo to `None` on exit and left the enclosing scope uncached for the rest of its
+  life — degraded, never stale. The enclosing memo is restored instead: outer-inner-outer
+  over one (worktree, base) is 2 git subprocesses now and was 3, and leaving the outermost
+  scope still turns the cache off entirely.
+
 ### Security
 
 **Typing `--allow-project-packs` as text was consent to run project-tier pack assets.**

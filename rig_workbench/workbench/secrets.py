@@ -22,7 +22,7 @@ Patterns covered (kind → shape):
 The entropy detector carries a path allowlist for the obvious false-positive
 factories — lockfile hashes and vendored trees: *.lock, *.sum,
 package-lock.json / npm-shrinkwrap.json / pnpm-lock.yaml, and anything under
-node_modules/ or .git/. It also carries two content rules, independent of path,
+node_modules/. It also carries two content rules, independent of path,
 each keyed on the value's OWN key rather than on a word near it: a 64/128-hex token
 whose key is a digest key (sha256 / sha512 / *_sha256 / digest / checksum / …), and a
 40-hex token whose key is either a digest key or a git-id key (commit / blob / tree /
@@ -98,14 +98,17 @@ _IDENTIFIER_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 # Entropy-detector allowlist: lockfile hashes / vendored trees are high-entropy
 # by construction and never secrets. Named patterns are NOT silenced by these.
 #
-# Matched at ANY DEPTH, which is a rule only two directory names earn. `node_modules`
-# and `.git` are reserved by the tools that create them: a directory of either name is
-# that tool's tree wherever it sits, and its contents are not the repository's prose.
-# A name a project might choose for itself does not belong here — see
-# ALLOW_PATH_PREFIXES.
+# Matched at ANY DEPTH, a rule a directory name earns only by being reserved by the tool
+# that creates it: a `node_modules` is npm's tree wherever it sits, and its contents are
+# not the repository's prose. A name a project might choose for itself does not belong
+# here — see ALLOW_PATH_PREFIXES.
+#
+# `.git` is deliberately NOT here: the walk never reaches it (WALK_SKIP_DIRS) and git never
+# emits a `.git/...` path, so the entry reached only a file named on the command line, which
+# is now scanned like any other (tests/test_secret_scan.py).
 ALLOW_SUFFIXES = (".lock", ".sum")
 ALLOW_BASENAMES = ("package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml")
-ALLOW_DIR_PARTS = ("node_modules", ".git")
+ALLOW_DIR_PARTS = ("node_modules",)
 
 # Anchored at the repository root rather than matched at any depth, unlike
 # ALLOW_DIR_PARTS. `evidence` and `corpora` are too ordinary a directory name to
@@ -159,8 +162,8 @@ ALLOW_PATH_PREFIXES = (("evals", "evidence"), ("skills", "engine", "corpora"))
 #:
 #: Outside a rig checkout the answer is always "no exemption", never "some other
 #: exemption": over-reporting is the safe direction for a scanner whose findings block an
-#: accept. `node_modules` and `.git` are unaffected — those names are reserved by the
-#: tools that make them, in any repository.
+#: accept. `node_modules` is unaffected — that name is reserved by the tool that makes
+#: it, in any repository.
 #:
 #: THE MARKER IS COST, NOT PROOF: two empty files with these names make
 #: `is_rig_checkout` true, and anyone who can create them in a scanned tree already has
@@ -608,14 +611,15 @@ _diff_memo: dict | None = None
 def shared_diff_cache():
     """Within this context, worktree_diff_text/untracked_files results are
     memoized per (worktree, base) so the sensor batch of one gate evaluation
-    shells out once instead of once per sensor. Never nest-sensitive: the memo
-    is dropped on exit."""
+    shells out once instead of once per sensor. Nest-safe: the enclosing memo, if
+    there is one, is restored on exit rather than dropped."""
     global _diff_memo
+    previous = _diff_memo
     _diff_memo = {}
     try:
         yield
     finally:
-        _diff_memo = None
+        _diff_memo = previous
 
 
 def worktree_diff_text(wt: pathlib.Path, base_commit: str) -> str:
@@ -662,7 +666,7 @@ def scan_worktree_diff(wt: pathlib.Path, base_commit: str) -> list[dict]:
 
     The worktree is the repository git names these paths relative to, so it is also what
     decides whether ALLOW_PATH_PREFIXES applies: a task run against somebody else's
-    project gets `node_modules`/`.git` and the content rules, not rig's two prefixes.
+    project gets `node_modules` and the content rules, not rig's two prefixes.
     """
     rig = is_rig_checkout(wt)
     findings = scan_diff_text(worktree_diff_text(wt, base_commit), rig_checkout=rig)

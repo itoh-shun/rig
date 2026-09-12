@@ -21,7 +21,8 @@ import tempfile
 import pytest
 
 from rig_workbench.workbench.detection_corpus import corpus_root
-from rig_workbench.workbench.secrets import (ALLOW_PATH_PREFIXES,
+from rig_workbench.workbench.secrets import (ALLOW_DIR_PARTS,
+                                             ALLOW_PATH_PREFIXES,
                                              BASE64_ENTROPY_THRESHOLD,
                                              RIG_CHECKOUT_MARKERS,
                                              apply_secret_sensor,
@@ -107,10 +108,233 @@ def test_entropy_detector_skips_lockfile_hash_paths(tmp_path):
     for name in ("package-lock.json", "Cargo.lock", "go.sum"):
         (tmp_path / name).write_text(f'"integrity": "{sha512}"\n', encoding="utf-8")
     assert scan_paths([tmp_path]) == []
-    # path-part based allowlisting too (vendored / VCS trees)
+    # path-part based allowlisting too (vendored trees)
     assert entropy_allowlisted("node_modules/pkg/dist/index.js")
-    assert entropy_allowlisted(".git/objects/pack/whatever.idx")
     assert not entropy_allowlisted("src/settings.py")
+
+
+def test_the_git_directory_is_skipped_by_the_walk_not_exempted_by_the_allowlist(tmp_path):
+    """`.git` was an ALLOW_DIR_PARTS entry that neither feed could reach. Measured.
+
+    Walk: a credential planted at `.git/planted.txt` produces no finding at all, because
+    `scan_paths`' DIRECTORY branch drops any path with a WALK_SKIP_DIRS component before
+    it opens the file — so there was never a finding for the exemption to silence, and
+    the same bytes outside `.git/` are reported. Diff: git cannot name a path inside its
+    own directory, so `git ls-files` (and `git diff` with it) never hands the scanner
+    one, even after `add -f`. The third way in — a file named on the command line — did
+    reach it, and is the test below. `node_modules` is the entry that is NOT in this
+    position and stays: a repository that commits its vendored tree does hand `git diff`
+    real `node_modules/...` paths.
+    """
+    assert ALLOW_DIR_PARTS == ("node_modules",)
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    # Reuse SAMPLES rather than restate a token literal, as the tests above do: a fresh
+    # one would be a real-shaped credential added to this repository's own diff.
+    kind, sample = SAMPLES[0]
+    planted = f"key = {sample}\n"
+    (repo / ".git" / "planted.txt").write_text(planted, encoding="utf-8")
+    (repo / "plain.txt").write_text(planted, encoding="utf-8")
+
+    findings = scan_paths([repo])
+    assert [(f["path"], f["kind"]) for f in findings] == [("plain.txt", kind)], findings
+
+    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
+    listed = subprocess.run(["git", "-C", str(repo), "ls-files", "--others", "--cached"],
+                            capture_output=True, text=True, check=True).stdout.split()
+    assert not [path for path in listed if path.startswith(".git/")], listed
+
+
+def test_an_explicitly_named_file_under_git_is_scanned_like_any_other(tmp_path, monkeypatch):
+    """The one path the removed exemption was reachable on, and the one behaviour change.
+
+    `scan_paths` consults WALK_SKIP_DIRS in its directory branch only; a path handed in as
+    a FILE goes straight to `scan_file`, which asks `entropy_allowlisted` and nothing else.
+    So `rig-wb wb scan-secrets .git/x` was the single caller the entry ever answered.
+    Measured with the entry restored: no findings, exit 0. Without it: one `high_entropy`
+    finding, exit 1 — the direction this scanner's defaults are chosen in everywhere else
+    (see `entropy_allowlisted`'s `rig_checkout` note).
+
+    Named patterns were never affected either way: they are not what ALLOW_DIR_PARTS
+    silences, so an `AKIA…` under `.git/` reported before this change and reports now.
+    """
+    # Computed, never pasted, like every other fixture in this file.
+    token = hashlib.sha256(b"rig secret-scan explicit .git file fixture").hexdigest()
+    planted = tmp_path / ".git"
+    planted.mkdir()
+    (planted / "entropy.txt").write_text(f"value = {token}\n", encoding="utf-8")
+
+    found = scan_paths([planted / "entropy.txt"])
+    assert [f["kind"] for f in found] == ["high_entropy"], found
+
+    monkeypatch.setattr("rig_workbench.workbench.secrets.ALLOW_DIR_PARTS",
+                        ("node_modules", ".git"))
+    assert scan_paths([planted / "entropy.txt"]) == []
+    # The directory branch is the half that did not change: skipped by the walk, both ways.
+    assert scan_paths([tmp_path]) == []
+
+
+def test_the_diff_feed_carries_node_modules_and_never_carries_git(tmp_path, monkeypatch):
+    """Why one entry stays and the other went, measured on the feed the gate actually uses.
+
+    Both names are skipped by the tree walk, which is why neither shows up there — and why
+    a comparison run over a checkout says nothing about either: no walked path carries
+    such a component at all, so both arms are equal by construction.
+
+    The diff feed separates them. A repository that commits its vendored tree hands
+    `git diff <base>` real `node_modules/...` paths, so the exemption there is doing work:
+    drop it and the finding appears. `.git/` cannot arrive this way at all — git refuses
+    to track a path inside its own directory, `add -f` included — so the entry that was
+    removed had nothing to answer here, and removing it changes this feed not at all.
+    """
+    token = hashlib.sha256(b"rig secret-scan diff feed fixture").hexdigest()
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    env = dict(os.environ, GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=str(tmp_path / "none"))
+
+    def run_git(*argv, check=True):
+        return subprocess.run(["git", "-C", str(repo), *argv], check=check, env=env,
+                              capture_output=True, text=True)
+
+    subprocess.run(["git", "init", "-q", str(repo)], check=True, env=env)
+    run_git("config", "user.email", "t@example.invalid")
+    run_git("config", "user.name", "t")
+    (repo / "README").write_text("base\n", encoding="utf-8")
+    run_git("add", "-A")
+    run_git("commit", "-qm", "base")
+    base = run_git("rev-parse", "HEAD").stdout.strip()
+
+    vendored = repo / "node_modules" / "pkg"
+    vendored.mkdir(parents=True)
+    (vendored / "index.js").write_text(f"const k = '{token}'\n", encoding="utf-8")
+    (repo / ".git" / "planted.txt").write_text(f"value = {token}\n", encoding="utf-8")
+    run_git("add", "-A")
+    run_git("add", "-f", ".git/planted.txt", check=False)   # git refuses; asserted below
+    run_git("commit", "-qm", "vendor")
+
+    tracked = run_git("ls-files").stdout.split()
+    assert any(path.startswith("node_modules/") for path in tracked), tracked
+    assert not [path for path in tracked if path.startswith(".git/")], tracked
+
+    # As shipped: the vendored tree is exempt from the entropy heuristic, and nothing
+    # under `.git/` is there to be exempt from anything.
+    assert scan_worktree_diff(repo, base) == []
+
+    # Restoring the removed entry changes this feed not at all…
+    monkeypatch.setattr("rig_workbench.workbench.secrets.ALLOW_DIR_PARTS",
+                        ("node_modules", ".git"))
+    assert scan_worktree_diff(repo, base) == []
+
+    # …while dropping `node_modules` does change it, which is the difference between the
+    # entry that was removed and the one that stayed.
+    monkeypatch.setattr("rig_workbench.workbench.secrets.ALLOW_DIR_PARTS", ())
+    reachable = scan_worktree_diff(repo, base)
+    assert [(f["path"], f["kind"]) for f in reachable] == [
+        ("node_modules/pkg/index.js", "high_entropy")], reachable
+
+
+def test_the_shared_diff_cache_survives_a_nested_one(monkeypatch):
+    """An inner `with` used to drop the outer memo, and the docstring said it could not.
+
+    `_diff_memo = None` on exit was unconditional, so the outer scope came back uncached
+    for the rest of its life. Measured through the one thing the cache exists to save:
+    calls to git. Before the fix the third `worktree_diff_text` below was a third
+    subprocess; reverting `_diff_memo = previous` to `= None` fails this and nothing else.
+
+    (Restored: this pin was deleted by accident in 92ee659, which replaced the two
+    neighbouring `.git` tests by slicing between two function names and took the one
+    between them with it.)
+    """
+    from rig_workbench.workbench import secrets as secrets_module
+
+    calls = []
+
+    def counting_git(argv, cwd=None, check=False):
+        calls.append(tuple(argv))
+        return subprocess.CompletedProcess(argv, 0, stdout="diff text\n", stderr="")
+
+    monkeypatch.setattr(secrets_module, "git", counting_git)
+    worktree, base = pathlib.Path("/nowhere"), "abc1234"
+
+    with secrets_module.shared_diff_cache():
+        assert secrets_module.worktree_diff_text(worktree, base) == "diff text\n"
+        with secrets_module.shared_diff_cache():
+            # The inner scope is its own memo, and shells out for itself.
+            assert secrets_module.worktree_diff_text(worktree, base) == "diff text\n"
+        # …and the outer memo is still the outer memo.
+        assert secrets_module.worktree_diff_text(worktree, base) == "diff text\n"
+    assert len(calls) == 2, calls
+
+    # Leaving the outermost scope still turns the cache off entirely: an uncached caller
+    # that mutates the worktree between calls structurally cannot see a stale result.
+    assert secrets_module._diff_memo is None
+    assert secrets_module.worktree_diff_text(worktree, base) == "diff text\n"
+    assert len(calls) == 3, calls
+
+
+def test_a_nested_cache_restores_the_outer_memo_even_when_the_inner_scope_raises(monkeypatch):
+    """The `finally` is what restores, so the exception path is the one that proves it.
+
+    A sensor that raises inside a nested scope is the realistic version of this: the gate
+    catches it and carries on with the remaining sensors, and those run in the OUTER
+    scope, which has to still be cached. `contextlib.contextmanager` reaches the `finally`
+    on the exception path too, so the same one line covers both — asserted rather than
+    assumed, because a `yield` inside a `try` whose `finally` was written for the happy
+    path is exactly where that assumption goes wrong.
+    """
+    from rig_workbench.workbench import secrets as secrets_module
+
+    calls = []
+
+    def counting_git(argv, cwd=None, check=False):
+        calls.append(tuple(argv))
+        return subprocess.CompletedProcess(argv, 0, stdout="diff text\n", stderr="")
+
+    monkeypatch.setattr(secrets_module, "git", counting_git)
+    worktree, base = pathlib.Path("/nowhere"), "abc1234"
+
+    with secrets_module.shared_diff_cache():
+        assert secrets_module.worktree_diff_text(worktree, base) == "diff text\n"
+        with pytest.raises(RuntimeError):
+            with secrets_module.shared_diff_cache():
+                raise RuntimeError("a sensor gave up inside the nested scope")
+        assert secrets_module.worktree_diff_text(worktree, base) == "diff text\n"
+    assert len(calls) == 1, calls
+
+
+def test_three_scopes_deep_unwinds_one_level_at_a_time(monkeypatch):
+    """Two levels could pass with a single saved memo; three cannot.
+
+    A one-slot "previous" — a module-level variable rather than the per-call local the
+    fix uses — restores the middle scope's memo correctly and then hands the outermost
+    scope the middle one's. Each scope here shells out once, so the count says which memo
+    each level came back to: 3 calls, not 4.
+    """
+    from rig_workbench.workbench import secrets as secrets_module
+
+    calls = []
+
+    def counting_git(argv, cwd=None, check=False):
+        calls.append(tuple(argv))
+        return subprocess.CompletedProcess(argv, 0, stdout="diff text\n", stderr="")
+
+    monkeypatch.setattr(secrets_module, "git", counting_git)
+    worktree, base = pathlib.Path("/nowhere"), "abc1234"
+
+    with secrets_module.shared_diff_cache():
+        secrets_module.worktree_diff_text(worktree, base)
+        with secrets_module.shared_diff_cache():
+            secrets_module.worktree_diff_text(worktree, base)
+            with secrets_module.shared_diff_cache():
+                secrets_module.worktree_diff_text(worktree, base)
+            # back in the middle scope, still its own memo
+            secrets_module.worktree_diff_text(worktree, base)
+        # and back in the outermost, still its own
+        secrets_module.worktree_diff_text(worktree, base)
+    assert len(calls) == 3, calls
+    assert secrets_module._diff_memo is None
 
 
 def test_named_patterns_still_fire_inside_lockfiles():

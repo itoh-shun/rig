@@ -56,6 +56,7 @@ ACTION_ENTRYPOINT = REPO_ROOT / "scripts" / "rig-action-entrypoint.sh"
 COMMANDS_DIR = REPO_ROOT / "commands"
 RECIPES_DIR = REPO_ROOT / "skills" / "engine" / "recipes"
 EXIT_CODE_SURFACE = REPO_ROOT / "tests" / "test_exit_code_surface.py"
+ORCHESTRATE_CLI = REPO_ROOT / "rig_workbench" / "orchestrate" / "cli.py"
 
 #: Every declared command path to the id that declares it, for the longest-prefix match
 #: below. `command_path` is the words a person types, which is what all four surfaces
@@ -215,8 +216,8 @@ CLI_CALLERS = ("rig_cli", "rig_cli_json", "orchestrate")
 #: was deleted (say so in review) or the extractor no longer understands the shape.
 MEASURED_COMMANDS = frozenset({
     "bench", "design-constraints", "gh-check", "ja-lint", "next", "check", "init",
-    "verdict", "govern can", "govern init", "wb accept", "wb contract", "wb discard",
-    "wb gate", "wb gates", "wb new", "wb scan-secrets", "wb status",
+    "verdict", "govern can", "govern init", "validate", "wb accept", "wb contract",
+    "wb discard", "wb gate", "wb gates", "wb new", "wb scan-secrets", "wb status",
 })
 
 #: The distinct statuses those measurements produced. The point of pinning them is that a
@@ -437,6 +438,139 @@ def test_every_exit_code_a_real_process_returned_is_declared_by_the_capability_t
         "command a test can run and the table does not know about is a gap in "
         "rig_workbench/registry/entries_*.py."
     )
+
+
+#: Orchestrator verbs the capability table does not declare, so the second direction below
+#: has no registry entry to check an attribution against, with where the code IS measured.
+#: `resume` and `status` are reachable only through `scripts/orchestrate.py` (they are not
+#: in `rig_workbench/cli.py`'s `_orch_delegates`), which is why no capability describes
+#: them. Pinned as a tuple rather than skipped silently: a verb that quietly stops being
+#: declared has to be added here by hand, in a diff a reviewer reads.
+_VERBS_NO_CAPABILITY_DECLARES = {
+    "resume": "driven through the shim in tests/test_cli_smoke.py",
+    "status": "driven through the shim in tests/test_cli_smoke.py",
+    "ab": "no capability record; not measured for a status anywhere",
+    "mcp-scan": "declared as a `wb` subcommand, not as an orchestrator verb",
+}
+
+
+def _orchestrator_help() -> tuple[frozenset[str], frozenset[int], str, dict[int, set[str]]]:
+    """The orchestrator's verbs, the codes its `--help` names, the line, and who it blames.
+
+    The fourth value is the attribution the line makes: the verbs named inside each code's
+    own segment of the sentence. `3=parked at a human gate … (`run`, `next`, `resume`)`
+    attributes 3 to those three, and that claim is checkable in a way the bare set of codes
+    is not — a line can name every status a verb returns and still hand one of them to a
+    verb that cannot return it.
+
+    Read out of `rig_workbench/orchestrate/cli.py` with `ast` rather than by importing it:
+    the module pulls in every provider and the whole command table on import, and none of
+    that is needed to read a docstring. `COMMANDS` is the dispatch table `main()` looks a
+    verb up in, so its keys are exactly the words that reach a verb.
+    """
+    module = ast.parse(ORCHESTRATE_CLI.read_text(encoding="utf-8"), filename=str(ORCHESTRATE_CLI))
+    verbs = frozenset(
+        key.value
+        for node in module.body
+        if isinstance(node, ast.Assign) and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name) and node.targets[0].id == "COMMANDS"
+        and isinstance(node.value, ast.Dict)
+        for key in node.value.keys
+        if isinstance(key, ast.Constant) and isinstance(key.value, str)
+    )
+    doc = ast.get_docstring(module) or ""
+    lines = doc.splitlines()
+    start = next((i for i, line in enumerate(lines) if line.startswith("Exit code")), None)
+    assert start is not None, (
+        f"{ORCHESTRATE_CLI} no longer has a line beginning `Exit code` in its docstring, "
+        "which is the only place the orchestrator states what a status means. The "
+        "comparison below has nothing to read.")
+    block = [lines[start]]
+    for line in lines[start + 1:]:
+        if not line.strip():
+            break
+        block.append(line)
+    sentence = "\n".join(block)
+    # Each `<n>=` starts a segment and ends the previous one, so a backticked verb inside a
+    # segment is that code's claim and nothing else's.
+    marks = list(re.finditer(r"\b(\d+)=", sentence))
+    blamed: dict[int, set[str]] = {}
+    for i, mark in enumerate(marks):
+        end = marks[i + 1].start() if i + 1 < len(marks) else len(sentence)
+        segment = sentence[mark.end():end]
+        blamed[int(mark.group(1))] = {word for word in re.findall(r"`([a-z][a-z-]*)`", segment)
+                                      if word in verbs}
+    return verbs, frozenset(blamed), sentence, blamed
+
+
+def test_the_orchestrators_help_names_every_status_its_verbs_were_observed_to_return():
+    """The exit-code line in `orchestrate/cli.py`'s docstring, against real processes.
+
+    That line is what `scripts/orchestrate.py --help` prints and the only statement the
+    orchestrator makes about its own statuses. It read `0=success / 1=error or ESCALATE /
+    3=run parked at a human gate` while `check`, `next`, `verdict`, `approve` and `init`
+    were all observed returning 2 — a refusal a caller branching on that line would read as
+    a crash, or not branch on at all. It also said the 3 was `run` only, and the parked 3
+    this suite measures comes out of `next`.
+
+    Both directions, against two independent sources. Outward: every status
+    tests/test_exit_code_surface.py saw an orchestrator verb return has to be a status the
+    line names. Inward: every verb the line BLAMES for a status has to be able to return
+    it, judged by the measurement where there is one and by the capability table where
+    there is not — the line said `check` returns 3 for a whole release while `cmd_check`
+    has no exit-3 path at all and the registry declared it 0/1/2, and the outward
+    direction cannot see an over-claim like that, because an over-claim adds no code.
+
+    What is still not asserted is a code the line names and nothing attributes to a verb
+    (1, ESCALATE): the registry may declare a code no test drove, and so may this line."""
+    verbs, named, sentence, blamed = _orchestrator_help()
+    observed = observed_exit_codes()
+    measured = {command: codes for command, codes in observed.items() if command in verbs}
+
+    # The same guard the extraction gets above, for the same reason: an empty comparison
+    # passes against any line at all.
+    assert measured, (
+        "no orchestrator verb is measured by tests/test_exit_code_surface.py any more, so "
+        f"this compares nothing. The dispatch table holds {sorted(verbs)}; the scan reached "
+        f"{sorted(observed)}.")
+
+    missing = sorted((command, code) for command, codes in measured.items()
+                     for code in sorted(codes - named))
+    assert not missing, (
+        "the orchestrator's `--help` does not name statuses its own verbs returned to a "
+        "real process:\n"
+        + "\n".join(f"  `{command}` returned {code}" for command, code in missing)
+        + f"\n\nthe line says, in full:\n{sentence}\n\n"
+        f"and it names {sorted(named)}. The line is the half to fix: those codes were "
+        "observed by running the verb. Edit the docstring of "
+        "rig_workbench/orchestrate/cli.py, which is the text `--help` prints.")
+
+    # ── the other direction: what the line hands to a verb, that verb can return ──
+    overclaimed, unverifiable = [], []
+    for code, blamed_verbs in sorted(blamed.items()):
+        for verb in sorted(blamed_verbs):
+            capability_id = capability_for([verb])
+            if capability_id is None:
+                if verb not in _VERBS_NO_CAPABILITY_DECLARES:
+                    unverifiable.append((verb, code))
+                continue
+            backing = observed.get(verb, set()) | {
+                entry.code for entry in by_id(capability_id).exit_codes}
+            if code not in backing:
+                overclaimed.append((verb, code, sorted(backing)))
+    assert not overclaimed, (
+        "the orchestrator's `--help` hands a status to a verb that cannot return it:\n"
+        + "\n".join(f"  `{verb}` is named under {code}; measured and declared: {backing}"
+                     for verb, code, backing in overclaimed)
+        + f"\n\nthe line says, in full:\n{sentence}\n\n"
+        "Drive the verb and see for yourself before editing either side: if it really "
+        "returns the code, the registry entry in rig_workbench/registry/entries_*.py is "
+        "what is missing; if it does not, the line is claiming something untrue and the "
+        "verb's name comes out of it.")
+    assert not unverifiable, (
+        "the line names verbs no capability declares, and they are not in "
+        f"_VERBS_NO_CAPABILITY_DECLARES: {unverifiable}. Either the registry lost an "
+        "entry, or a verb was written into the line without anywhere that measures it.")
 
 
 def test_every_code_recorded_as_unreachable_is_still_declared_by_the_capability_it_names():
