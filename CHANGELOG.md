@@ -65,16 +65,18 @@ wiring the surfaces onto the table is the third.
 
 **Writing the surface down found things nobody had counted, and they are recorded rather than
 fixed.** Closing any of them changes behaviour, which is a stage-3 decision, so each is pinned as
-a measurement that fails if it silently changes. Thirteen of the thirty-seven top-level verbs are
-dispatchable and appear in no help text, no contract test and no README. Two more were worse than
-undocumented — `list` and `review`, delegated to the orchestrator and never registered there — and
-those two were removed rather than pinned; see Removed below. Not one top-level verb emits a frozen
-`rig.<name>/v<N>` id; all 22 capabilities that declare one are `wb` and `govern` sub-verbs. The
-stdio MCP server offers `rig_orchestrate_status`, which reaches a verb `rig-wb status` answers
-with `Unknown sub-command`. `govern` defines its own `EXIT_OK, EXIT_ERROR, EXIT_NONCONFORMANT =
-0, 1, 3`, so a govern error lands on the code `exitcodes.py` reserves for a verdict. And nine of
-the thirty `/rig:*` commands name no rig command at all — they hand their work to an instruction
-facet performed in the session — so roughly a third of the front door never reaches the CLI.
+a measurement that fails if it silently changes. Thirteen of the thirty-seven top-level verbs were
+dispatchable and appeared in no help text, no contract test and no README; they have since been
+audited one at a time, and nine of the thirteen now have a help line — see Changed below. Two more
+were worse than undocumented — `list` and `review`, delegated to the orchestrator and never
+registered there — and those two were removed rather than pinned; see Removed below. Not one
+top-level verb emits a frozen `rig.<name>/v<N>` id; all 22 capabilities that declare one are `wb`
+and `govern` sub-verbs. The stdio MCP server offers `rig_orchestrate_status`, which reaches a verb
+`rig-wb status` answers with `Unknown sub-command`. `govern` defines its own `EXIT_OK, EXIT_ERROR,
+EXIT_NONCONFORMANT = 0, 1, 3`, so a govern error lands on the code `exitcodes.py` reserves for a
+verdict. And nine of the thirty `/rig:*` commands name no rig command at all — they hand their
+work to an instruction facet performed in the session — so roughly a third of the front door never
+reaches the CLI.
 
 **Where a brick is looked for, declared once — and four claims corrected by measuring.**
 `rig_workbench/registry/bricks.py` declares every directory the resolver walks, per asset kind and
@@ -332,6 +334,40 @@ code and output schema is otherwise unchanged. Each of the seven is recorded in
 `tests/test_generated_parser_equivalence.py`, which renders both parsers in one process and compares
 all eleven screens byte for byte, so the next such change has to be a decision rather than a silent
 rewrite.
+
+**Nine verbs `rig-wb` had always accepted now appear in `rig-wb --help`: `approve`,
+`bench-invariance`, `check`, `fleet`, `init`, `next`, `otel`, `perf` and `verdict`.** Nothing about
+any of them changed — same flags, same output, same exit codes; what changed is that the help text
+stopped denying they exist. The thirteen undocumented verbs recorded above were audited one at a
+time, and for each of these nine some document or test already handed a person the `rig-wb <verb>`
+spelling: the READMEs print `$ rig-wb next` and `$ rig-wb approve architecture_review` as a
+walkthrough in both languages, and `rig-wb perf --check` as a line to paste into CI;
+`tests/test_exit_code_surface.py` drives the human gate as `rig-wb init / check / verdict / next`
+because, in its own words, that is "the spelling the installed CLI actually offers"; and
+`tests/test_cli_smoke.py` asserts `rig-wb verdict --help` byte-equal to the shim's. `fleet` is the
+plainest of the nine: `cli.py`'s comment says it was added to the dispatch table precisely because
+"the command that answers 'how are my projects doing' could not be run from the CLI people
+install", and then nobody wrote the line.
+
+**Four stay dispatchable and out of the help text on purpose, each with its reason recorded.**
+`graph` is machinery behind `rig-wb validate`'s check_graph and `/rig:catalog --graph`, both of
+which spawn `scripts/orchestrate.py graph --json`; `install-shim` installs an entry point for
+people who have none, so anybody able to type `rig-wb install-shim` already has what it provides;
+`models` configures the orchestrate surface for `run --auto-model`; and `probe` is cited eight
+times across the two READMEs, always as `scripts/orchestrate.py probe`, because the sandbox claim
+it evidences is about that process. The reason sits beside each name in `cli.py`'s `_orch_delegates`
+and in `tests/test_capability_registry_vs_cli.py`, whose literal is now those four and nothing
+else — so a fifth verb going undocumented fails a test instead of joining a remainder.
+
+**Nothing was dropped.** Unlike `list` and `review` below, each of the thirteen had a document or a
+test behind it, so the removal that closed those two was available to none of these. Two findings
+are recorded without being fixed, because fixing either changes behaviour. `models`, `probe` and
+`queue` answer `--help` with the orchestrator's whole ninety-line module docstring, since
+`_usage_for` has no entry to slice for any of the three — and `queue` is advertised, which is what
+makes it a defect owed a fix rather than a curiosity about two hidden verbs; the set is pinned in
+`tests/test_cli_smoke.py` so it cannot grow or be fixed silently. And `check` / `next` / `verdict`
+/ `init` answer a missing state file with a traceback before `exitcodes.guard` turns it into
+exit 2.
 
 ### Removed
 

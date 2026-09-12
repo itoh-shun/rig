@@ -235,24 +235,64 @@ def _run_bench(argv: list[str]) -> None:
 # Subcommands that already exist in orchestrate.py are listed in
 # `_orch_delegates` and passed straight to orchestrate's COMMANDS
 # (a thin wrapper is enough).
+#
+# Every name here is dispatchable. Whether it is also *advertised* is a separate question
+# and was audited one verb at a time: thirteen of these answered when typed and appeared in
+# no help text at all, and nine of them now have a line in `_print_help` because some
+# document or test already handed a person the `rig-wb <verb>` spelling. The four that do
+# not are marked below with the reason they stay unadvertised, and the same four are the
+# whole of `TOP_LEVEL_VERBS_MISSING_FROM_HELP` in
+# tests/test_capability_registry_vs_cli.py — hidden on purpose is a claim that test holds
+# to the exact set, so a fifth cannot join them by being forgotten.
 _orch_delegates = {
     # Cross-project rollup. It was reachable only through `scripts/orchestrate.py`, which is
     # the historical entrypoint rather than the installed one — so the command that answers
-    # "how are my projects doing" could not be run from the CLI people install.
+    # "how are my projects doing" could not be run from the CLI people install. That is the
+    # whole reason it was added here, and the help line it never got is now written.
     "fleet",
     "run",
     "plan",
     "runs",
+    # The orchestrator's step machine, and the spelling the suite already drives: the human
+    # gate in tests/test_exit_code_surface.py runs `rig-wb init / check / verdict / next`,
+    # and tests/test_cli_smoke.py pins `rig-wb verdict --help` byte-equal to the shim's.
+    # Help was the one surface that had not been told.
     "init",
     "check",
     "verdict",
     "queue",
     "selftest",
     "validate",
+    # ── dispatchable on purpose, advertised on purpose not ────────────────────────────
+    # Each of these four is reached through another rig surface under another spelling.
+    # Putting a second spelling in `rig-wb --help` would offer a way in that nothing behind
+    # the verb expects, so they are kept and left out, by name and with the reason.
+    #
+    # `graph`: machinery behind two other surfaces rather than a verb of its own.
+    # `rig_workbench/validation/catalog.py` spawns `scripts/orchestrate.py graph --json` as
+    # part of `rig-wb validate`'s check_graph, and `/rig:catalog --graph` is the entry a
+    # person is given. tests/test_validation_catalog_ports.py pins that argv.
     "graph",
+    # `models`: it configures the `orchestrate` surface for `run --auto-model`, which reads
+    # what `models --save` wrote. No document spells it `rig-wb models`, and that is the
+    # whole reason. Its `--help` also answers with the orchestrator's whole ninety-line
+    # docstring, but that is `_usage_for`'s fallback for a command the docstring never
+    # listed, not a property of this verb — the advertised `queue` does exactly the same
+    # (pinned in tests/test_cli_smoke.py), so it argues for fixing `_usage_for`, not for
+    # keeping anything hidden.
     "models",
+    # `probe`: every citation of it — README ×4 in each language, and the command's own
+    # printed examples — says `scripts/orchestrate.py probe`, because the claim being
+    # evidenced is about that process. `selftest` covers the same ground on this surface and
+    # is advertised. Its `--help` falls back the same way `models` does, and for the same
+    # reason: `_usage_for`, not the verb.
     "probe",
+    # `install-shim`: it installs an entry point for people who have none. Anybody able to
+    # type `rig-wb install-shim` already has the entry point it provides, so a top-level
+    # line would advertise a fix for a problem its reader cannot have — and a bare
+    # invocation writes into `~/.local/bin`, outside the repo.
     "install-shim",
+    # ──────────────────────────────────────────────────────────────────────────────────
     # `list` and `review` stood here for as long as this set has existed, and orchestrate's
     # `COMMANDS` never had either name. So `rig-wb list` was accepted, fell through to the
     # orchestrator, matched nothing, and answered with ninety lines of that module's
@@ -487,6 +527,36 @@ Sub-commands:
   plan <recipe> [--json] [--with ...]   orchestrate: show plan
   runs [--limit N] [--recipe R] [--html <path>]
                                         orchestrate: telemetry list / HTML dashboard
+  init <recipe> [--goal G]              orchestrate: create the run-state for a recipe and
+                                        print the first action. Not `govern init` (binds a
+                                        repository to an org policy) or `pack init`
+  check [<state.json>]                  orchestrate: run the current step's declared checks
+                                        and record pass/fail into the run-state
+  verdict [<state.json>] --by N --pass|--fail [--criterion N=PASS|FAIL|UNKNOWN]...
+                                        orchestrate: record an independent verifier's
+                                        judgement; every declared criterion must be answered
+  next [<state.json>]                   orchestrate: compute, apply and print the next
+                                        transition. exit 3 = parked on a human gate, which
+                                        is a person's turn and not a failure
+  approve <step-id> [<state.json>] [--deny] [--note "..."]
+                                        orchestrate: cast the human-gate decision that
+                                        releases a run parked in `awaiting_approval`.
+                                        Quorum, qualifying roles, separation of duties and
+                                        freshness come from the governance layer. Not
+                                        `govern approve`, which decides a workbench task's
+                                        accept gate rather than a recipe step
+  perf [--recipe R] [--check] [--baseline P] [--save-baseline P]
+                                        orchestrate: where runs spend their time, by phase.
+                                        --check is the regression gate (exit 1 past the
+                                        tolerance); provider latency is reported, never gated
+  otel [--recipe R] [--endpoint URL] [--dry-run]
+                                        orchestrate: project recorded runs to OpenTelemetry
+                                        over OTLP/HTTP. Off unless --endpoint is given or
+                                        [observability] enables it; --dry-run prints exactly
+                                        what would leave the machine
+  fleet --repos p1,p2,... [--anonymize] [--json]
+                                        orchestrate: per-persona detection rate across
+                                        several repositories' run logs (read-only)
   queue add|list|go|done ...            orchestrate: queue backend
   wb <cmd> ...                          workbench: new/step/gate/accept/discard/board/audit/stats/…
   dashboard [--out <html>] [--since ...]
@@ -535,6 +605,11 @@ Sub-commands:
   bench [--corpus PATH] [--tasks ...] [--provider X] [--runs N] [--out <json>]
                                         bare vs rig A/B benchmark
                                         (schema v2; paid providers require explicit opt-in)
+  bench-invariance --models m1,m2,... [--corpus PATH] [--provider X]
+                                        does the answer depend on which model ran it:
+                                        `agreement` across the panel and `safe_rate`
+                                        (clean_pass + safe_stop). paid providers require
+                                        the same explicit opt-in as `bench`
   baseline capture|compare|show ...     versioned benchmark baseline and scorecard
   eval validate|list|capture|run|compare|promote ...
                                         versioned regression evaluation cases

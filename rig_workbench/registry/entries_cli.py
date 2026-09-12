@@ -8,14 +8,24 @@ so seventeen of them are only reachable that way). Twenty plus seventeen is the 
 declared below, and the arithmetic is the derivation: no third path exists, and a verb that
 is in neither place prints `Unknown sub-command` and exits 2.
 
-**Thirteen of the thirty-seven are dispatchable and documented nowhere.** `rig-wb --help`
-lists twenty-four, and `tests/test_cli_surface_contract.py` freezes exactly that
-twenty-four as the surface. The other thirteen — `approve`, `bench-invariance`, `check`,
-`fleet`, `graph`, `init`, `install-shim`, `models`, `next`, `otel`, `perf`, `probe`,
-`verdict` — answer when typed and appear in no help text, no contract test, and no README
-the contract test reads. They are declared here at full weight. Whether each one is then
-added to `--help` or removed from `_orch_delegates` is a stage-3 decision; what this table
-fixes is that the decision can no longer be made by forgetting.
+**A few of the thirty-seven are dispatchable and advertised nowhere, on purpose.** What
+`rig-wb --help` lists is frozen as `TOP_LEVEL_SUBCOMMANDS` in
+`tests/test_cli_surface_contract.py`; what it leaves out is named verb by verb, each with
+its reason, as `TOP_LEVEL_VERBS_MISSING_FROM_HELP` in
+`tests/test_capability_registry_vs_cli.py`. Those two literals are where the counts live,
+and both are asserted against the real process. Restating either number here would put a
+third copy of one fact in a third file, which is the arrangement this module exists to end.
+Every verb declared below is in one list or the other, and one in neither fails that second
+test rather than passing quietly.
+
+Thirteen sat in the second list until they were audited one verb at a time. Nine moved into
+the first: for each, some document or test already handed a person the `rig-wb <verb>`
+spelling, so the omission was in the help text alone. None was dropped — every one of the
+thirteen had a document or a test behind it, unlike `list` and `review` below. The rest are
+reached through another rig surface under another spelling, and their entries stay here at
+full weight regardless: a verb a person can type is a capability whether or not help
+mentions it, and the reason for the silence belongs beside the silence rather than in place
+of the declaration.
 
 They were fifteen until `list` and `review` were taken out of `_orch_delegates`. Those two
 were worse than undocumented: the set had them, orchestrate's `COMMANDS` never did, so each

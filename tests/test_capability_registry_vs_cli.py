@@ -1,4 +1,4 @@
-"""The capability registry against the CLI people actually type (v3 stage 2, tasks 8 and 9).
+"""The capability registry against the CLI people actually type (v3 tasks 8, 9 and 10).
 
 Stage 2 declares every capability in `rig_workbench/registry/`, and stage 2 changes no
 execution. `rig-wb` still dispatches through the three hand-written registration mechanisms
@@ -17,8 +17,8 @@ against the registry and the CLI drifting apart while both are hand-maintained.
 registry by import, the CLI out of the real `python -m rig_workbench.cli` process (or, at the
 top level, out of the dispatcher's own source) — and compared for equality. A verb that
 appears on one side and not the other fails here with a message naming which side has it. The
-only literals in this file are the known gap of task 9, where the literals *are* the
-assertion.
+only literals in this file are the four verbs held out of help on purpose (task 10),
+where the literals *are* the assertion.
 
 **The reader below is deliberately a second, independent one.**
 `tests/test_cli_surface_contract.py` parses the same `--help` output for a different purpose,
@@ -48,22 +48,36 @@ subparser is probed by running it bare: if the process refuses it as incomplete,
 two-word paths are real; if it runs, the one-word path is real too and is kept alongside.
 Today exactly one verb in the whole surface is shaped that way, and it refuses.
 
-*The top level* — from source, not from help, and that difference is task 9's subject.
-`rig-wb --help` lists 24 verbs while 37 are dispatchable, so help cannot be the reader here.
+*The top level* — from source, not from help, and that difference is task 10's subject.
+Help lists every dispatchable verb but the four below, so it cannot be the reader here.
 `main()` in `rig_workbench/cli.py` is parsed with `ast`: every `sub == "<verb>"` branch plus
 every member of the `_orch_delegates` set it falls through to. `--version` is dropped, being a
 flag spelling of `version` rather than a verb of its own.
 
-## The known gap this file freezes (task 9)
+## What this file freezes now: four verbs hidden on purpose (task 9, then task 10)
 
-Thirteen top-level verbs are dispatchable and appear in neither `rig-wb --help` nor the
-frozen contract in tests/test_cli_surface_contract.py. They are written out as literals below
-and asserted to be *exactly* that set.
+It used to freeze a gap. A gap is what a set of dispatchable-but-undocumented verbs is while
+nobody has looked at them, and for two stages that was the honest word: thirteen verbs
+answered when typed and appeared in neither `rig-wb --help` nor the frozen contract in
+tests/test_cli_surface_contract.py, and the literal below existed so the number could not
+drift unnoticed.
 
-Reducing that number to zero is a stage-3 decision — either the thirteen join the help text,
-or the ones nobody wants are removed from the dispatcher — and it is not made here. Until it
-is made, this test exists so the number cannot drift unnoticed: a fourteenth undocumented
-verb, or one of these thirteen quietly disappearing, fails rather than passes silently.
+Task 10 looked at them, one at a time, and the literal changed meaning rather than size
+alone. Nine went into `--help` — for each of those nine, some document or test already
+handed a person the `rig-wb <verb>` spelling, so the omission was in the help text and
+nowhere else. Not one was removed: unlike `list` and `review` below, every one of the
+thirteen had a document or a test behind it, so the DROP that closed those two was available
+to none of these.
+
+What is left is four verbs — `graph`, `install-shim`, `models`, `probe` — that stay
+dispatchable and stay out of the help text on purpose, each because another rig surface
+reaches it under another spelling. They are a dict of verb to reason, not a set of names,
+so the reason is data this file asserts on rather than a comment that can be deleted with
+the suite still green; the set the equality check uses is derived from its keys. The
+assertion is doing a different job than it was: it no longer records an unmade decision, it
+holds a made one. A fifth verb going undocumented fails here, and so does one of these four
+being quietly advertised or quietly removed — and each one is also *run*, because nothing
+else in the suite spawns them, and hiding a verb must not be how it stops working.
 
 They were fifteen. Two of them, `list` and `review`, were worse than undocumented: both sat
 in `_orch_delegates` and neither was ever added to orchestrate's `COMMANDS`, so `rig-wb list`
@@ -115,13 +129,52 @@ SUBPROCESS_TIMEOUT = max(
 # nesting", at the group level and one level further down, and it is the only thing read.
 SUBPARSER_CHOICES = re.compile(r"\{([^{}]+)\}\s+\.\.\.")
 
-# The thirteen of task 9. Dispatchable, documented nowhere. See the module docstring: this is
-# a recorded gap awaiting a stage-3 decision, not an approval of the gap. It was fifteen until
+# Dispatchable, and left out of `rig-wb --help` deliberately — the four survivors of task
+# 10's verb-by-verb audit, each kept because another rig surface reaches it under another
+# spelling. It was thirteen before nine of them earned a help line, and fifteen before
 # `list` and `review` left the dispatcher.
-TOP_LEVEL_VERBS_MISSING_FROM_HELP = frozenset({
-    "approve", "bench-invariance", "check", "fleet", "graph", "init", "install-shim",
-    "models", "next", "otel", "perf", "probe", "verdict",
-})
+#
+# A dict rather than a set of names with the reasons in comments beside them, which is what
+# this was first written as. The reason is the whole substance of the decision — what makes
+# one of these defensible is particular to it, and a reader deciding whether to advertise
+# one needs that sentence, not the count — and a comment carrying substance can be deleted
+# with every test still green. As values they are data this file asserts on, so emptying one
+# fails rather than passes quietly.
+TOP_LEVEL_VERBS_HIDDEN_WITH_REASON = {
+    "graph": (
+        "`rig-wb validate`'s check_graph spawns `scripts/orchestrate.py graph --json` "
+        "(rig_workbench/validation/catalog.py; the argv is pinned in "
+        "tests/test_validation_catalog_ports.py), and `/rig:catalog --graph` is the entry "
+        "a person is given. Advertising `rig-wb graph` would offer a third spelling of "
+        "machinery."
+    ),
+    "install-shim": (
+        "Installs an entry point for people who have none. Anyone who can type `rig-wb "
+        "install-shim` already has the entry point it provides, and a bare invocation "
+        "writes into `~/.local/bin` — outside the repo, from a verb the help text would "
+        "have invited."
+    ),
+    "models": (
+        "Configures the `orchestrate` surface for `run --auto-model`, which reads what "
+        "`models --save` wrote. Nothing spells it `rig-wb models`, and that is the reason. "
+        "Its `--help` also answers with the orchestrator's whole ninety-line docstring, "
+        "but that belongs to `_usage_for`'s fallback and not to this verb: the advertised "
+        "`queue` does the same, which is pinned in tests/test_cli_smoke.py as a defect "
+        "owed a fix."
+    ),
+    "probe": (
+        "Cited eight times across the two READMEs, always as `scripts/orchestrate.py "
+        "probe`, because what it evidences is about that process: the read-only verifier "
+        "sandbox is applied per provider. `selftest` covers the same ground on this "
+        "surface and is advertised. Its `--help` falls back like `models`, and for the "
+        "same shared reason."
+    ),
+}
+
+#: The same four, as the set the equality assertion below compares against. Derived from the
+#: dict rather than written a second time, so a verb can only be added or removed by writing
+#: or deleting its reason.
+TOP_LEVEL_VERBS_MISSING_FROM_HELP = frozenset(TOP_LEVEL_VERBS_HIDDEN_WITH_REASON)
 
 # `validate` is delegated to orchestrate and orchestrate has no command by that name, but
 # `main()` answers `sub == "validate"` in a branch several lines before the delegation and
@@ -343,7 +396,7 @@ def _branched_top_level_verbs() -> frozenset[str]:
     """Verbs `main()` handles in a branch of its own, read out of `main()`.
 
     Source rather than `--help`, because the two disagree by every verb in
-    TOP_LEVEL_VERBS_MISSING_FROM_HELP and help is the side that is wrong (task 9). `main()`
+    TOP_LEVEL_VERBS_MISSING_FROM_HELP, which help leaves out on purpose (task 10). `main()`
     is a chain of `if sub == "<verb>"` branches ending in `if sub in _orch_delegates`; this
     is the first shape. `--version` is dropped: it is the flag spelling of `version`,
     handled in the same branch, not a verb of its own.
@@ -458,7 +511,7 @@ def test_the_verbs_the_top_level_dispatcher_accepts_are_exactly_the_ones_the_reg
     TOP_LEVEL_VERBS_MISSING_FROM_HELP, so comparing the registry against help would fail for
     a reason that is nothing to do with drift. What the
     registry claims to describe is what a person can *run*, so what a person can run is what
-    it is compared against; the shortfall in help is task 9's own test below.
+    it is compared against; what help deliberately leaves out is task 10's own test below.
     """
     registry = _registry_verbs(None)
     dispatched = _dispatched_top_level_verbs()
@@ -492,17 +545,21 @@ def test_pack_source_is_read_as_three_two_word_verbs_because_its_sub_subparser_i
     )
 
 
-# ── task 9: the thirteen verbs no help text mentions ─────────────────────────
+# ── task 10: the verbs no help text mentions, and why each one ───────────────
 
-def test_exactly_thirteen_dispatchable_top_level_verbs_are_missing_from_the_help_text(rig_wb):
-    """The known gap, frozen at thirteen so it cannot grow or shrink unnoticed.
+def test_the_verbs_missing_from_the_help_text_are_exactly_the_ones_kept_hidden_on_purpose(
+        rig_wb):
+    """Hidden on purpose is a claim, and this is where it is held to the exact set.
 
-    Reducing this to zero is a stage-3 decision — put them in the help text, or take the
-    unwanted ones out of the dispatcher — and this test does not make it. It makes the number
-    impossible to change by accident: a new verb wired into `main()` without a help entry
-    turns this red, and so does one of the thirteen vanishing. It went fifteen to thirteen
-    when `list` and `review` were removed from the dispatcher, which is the stage-3 decision
-    taken for those two.
+    Every verb `main()` dispatches is either advertised in `rig-wb --help` or named in
+    TOP_LEVEL_VERBS_MISSING_FROM_HELP with the reason it is not. There is no third
+    category, which is the point: a verb wired into `main()` without a help entry fails
+    here rather than joining an unexamined remainder, and it can only be quieted by writing
+    down why — next to the name, where the next reader will argue with it.
+
+    It fails in the other direction too. One of the four gaining a help line fails here, and
+    so does one of them leaving the dispatcher, because either is a decision about the
+    command surface and neither should be discoverable from a user's bug report.
     """
     result = rig_wb("--help")
     assert result.returncode == 0, result.stderr
@@ -516,13 +573,16 @@ def test_exactly_thirteen_dispatchable_top_level_verbs_are_missing_from_the_help
     undocumented = registry - documented
     assert undocumented == TOP_LEVEL_VERBS_MISSING_FROM_HELP, (
         "the set of dispatchable-but-undocumented top-level verbs has changed.\n"
-        f"  no longer undocumented (welcome, and delete them from the literal): "
+        f"  now advertised (welcome, and delete them from the literal, taking the reason "
+        f"written beside each with them): "
         f"{sorted(TOP_LEVEL_VERBS_MISSING_FROM_HELP - undocumented)}\n"
-        f"  newly undocumented (a verb was wired up without a line in `_print_help`): "
+        f"  newly unadvertised (a verb was wired up without a line in `_print_help`): "
         f"{sorted(undocumented - TOP_LEVEL_VERBS_MISSING_FROM_HELP)}\n"
-        "  Adding a verb to the literal is the right fix only when the verb is genuinely new "
-        "and the gap is genuinely accepted; the intended direction is the other one, and it "
-        "is a stage-3 decision (see this module's docstring)."
+        "  A verb in the second list belongs in `_print_help`, which is what task 10 did "
+        "for nine of these. Adding it to the literal instead is the right answer only when "
+        "another rig surface is the way in and this spelling should stay unadvertised — and "
+        "then the reason goes beside the name, because that is the part a later reader "
+        "needs in order to disagree with it."
     )
 
     assert documented <= registry, (
@@ -530,6 +590,55 @@ def test_exactly_thirteen_dispatchable_top_level_verbs_are_missing_from_the_help
         f"{sorted(documented - registry)}. Help is prose and the registry is the "
         "declaration; a verb documented but undeclared is the drift this file exists to "
         "catch, in its most user-visible direction."
+    )
+
+
+@pytest.mark.parametrize("verb", sorted(TOP_LEVEL_VERBS_HIDDEN_WITH_REASON))
+def test_a_verb_kept_out_of_the_help_text_still_answers_its_own_help(verb, rig_wb):
+    """Hidden is not dropped, and only running them says which one this is.
+
+    These four are the one part of the command surface `tests/test_cli_surface_contract.py`
+    cannot reach: that file spawns `--help` for every verb it freezes, and freezing these
+    would mean advertising them. So nothing was spawning them at all, and a verb whose
+    module stopped importing or whose parser stopped building would have gone on passing
+    every test in the suite — the decision recorded above would have quietly become the
+    other one, removal, with no line of the diff saying so.
+
+    The same cheapest-possible proof the contract file uses: `--help` touches the dispatcher
+    and the parser and then exits, doing none of the verb's work. `install-shim` is here on
+    that argv and no other — run bare it writes a symlink into `~/.local/bin`, outside the
+    repo and outside anything a fixture can clean up, which is part of why it is hidden.
+    """
+    result = rig_wb(verb, "--help")
+
+    assert result.returncode == 0, (
+        f"`rig-wb {verb} --help` exited {result.returncode}. It is kept out of the help "
+        "text deliberately and is still expected to work; if the verb is meant to be gone, "
+        "this test and its entry in TOP_LEVEL_VERBS_HIDDEN_WITH_REASON go with it.\n"
+        f"--- stdout ---\n{result.stdout}\n--- stderr ---\n{result.stderr}"
+    )
+    assert result.stdout.strip(), f"`rig-wb {verb} --help` printed nothing"
+
+
+def test_every_verb_held_out_of_the_help_text_carries_a_reason_somebody_wrote():
+    """A reason that can be deleted with the suite still green is not a record of anything.
+
+    This is the failure the dict shape exists to catch, and it is the likely one: the names
+    are load-bearing everywhere else in this file, so nobody drops one by accident, while a
+    reason is the part a hurried edit strips. Emptying one now fails here, by name.
+
+    It checks that a sentence is present, not that it is a good one — no test can do the
+    second — so the reasons stay review's business. What it removes is the case where there
+    is nothing for review to look at.
+    """
+    missing = sorted(
+        verb for verb, reason in TOP_LEVEL_VERBS_HIDDEN_WITH_REASON.items()
+        if not isinstance(reason, str) or not reason.strip()
+    )
+    assert not missing, (
+        f"these verbs are held out of `rig-wb --help` with no reason recorded: {missing}. "
+        "Being hidden is a decision, and the sentence saying why is the whole of what was "
+        "decided — without it the entry says only that somebody once left the verb out."
     )
 
 

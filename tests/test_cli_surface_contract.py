@@ -24,7 +24,7 @@ where it runs. These are smoke tests: they say "this path executes and answers
 like this", not "this answer is correct".
 
 That second freeze covers a named handful, not the surface: the verbs spawned
-beyond `--help` are exactly the ones in VERBS_SMOKE_RUN — 20 of the 120 verbs
+beyond `--help` are exactly the ones in VERBS_SMOKE_RUN — 20 of the 129 verbs
 frozen above. Every other verb is reached here by `--help` alone, which proves
 its module imports and its parser builds and nothing more. This file claims no
 behavioural coverage of them.
@@ -40,11 +40,19 @@ import pytest
 # the tests re-read it and demand exact equality.
 
 # `rig-wb --help`. Hand-written usage text, not argparse (see _hand_written_verbs).
+#
+# It grew by nine in T10 — `approve`, `bench-invariance`, `check`, `fleet`, `init`,
+# `next`, `otel`, `perf`, `verdict` — which had been dispatchable all along and named in
+# no help text. Nothing about them changed: each was audited, found to be a spelling some
+# document or test already hands a person, and given the help line it had never had. The
+# four that stayed out are in tests/test_capability_registry_vs_cli.py's
+# TOP_LEVEL_VERBS_MISSING_FROM_HELP, each with its reason.
 TOP_LEVEL_SUBCOMMANDS = frozenset({
-    "asvs", "baseline", "bench", "coverage", "dashboard", "design-constraints",
-    "eval", "gh-check", "githooks", "govern", "hostcheck", "ja-lint", "mutation",
-    "pack", "plan", "queue", "run", "runs", "selftest", "sensor-bench", "usage",
-    "validate", "version", "wb",
+    "approve", "asvs", "baseline", "bench", "bench-invariance", "check",
+    "coverage", "dashboard", "design-constraints", "eval", "fleet", "gh-check",
+    "githooks", "govern", "hostcheck", "init", "ja-lint", "mutation", "next",
+    "otel", "pack", "perf", "plan", "queue", "run", "runs", "selftest",
+    "sensor-bench", "usage", "validate", "verdict", "version", "wb",
 })
 
 # `rig-wb wb --help` — the workbench: run-state, worktrees, sensors, the gate.
@@ -124,8 +132,8 @@ HELP_ANSWERING_SUBCOMMANDS = tuple(sorted(TOP_LEVEL_SUBCOMMANDS)) + tuple(sorted
 # imports and the parser is still built; only the side effect is skipped.
 # Keyed by argv prefix; the reason is what a later reader needs, not decoration.
 #
-# This is *not* the complement of what this file runs. Only 20 of the 120 frozen
-# verbs are spawned beyond `--help` (VERBS_SMOKE_RUN, below); the ~100 that are
+# This is *not* the complement of what this file runs. Only 20 of the 129 frozen
+# verbs are spawned beyond `--help` (VERBS_SMOKE_RUN, below); the ~110 that are
 # not spawned are, with these 10 exceptions, simply unexercised rather than ruled
 # out. The name says "deliberately" for that reason: the old name claimed to
 # enumerate every not-run verb and enumerated a tenth of them.
@@ -274,7 +282,7 @@ VERBS_THAT_REPORT_AN_EMPTY_PACK_SCOPE = ("pack list", "pack outdated", "pack ver
 # Every verb this file actually spawns beyond `--help`, written down so the
 # coverage level is a stated number rather than an impression. The two tuples
 # above are parametrised; the rest each have a test of their own further down.
-# 20 verbs, against the 120 frozen at the top of this file.
+# 20 verbs, against the 129 frozen at the top of this file.
 VERBS_SMOKE_RUN = frozenset(VERBS_THAT_REQUIRE_ARGUMENTS) | frozenset(
     VERBS_THAT_REPORT_AN_EMPTY_PACK_SCOPE) | frozenset({
         "wb contract", "wb digest", "wb gc", "govern whoami", "pack sync",

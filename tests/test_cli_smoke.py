@@ -1069,6 +1069,65 @@ def test_help_prints_that_command_and_not_the_whole_manual(command, tmp_path):
     assert "computational orchestrator" not in result.stdout
 
 
+# Commands `_usage_for` (rig_workbench/orchestrate/cli.py) has nothing to slice for,
+# because the module docstring it slices never listed them. Each answers `--help` with the
+# whole ninety-line docstring instead of its own usage. Measured through the process, not
+# read off the source.
+#
+# `queue` is what makes this a defect rather than a curiosity: it is advertised in
+# `rig-wb --help`, so a person is invited to type it and then handed the manual. The fix
+# owed is to `_usage_for`, or to the docstring it slices, and it is owed to all three names
+# equally. Until it is paid this test says so out loud — the previous shape of this
+# knowledge was a comment treating the fallback as a reason to keep `models` and `probe`
+# out of the help text, and `queue` had been standing in the help text the whole time
+# disproving it.
+COMMANDS_WHOSE_HELP_IS_STILL_THE_WHOLE_MANUAL = frozenset({"models", "probe", "queue"})
+
+
+def test_the_commands_the_usage_slicer_cannot_slice_are_exactly_the_three_it_misses(
+        tmp_path):
+    """The known defect, pinned as a set so it cannot grow or shrink unnoticed.
+
+    Not an assertion that this is right — an assertion that this is what happens. A fourth
+    command falling into the fallback fails here on the commit that adds it, and fixing any
+    of the three fails here too, which is when the literal above and the comments citing it
+    come out together.
+    """
+    fell_back = set()
+    for command in _orchestrator_commands():
+        result = run_cli([command, "--help"], tmp_path)
+        assert result.returncode == 0, result.stderr
+        if "computational orchestrator" in result.stdout:
+            fell_back.add(command)
+
+    assert fell_back == COMMANDS_WHOSE_HELP_IS_STILL_THE_WHOLE_MANUAL, (
+        "which orchestrator commands answer `--help` with the module docstring has "
+        "changed.\n"
+        f"  now sliced properly (delete them from the literal): "
+        f"{sorted(COMMANDS_WHOSE_HELP_IS_STILL_THE_WHOLE_MANUAL - fell_back)}\n"
+        f"  newly falling back (a command was registered without a docstring entry): "
+        f"{sorted(fell_back - COMMANDS_WHOSE_HELP_IS_STILL_THE_WHOLE_MANUAL)}"
+    )
+
+
+def test_the_advertised_verb_among_them_is_why_this_counts_as_a_defect(tmp_path):
+    """`rig-wb queue --help` is reached from the help text and answers with the manual.
+
+    Spelled `rig-wb` rather than through the shim, because that is the spelling
+    `rig-wb --help` hands a person: this is only user-facing on that path.
+    """
+    result = run_rig_wb(["queue", "--help"], tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    assert "computational orchestrator" in result.stdout, (
+        "`rig-wb queue --help` no longer prints the orchestrator's module docstring. If "
+        "`_usage_for` learned to slice it, take `queue` out of "
+        "COMMANDS_WHOSE_HELP_IS_STILL_THE_WHOLE_MANUAL and out of the comments in "
+        "rig_workbench/cli.py and tests/test_capability_registry_vs_cli.py that cite it."
+    )
+    assert not result.stdout.lstrip().startswith("queue"), result.stdout[:200]
+
+
 def test_the_same_help_comes_back_through_rig_wb(tmp_path):
     """Both entry points reach one dispatcher; a fix in only one of them would leave the
     documented spelling broken for whoever used the other."""
