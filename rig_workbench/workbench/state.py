@@ -21,6 +21,18 @@ except ImportError:
 
 from rig_workbench import gitroot
 from rig_workbench.exitcodes import ERROR, REJECTED
+# Module level, unlike every other `govern` import in this file, because a type alias is
+# resolved when the `def` below is executed and there is no function to hide it in.
+#
+# **What makes it safe is measured, and it is not "the ledger imports only the ports".**
+# It does not: importing the submodule executes `govern/__init__.py`, and the closure is
+# `gitroot`, `govern.{identity,policy,rbac}`, `orchestrate.secure_fs` and the two `ports`
+# modules — six more than the sentence that used to be here claimed. The reason it cannot
+# close a cycle is that none of them is `rig_workbench.workbench`, which is a fact about
+# the closure rather than about this line, so
+# `test_govern_ledger.py::test_both_readers_of_the_key_path_delegate_to_the_one_observation`
+# holds it in a fresh interpreter. Read that before adding the next one here.
+from rig_workbench.govern.ledger import KeyFileKind as _ledger_key_file_kind
 
 from .config import GATE_PRESETS, TASK_TYPES
 
@@ -557,14 +569,13 @@ def provenance_key(root: pathlib.Path) -> bytes | None:
     `None` means this repository has no key to check against — absent, or present and not a
     key (`govern.ledger.usable_key` is the one rule, shared with the ledger). A caller that
     cannot verify says so; it does not go and make one.
-    """
-    from ..govern.ledger import usable_key
 
-    p = _provenance_key_path(root)
-    try:
-        return usable_key(p.read_bytes() if p.is_file() else None)
-    except OSError:
-        return None
+    `_read_key_bytes` and not a read of its own: this was the third hand-written copy of
+    "`is_file`, then `read_bytes`, `OSError` to `None`", beside `ledger._key` and the
+    loader's. Three copies agreeing is not one reader, and the message this run repaired
+    is what two of them drifting looks like.
+    """
+    return _usable(_read_key_bytes(_provenance_key_path(root)))
 
 
 def _set_unusable_key_aside(p: pathlib.Path) -> pathlib.Path | None:
@@ -786,22 +797,9 @@ def load_or_create_provenance_key(root: pathlib.Path) -> bytes:
                   "Re-run")
 
 
-#: What `_observe_key_file` was able to establish about the path.
-#:
-#: `"other"` is the only one that asserts anything about the *kind* of the file, and the
-#: set-aside warning says "nothing was signed with what was moved" on the strength of it.
-#: It is what `p.is_file()` answering `False` means, and that is a slightly wider thing
-#: than "a `stat` said not-a-regular-file": `pathlib` turns `ENOENT`, `ENOTDIR`, `EBADF`
-#: and `ELOOP` into `False` as well. All four are safe to put here, and for the same
-#: reason the honest ones are — no such path, a non-directory in the way, a bad
-#: descriptor and a symlink loop are each a thing that cannot be a key and that both
-#: readers of this path already refuse. What is *not* safe is the errno `pathlib`
-#: re-raises: `EACCES` on the `stat` establishes nothing at all, so it is `"unknown"` and
-#: routes with `"regular"` to the branch that assumes a key may be in there. Sending it
-#: the other way prints "nothing was signed with what was moved" over a live key — a
-#: symlink to a real 32-byte key through a directory this process may not traverse is the
-#: reproducible case, and there is no reading it from here to find out.
-_KeyFileKind = str  # "regular" | "other" | "unknown"
+#: `ledger.KeyFileKind` under a private name — the alias, not a second `str` beside it,
+#: so the one thing this change is about (there being one of each) holds for the type too.
+_KeyFileKind = _ledger_key_file_kind
 
 
 def _read_key_bytes(p: pathlib.Path) -> bytes | None:
@@ -812,17 +810,19 @@ def _read_key_bytes(p: pathlib.Path) -> bytes | None:
 def _observe_key_file(p: pathlib.Path) -> tuple[bytes | None, _KeyFileKind]:
     """The bytes this process read, and what it could establish about the path's kind.
 
-    `_read_key_bytes` (which is now this function with the kind dropped, so the two cannot
-    drift) collapses every failure into one `None`, and the set-aside warning has to tell
-    them apart: a regular file we may not open can be a whole key and wants reading, a FIFO
-    cannot be a key and must not be read, and a path we could not even `stat` is neither
-    known.
+    **The body of this is `govern.ledger.observe_key_file`, and there is one of it.** The
+    set-aside warning below and `ledger.verify` both have to tell the same three situations
+    apart — a file below the floor, a regular file this process may not open, a path that
+    is not a regular file — because each has a different remedy, and each of them says so
+    to an operator. They were written twice and split once: the warning here was split
+    first, and the ledger's problem went on collapsing two of the three for a commit, which
+    is what the shared observation is for. It sits in `govern` because that is where
+    `MIN_KEY_BYTES` and `usable_key` already are and because the layering contract lets
+    `workbench` reach there and not the other way round.
 
-    **`p.is_file()` is inside the `try`.** It swallows `ENOENT`, `ENOTDIR`, `EBADF` and
-    `ELOOP` and re-raises everything else, so a key symlinked through a directory this
-    process may not traverse raised `PermissionError` out of the loader — a state that
-    warns and recovers, turned fatal, `accept` refusing with "the key could not be
-    prepared".
+    This wrapper stays because the call sites here pass no `FileStore` and read the local
+    filesystem — `LOCAL_FILES.is_file` and `.read_bytes` are `pathlib.Path.is_file` and
+    `.read_bytes`, so the observation is the same one either way.
 
     **This narrows the sibling race; it does not close it.** The `stat` and the `read` are
     two calls, and the `rename` at the call site is a third: a sibling that changes the
@@ -833,16 +833,9 @@ def _observe_key_file(p: pathlib.Path) -> tuple[bytes | None, _KeyFileKind]:
     residual, and it is written down rather than claimed away; closing it wants the file
     held open across the rename, which is a different change.
     """
-    try:
-        regular = p.is_file()
-    except OSError:
-        return None, "unknown"
-    if not regular:
-        return None, "other"
-    try:
-        return p.read_bytes(), "regular"
-    except OSError:
-        return None, "regular"
+    from ..govern.ledger import observe_key_file
+
+    return observe_key_file(p)
 
 
 def _usable(raw: bytes | None) -> bytes | None:

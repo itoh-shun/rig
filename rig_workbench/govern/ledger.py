@@ -163,10 +163,11 @@ MIN_KEY_BYTES = 16
 def usable_key(raw: bytes | None) -> bytes | None:
     """`raw` if it can be signed with, else `None`. **The single definition, on purpose.**
 
-    There are two readers of `.rig/provenance.key` — `_key` here and
-    `workbench.state.provenance_key` — and one creator,
-    `workbench.state.load_or_create_provenance_key`, which asks the reader first and only
-    makes a key where there is none. They were fixed one at a time once already: closing the
+    There are three readers of `.rig/provenance.key` — `_key` here,
+    `workbench.state.provenance_key`, and the loader
+    `workbench.state.load_or_create_provenance_key`, which is also the one creator and asks
+    before it makes a key where there is none. All three take their bytes from
+    `observe_key_file`; all three decide with this. They were fixed one at a time once already: closing the
     empty key in the ledger left the provenance signer recomputing under the same empty
     secret, so a record rewritten to a different `accepted_by` and re-signed still printed
     `valid, untampered`. All of them ask this function, so what counts as a key is one
@@ -219,12 +220,99 @@ def _key(root: pathlib.Path, *, files: FileStore = LOCAL_FILES) -> bytes | None:
     # not be read" problem then covers this without a second shape, and `signs_here` — which
     # asks about the path, not the bytes — keeps answering that this repository signs, so an
     # unsigned entry beside an unusable key is still reported.
-    p = key_path(root)
+    #
+    # The read itself is `observe_key_file`, with the kind dropped — this function is that
+    # function minus one element of the tuple, so the two cannot drift.
+    return usable_key(observe_key_file(key_path(root), files=files)[0])
+
+
+#: What `observe_key_file` was able to establish about the path.
+#:
+#: `"other"` is the only one that asserts anything about the *kind* of the file, and the
+#: two messages built on this — `verify`'s problem below and the signer's set-aside warning
+#: — say "nothing was signed with what is there" on the strength of it. It is what
+#: `is_file` answering `False` means, and that is a slightly wider thing than "a `stat`
+#: said not-a-regular-file": `pathlib` turns `ENOENT`, `ENOTDIR`, `EBADF` and `ELOOP` into
+#: `False` as well. All four are safe to put here, and for the same reason the honest ones
+#: are — no such path, a non-directory in the way, a bad descriptor and a symlink loop are
+#: each a thing that cannot be a key and that every reader of this path already refuses.
+#: What is *not* safe is the errno `pathlib` re-raises: `EACCES` on the `stat` establishes
+#: nothing at all, so it is `"unknown"` and routes with `"regular"` to the branch that
+#: assumes a key may be in there. Sending it the other way claims nothing was signed with
+#: what is at the path, over a live key — a symlink to a real 32-byte key through a
+#: directory this process may not traverse is the reproducible case, and there is no
+#: reading it from here to find out.
+KeyFileKind = str  # "regular" | "other" | "unknown"
+
+
+def observe_key_file(p: pathlib.Path, *,
+                     files: FileStore = LOCAL_FILES) -> tuple[bytes | None, KeyFileKind]:
+    """The bytes this process read from the key path, and what it established about its kind.
+
+    **The single observation, for the same reason `usable_key` is the single rule.** Every
+    read of `.rig/provenance.key` in this repository is now this function: `_key` above,
+    `workbench.state.provenance_key`, and the loader that sets an unusable key aside
+    (`workbench.state.load_or_create_provenance_key`). There were three hand-written copies
+    of "`is_file`, then `read_bytes`, `OSError` to `None`" before, and two of them grew a
+    message an operator acts on — the set-aside warning and `verify`'s problem below —
+    which have to tell the same three situations apart, because each has a different
+    remedy: a file below the floor is measured and permanent, a regular file we may not
+    open can be a whole key and wants its permissions fixed, and a path that is not a
+    regular file was never read as a key at all. Copies agreeing today is not one reader:
+    the split was made on the signing side first and the collapsed clause survived here,
+    in a message no test asserted, which is what one observation exists to stop.
+
+    It lives in `govern` and not in `workbench` because that is the direction the
+    dependency already runs — `workbench.state` imports `MIN_KEY_BYTES` and `usable_key`
+    from here, and `tests/test_layering_contract.py` forbids a judgement module of a
+    migrated pillar reaching the other way. It takes a `FileStore` for the same reason
+    every read in this module does: `verify` is called with one.
+
+    **The `is_file` call is inside the `try`.** It swallows `ENOENT`, `ENOTDIR`, `EBADF`
+    and `ELOOP` and re-raises everything else, so a key symlinked through a directory this
+    process may not traverse came out of both callers as a raised `PermissionError` —
+    measured on `verify`, in a child that dropped to an unprivileged uid:
+    `PermissionError: [Errno 13] Permission denied: .../.rig/provenance.key`, out of a
+    function whose contract is to report problems rather than raise them.
+
+    **This narrows the sibling race; it does not close it.** The `stat` and the `read` are
+    two calls (and the signer's `rename` is a third), so a sibling that changes the kind in
+    between is reported under the kind seen first. That is the residual, and it is written
+    down rather than claimed away.
+    """
     try:
-        key = files.read_bytes(p) if files.is_file(p) else None
+        regular = files.is_file(p)
     except OSError:
-        return None
-    return usable_key(key)
+        return None, "unknown"
+    if not regular:
+        return None, "other"
+    try:
+        return files.read_bytes(p), "regular"
+    except OSError:
+        return None, "regular"
+
+
+def _is_dir(p: pathlib.Path, *, files: FileStore = LOCAL_FILES) -> bool:
+    """`files.is_dir`, with the refusal that is not an answer turned into `False`.
+
+    `Path.is_dir()` re-raises `EACCES` exactly as `is_file` does, and `verify` asks it about
+    a path whose parent a sibling may be chmod-ing. Driven — one process calling `verify`
+    while another flips `0o755`/`0o000` on `.rig/` — `PermissionError` came back out of
+    `verify` in roughly 8,000 of 30,000 calls with the bare `files.is_dir`. `False` is the
+    honest answer to "could I establish that this is a directory": no, so the path is not
+    claimed to be one, and it joins the shapes reported as an absent key.
+
+    **What that costs, recorded:** on a ledger with no signed entries, a directory at the
+    key path whose `is_dir` is refused mid-race produces no problem at all rather than the
+    third one, because the neighbouring problem only fires where entries carry `sig`. No
+    signature check is skipped by it — there are none — so the cost is a diagnostic that is
+    flaky under a race, not a verdict that is wrong. The alternative is claiming a kind
+    nothing established, which is what this whole change is about.
+    """
+    try:
+        return files.is_dir(p)
+    except OSError:
+        return False
 
 
 def signs_here(root: pathlib.Path, *, files: FileStore = LOCAL_FILES) -> bool:
@@ -241,8 +329,19 @@ def signs_here(root: pathlib.Path, *, files: FileStore = LOCAL_FILES) -> bool:
     that signs, and `verify` is where that is a problem of its own (it says so in as many
     words). Answering "no key" here would hand a decision back to the looser reading
     exactly when the stricter one is called for.
+
+    **And a `stat` that refuses answers `True`,** which is the opposite default from
+    `_is_dir` below and for the reason in the paragraph above. `Path.is_file()` re-raises
+    `EACCES`, so the bare call put `PermissionError` out of `approval.ledger_attestations`
+    — a decision path — on a key behind a directory this process may not traverse; that is
+    a crash, not a verdict. Of the two verdicts available where nothing could be
+    established, "this repository signs" is the stricter one, and it is the one this
+    function's whole argument says to take when it cannot tell.
     """
-    return files.is_file(key_path(root))
+    try:
+        return files.is_file(key_path(root))
+    except OSError:
+        return True
 
 
 def _sign(root: pathlib.Path, digest: str, *, files: FileStore = LOCAL_FILES) -> str | None:
@@ -389,6 +488,37 @@ class VerifyResult:
         return f"ledger BROKEN — {len(self.problems)} problem(s) over {self.entries} entries"
 
 
+#: What a new key does to this ledger, on the two branches that send the operator to make
+#: one. **Measured, on a two-entry signed ledger, by running the loader and verifying
+#: again** — not reasoned from the fact that the key changed.
+#:
+#: The sentence these branches used to end on was "this problem stops once it has". It does
+#: stop, and that is the wrong half to report: what replaces it is `entry #0: signature does
+#: not verify` on every entry, which is the most alarming line this tool prints and the one
+#: that reads as tampering. An operator (or an agent) told the remedy clears it up runs
+#: `accept` and lands in an incident. The signing side's own prose has carried the
+#: compensating clause since it was written; this half had dropped it.
+#:
+#: **And where nothing was signed it is a different permanent failure, not none.** Measured
+#: on two unsigned entries beside a short key: `entry #0: unsigned, but this repository has
+#: a provenance key`, on every entry, and it does not go away either. Scoping the first
+#: clause to "every entry signed before it" made it true of that shape rather than
+#: informative, so the second shape is named instead of left to be inferred.
+#:
+#: The hedge sits on the move and not on the key, because that is the order `accept` runs
+#: in: `_set_unusable_key_aside` failing means it never reaches the creation and refuses
+#: with `provenance_key_unavailable`. "generates a key if it can" put the condition on the
+#: half that is not the one that fails.
+#:
+#: `tests/test_govern_ledger.py::test_the_remedies_promise_only_what_the_next_accept_does`
+#: drives the fixture, runs the loader and asserts the aftermath, and asserts that this
+#: string is in the problems that promise it. What that test measures is what these
+#: remedies are allowed to say.
+_AFTERMATH = ("this problem is then replaced by `signature does not verify` on every entry "
+              "signed before it, or by `unsigned, but this repository has a provenance "
+              "key` where there were none, and neither goes away")
+
+
 def verify(root: pathlib.Path, *, files: FileStore = LOCAL_FILES) -> VerifyResult:
     """Walk the chain and report the first break in each category.
 
@@ -397,20 +527,40 @@ def verify(root: pathlib.Path, *, files: FileStore = LOCAL_FILES) -> VerifyResul
     previous entry's hash (removed or reordered entry), a sequence number that
     skips, and a signature that does not verify against the local key.
 
-    A key file that is present and yields no key — unreadable, or too short to sign with
-    (`MIN_KEY_BYTES`) — is itself one of the problems, reported before the walk: that is the only state in which the
+    A key file that is present and yields no key — too short to sign with (`MIN_KEY_BYTES`),
+    unreadable, or not a regular file at all — is itself one of the problems, reported
+    before the walk in the shape the situation earns: that is the only state in which the
     signature column below is absent for a reason other than "this repository has no key".
     """
     entries = read_ledger(root, files=files)
     problems: list[str] = []
     signed = 0
-    key = _key(root, files=files)
     key_file = key_path(root)
+    # One look at the path, shared with the signer, rather than a `_key` read and a second
+    # `is_file` beside it that could disagree with it.
+    observed, key_kind = observe_key_file(key_file, files=files)
+    key = usable_key(observed)
     # Present, in the sense that matters here: something is at the path. A zero-byte file, a
     # one-byte file and a directory are all a key this process cannot sign with, and none of
     # them is the key being *gone* — saying "absent" over one of them describes the wrong
-    # event to whoever is reading the problem.
-    key_present = files.is_file(key_file) or files.is_dir(key_file)
+    # event to whoever is reading the problem. `"unknown"` counts as present without a
+    # second `stat`: the call that would answer is the call that just refused, and the two
+    # readings of it are "something is there this process may not look at" and "gone", of
+    # which only the first can be established.
+    #
+    # `_is_dir` and not `files.is_dir`, for the reason the observation's own `stat` is
+    # inside a `try`: `is_dir` re-raises `EACCES` the same way, and a sibling flipping the
+    # mode on `.rig/` between the two calls put `PermissionError` back out of `verify` in
+    # roughly 8,000 of 30,000 attempts under a driven race. A refusal there answers `False`,
+    # which puts the path with the FIFO below rather than inventing a kind for it.
+    #
+    # Reported and not fixed: a FIFO, a device or a dangling symlink at the key path is
+    # still called absent, because `is_file` and `is_dir` are the only two questions the
+    # `FileStore` port answers and neither of them says yes to one — so the third problem
+    # below is only ever printed over a directory, and the operator prose says so rather
+    # than listing kinds that cannot reach it. That is the same defect one shape further
+    # out, and closing it is a port change with its own callers.
+    key_present = key_kind != "other" or _is_dir(key_file, files=files)
     if key is None and any(e.get("sig") for e in entries):
         # The other way the signature pass falls silent, and the one an attacker chooses:
         # the hash chain needs no secret, so anybody can rewrite the ledger, recompute
@@ -429,14 +579,59 @@ def verify(root: pathlib.Path, *, files: FileStore = LOCAL_FILES) -> VerifyResul
         # The compensating check `_key` names. Without it, a key this process cannot read
         # — a mode it may not open, a directory in its place, a mount that refuses it —
         # makes every signature check below fall away silently, and `verify` answers
-        # "intact, unsigned" for a repository whose entries were all signed. `is_dir` is
-        # here beside `is_file` because the path existing at all is the fact: `_key` reads
-        # only a regular file, so a directory reaches this line as an absent key too — and
-        # so does a file too short to sign with, which `_key` refuses rather than using.
-        problems.append(".rig/provenance.key exists but could not be read as a key (it is "
-                        f"unreadable, or shorter than the {MIN_KEY_BYTES} bytes a signing "
-                        "key must have), so no signature was checked; the hash chain was "
-                        "still checked")
+        # "intact, unsigned" for a repository whose entries were all signed.
+        #
+        # Three reasons, because what the operator should do next differs and one clause
+        # covering all of them gives two of them the wrong instruction. It read "it is
+        # unreadable, or shorter than the 16 bytes a signing key must have" over every
+        # shape: measured, an 8-byte file and a 32-byte key this process may not open
+        # produced byte-identical problems.
+        #
+        # Only the first measured anything. Its bytes were counted, they are under the
+        # floor, `usable_key` is the one rule and every reader applies it, so entries
+        # signed with that file are unverifiable for good and there is nothing to fix.
+        #
+        # A regular file that would not open was not measured at all: a whole 32-byte key
+        # behind a mode, an owner, or a directory this process may not traverse arrives
+        # here with its bytes intact, and its entries verify again the moment the
+        # permissions do. Telling that operator the same thing as the first sends them to
+        # re-sign a ledger that was never broken.
+        #
+        # A path `is_file` answered `False` about is the third, and it is the only one
+        # that may claim anything about the *kind*: every read of this path goes through
+        # `observe_key_file`, which returns before it opens anything `is_file` refuses, so
+        # what is sitting there has never been read as a key and no signature in this
+        # ledger was made with it. A `stat` that did not answer must never borrow that
+        # claim — see `KeyFileKind` — so it falls to the `else` below rather than being
+        # routed by a reader who remembers to. In practice this branch prints only over a
+        # directory, because that is the only non-regular shape `key_present` says yes to.
+        if observed is not None:
+            reason = (f"it holds {len(observed)} byte(s), below the {MIN_KEY_BYTES} bytes "
+                      "a signing key must have")
+            remedy = ("There is nothing to repair on that file — every reader refuses it "
+                      "and entries signed with it can never be verified again. The next "
+                      "`accept` sets it aside under .rig/provenance.key.unusable, numbered "
+                      "past any already there, and then generates a key, or refuses "
+                      "without generating one if it cannot move it; " + _AFTERMATH)
+        elif key_kind == "other":
+            reason = "it is not a regular file — a directory is at the key path"
+            remedy = ("Find out what put a directory there — no entry in this ledger was "
+                      "signed with it, because a path of that kind is never read as a key, "
+                      "so there is no key to recover. The next `accept` sets it aside "
+                      "under .rig/provenance.key.unusable, numbered past any already "
+                      "there, and then generates a key, or refuses without generating one "
+                      "if it cannot move it; " + _AFTERMATH)
+        else:
+            # "regular" and "unknown" both land here, and that is the safe direction: this
+            # branch claims nothing about the contents, it asks the operator to go and
+            # look. The branch above does make a claim, so it needs a `stat` that answered.
+            reason = "the permissions may not allow it"
+            remedy = ("Fix the permissions on it and on the directories above it, then "
+                      "re-run; its contents are unread, so whether these entries still "
+                      "verify is unknown until something can read it")
+        problems.append(f".rig/provenance.key exists but could not be read as a key "
+                        f"({reason}), so no signature was checked; the hash chain was "
+                        f"still checked. {remedy}")
     prev_hash = GENESIS
     for index, entry in enumerate(entries):
         where = f"entry #{index}"

@@ -843,9 +843,10 @@ reproduced through the real CLI before it was touched.**
   and `govern/ledger.py` reports `.rig/provenance.key exists but could not be read as a key (it
   is unreadable, or shorter than the 16 bytes a signing key must have)` in one collapsed clause,
   the same collapse this entry un-collapses on the signing side, with no test asserting its text.
-  It is left alone deliberately: unlike the warning above it makes no claim it has not measured —
-  "no signature was checked" holds for every shape that reaches it — and splitting it is a change
-  to what `govern audit verify` reports, with its own reader, its own remedy and its own tests.
+  It was left alone deliberately — splitting it is a change to what `govern audit verify`
+  reports, with its own reader, its own remedy and its own tests — and it is the entry below,
+  which found that it *does* make a claim it has not measured, one remedy wide of the truth on
+  two of the three shapes that reach it.
   The fourth is a residual of this change and is stated in `_observe_key_file` itself: the `stat`,
   the `read` and the `rename` are three calls, so a sibling that changes the kind in between is
   reported under the kind seen first. Its sharpest form, reproduced by driving a sibling in
@@ -853,6 +854,200 @@ reproduced through the real CLI before it was touched.**
   the `rename`, and the warning prints the not-a-regular-file line — claim included — over a
   moved regular file. It narrows the window rather than closing it; closing it wants the file
   held open across the rename, which is a different change with its own failure modes.
+
+- **`govern audit verify` stops giving two situations the same remedy over an unusable
+  provenance key.** The problem reported when the key path exists and yields no key read
+  `.rig/provenance.key exists but could not be read as a key (it is unreadable, or shorter than
+  the 16 bytes a signing key must have)` for every shape that reached it. Measured before this
+  change, on a one-entry signed ledger with the key replaced: an 8-byte file, a 32-byte key this
+  process may not open, and a directory at the key path produced three byte-identical problems.
+  They are three events with three next steps. The short file was *measured* — its bytes were
+  counted, they are under `MIN_KEY_BYTES` = 16, `usable_key` is the one rule every reader applies
+  — so it says `There is nothing to repair on that file` and keeps the fact that entries signed
+  with it can never be verified again. The regular file that would not open
+  was measured by nobody: a whole 32-byte key behind a mode, an owner, or a directory this
+  process may not traverse arrives with its bytes intact and verifies again the moment the
+  permissions do, so it opens `Fix the permissions on it and on the directories above it, then
+  re-run`. The directory was never read as a key at all — every read of this path goes through
+  one function, which returns before opening anything `is_file` refuses — so it opens `Find out
+  what put a directory there` and says there is no key to recover. **Every line leads with what
+  to do**, which the collapsed one never did on two of the three. **And the two that send
+  somebody to make a key say what that does to the ledger**, which is the half that matters:
+  measured by running the loader and verifying again, the problem is replaced by `entry #0:
+  signature does not verify` on every pre-existing signed entry, permanently — the most alarming
+  line this tool prints, and it reads as tampering. An earlier draft of these remedies ended "this
+  problem stops once it has", which is true and is the wrong half: an agent quoting it sends
+  somebody to run `accept` and into an incident. Neither remedy names the set-aside file outright
+  either. Allocation is highest-already-there plus one, measured: on a repository that had set a
+  key aside once the file landed at `provenance.key.unusable-2`. The signer may name it because
+  it interpolates after its own `rename`; `verify` has renamed nothing and a concurrent `accept`
+  can take the next name first, so it names the shape and carries the numbering; **the clause that holds for all
+  three is kept on all three**, unchanged: `so no signature was checked; the hash chain was still
+  checked`. The three still share that clause and a 59-character opening stem, and the prose says
+  so rather than claiming the shared part is smaller than it is.
+
+  **One observation, and there were three copies of it.** The signing side already looked at the
+  path once and answered with the bytes *and* a tri-state kind, and that pair is precisely what
+  drifted: the warning was split, the problem was not. Importing the signer's function is not
+  available — `tests/test_layering_contract.py` holds a judgement module of a migrated pillar to
+  the standard library, its own pillar and `rig_workbench.ports`, so `govern/ledger.py` may not
+  reach into `workbench.state`, and the pathlib calls in it would ignore the `FileStore` that
+  `verify` is handed. It is also where this belongs on merits: the ledger already owns what
+  counts as a key (`MIN_KEY_BYTES`, `usable_key`), and `ports` holds protocols only. So the
+  observation moved the way the dependency already runs, into `ledger.observe_key_file`, taking a
+  `FileStore`. **Three readers, not two:** `ledger._key`, the loader that sets an unusable key
+  aside, and `state.provenance_key` — the one `verify-provenance` calls — were three hand-written
+  copies of "`is_file`, then `read_bytes`, `OSError` to `None`". All three are the one function
+  now, `state._KeyFileKind` aliases `ledger.KeyFileKind` rather than restating it, and the
+  delegation test names the readers it actually pins.
+
+  **A `stat` that fails is a third answer here too, and it joins the permissions line.**
+  `Path.is_file()` re-raises `EACCES`, and `verify` called it twice — once inside `_key` under an
+  `except OSError`, once bare, to decide whether the key was present. Measured in a child that
+  dropped to an unprivileged uid, on a real 32-byte key symlinked through a `0o000` directory:
+  `PermissionError: [Errno 13] Permission denied: .../.rig/provenance.key`, raised out of a
+  function whose whole contract is to report problems. It reports now — and the obvious repair
+  would have been wrong in the other direction: answering "not a regular file" for a `stat` that
+  never answered prints `nothing in this ledger was signed with what is there` over a key that
+  signed every entry in it, told to the operator deciding whether to re-sign. `"unknown"` is
+  therefore the `else`, with `"regular"`, so the cautious branch is structural rather than
+  remembered; presence reads as present for the same reason, since "something is there this
+  process may not look at" is establishable and "gone" is not. The presence check's own `is_dir`
+  is guarded for the reason the observation's `stat` is: driven against a sibling flipping
+  `0o755`/`0o000` on `.rig/`, the bare call put `PermissionError` back out of `verify` in roughly
+  8,000 of 30,000 attempts. A refusal there answers `False`, which puts the path with the FIFO
+  rather than inventing a kind for it.
+
+  **No test asserted any of this text**, which is why it survived a commit that split the same
+  collapse one file away. Nine new tests, and `tests/test_govern_ledger.py` goes from 58 to 67,
+  each run alone and under three explicit shuffles of their relative order — this tree has no
+  random-ordering plugin, so `-p no:randomly` establishes nothing and is not what was run.
+  **The one that decides what the remedies may say drives the fixture rather than the string:**
+  it runs the loader and asserts what `verify` reports afterwards, that the set-aside file takes
+  the next number when one is already there, and — on the third branch, which goes nowhere near
+  `accept` — that reading the file makes both entries verify again. Asserting a remedy's spelling
+  pins its spelling and nothing about the world, which is how both over-promises got in.
+  The first pins all three problems in full, that the three remedies are three, that each opens
+  with an action, and *how much* the three share — the 59-character stem and the common clause —
+  because containment alone let the prose understate it. The second runs `verify` in a forked
+  unprivileged child over the traversal-denied key: reported not raised, the permissions line,
+  and no claim. The third holds all three readers to *delegation* rather than agreement, through
+  a sentinel no reimplementation can produce, and pins the kind alias through the source rather
+  than through `str is str`, which passes for a copy. The fourth is the guarded `is_dir`. The
+  fifth pins the coupling the third line's wording rests on from forty-nine lines away: of
+  everything `is_file` answers `False` about, only a directory is ever *present* enough to reach
+  it, so widening presence without following the wording prints "a directory is at the key path"
+  over a FIFO. The sixth compares the fenced block in
+  `skills/engine/facets/instructions/workbench-ops.md` with the three problems the code emits,
+  byte for byte — the tie the signing side gained and this side did not have — **and the three
+  Japanese bullets under it**, each of which has to open with a fragment that matches its own
+  branch and no other. Tying the block and leaving the bullets loose is the mechanism the three
+  wrong statements about which branch means what came through. Twenty-seven mutations, each killed: the collapsed clause restored, and the length
+  line stopping at what it measured, each fail the first and the fifth; routing `"unknown"` into
+  the not-a-regular-file branch, and the `stat` outside the `try`, each fail the second alone;
+  `_key` reading on its own, `state._observe_key_file` reimplemented standalone,
+  `state.provenance_key` reading on its own, and the kind restated as `str`, each fail the third
+  alone; the unguarded `is_dir` fails the fourth alone; widening presence so a FIFO reaches the
+  directory line fails the fifth alone; one word changed inside the facet's quoted block, and two
+  bullets swapped so each explains the other's branch, each fail the sixth alone; the remedy
+  naming the set-aside file outright, and "this problem stops once it has" restored, each fail
+  three tests; a bullet body dropping the aftermath while keeping its leading fragment, and the
+  character count in the prose drifting from the lines, each fail the sixth alone; the bare
+  `signs_here` fails the eighth alone; the refusal answering `False`, the hedge back on the
+  wrong clause, and a bullet carrying another branch's verdict with its own fragment intact, each
+  fail two, one and one respectively; rewording the unsigned line the code prints fails the third;
+  and the five prose injections — an inflected verdict, the aftermath restated in Japanese, and
+  three routes to "delete the key and re-run" — each fail the ninth.
+
+  **The bullet tie was half a guard for two rounds, and a reviewer walked through the open half
+  twice.** It required the two markers on the bullets that earn them and forbade them on the one
+  that must not, which leaves that bullet free to say anything *else* — including the other
+  branches' verdicts, which contain neither marker. It is one table now: every verdict phrase is
+  required on the branch that earns it and forbidden on every other, so the replayed attack — the
+  `the permissions` body rewritten to say the records are gone, leading fragment untouched — dies
+  where it passed twice.
+
+  **An enumeration only catches what somebody thought of, and five more injections proved it.**
+  An inflected form one character off (`検証できない` → `検証できません`); the aftermath restated
+  in Japanese with the English marker dropped; and three separate routes to the one that matters
+  — a bullet telling the operator to delete the key and re-run, on the branch whose file may be
+  an intact key, which is the instruction this entire series exists to prevent. The first two are
+  closed by holding *stems* rather than finished sentences, which helps the *forbidding* half
+  only: a required marker somebody rewords fails loudly, so escaping one is the thing being
+  caught. Stems stop inflection and not synonymy, and the comment says so, because a reviewer put
+  a synonym for one branch's verdict on another bullet and it went straight past the table.
+
+  **The three delete routes are closed by rules derived from the code's own output, not by a
+  longer list.** Two of the three printed lines send the operator to `accept` and name the
+  set-aside file and one names neither, because its remedy is to read the file rather than
+  replace it, so **a bullet may name either only if its own line does.** That caught two of the
+  three; the third said "remove the key file and re-run" and named neither, reaching the same
+  incident on the same branch a round later. So, derived the same way: **not one of the three
+  lines this code prints tells the operator to delete anything** — nothing to repair, fix the
+  permissions and re-run, find out what put it there — and so no bullet may, with the premise
+  asserted rather than assumed, so a remedy that ever does say it opens the gate for that branch
+  and for no other. Both rules shrink the table rather than growing it and cannot be reworded
+  around, because the gate is what the code prints.
+
+  **What remains held by a reader is named in that test's docstring, in two classes**, because
+  naming only the first is how the second got through twice. A sentence that means its opposite:
+  four of them, each a judgement about a file nobody read, two on the permissions bullet because
+  it is the branch with the least machine coverage — its remedy names no `accept`, no file and no
+  deletion, so the derived rules have nothing of its own to key on. And an instruction no printed
+  line contains, which is the class the delete routes belong to. The rules close the routes that
+  were demonstrated; they are not a proof that no third exists, and the docstring says that
+  rather than implying otherwise.
+
+  **The remedies were still promising past the measurement in three smaller ways, each closed.**
+  The hedge sat on generating the key when what fails is the *move*: `_set_unusable_key_aside`
+  failing means `accept` never reaches the creation and refuses, so it reads `and then generates
+  a key, or refuses without generating one if it cannot move it`. On a ledger whose entries were
+  never signed the named aftermath does not occur at all — measured, two unsigned entries beside
+  a short key give `entry #0: unsigned, but this repository has a provenance key` — so that shape
+  is named rather than left to be inferred from a scope clause, and the state test drives that
+  ledger too. It did not at first: the clause was added from a measurement that lived in a
+  comment, every fixture beside it carried signatures, and the only occurrence of the wording
+  anywhere was inside an expected literal — so rewording the line the code really prints was
+  caught by nothing here. That is the same defect as the two that test exists for, one clause
+  later, and it is this entry's own argument turned back on its author. And the Japanese told the reader
+  to look at the name that appeared without saying where: `verify` never prints an aside name,
+  only `accept`'s warning does, and the numbering is past the *highest* already there rather than
+  the next free one — measured with a gap on disk, `.unusable` and `.unusable-5` present, the
+  file landing on `.unusable-6`.
+
+  **Three more things a reviewer measured rather than argued.** `signs_here` was the last bare
+  `is_file` on this path and it is on a decision path — `approval.ledger_attestations` — so a key
+  behind an untraversable directory came back as `PermissionError` where a verdict was wanted. It
+  answers `True` there, which is the opposite default from `_is_dir` and for the reason its own
+  docstring already gives: of the two readings available where nothing was established, "this
+  repository signs" is the stricter one. The comment justifying `state`'s one module-level
+  `govern` import gave a ground that does not hold — importing the submodule executes the package
+  `__init__` and pulls six more modules, measured — so it now rests on the property that actually
+  makes it safe, that no `workbench` module is in that closure, and a test holds it in a fresh
+  interpreter. And the "two readers" in `usable_key`'s docstring was three.
+
+  The facet's operator prose carried one sentence about this problem and said the two sides merely
+  *happened* to be written alike; it now quotes the three lines, opens each bullet with the
+  action, names all three readers of the shared function, and says what that function does *not*
+  promise — the `stat` and the read are two calls, so a sibling changing the kind between them is
+  reported under the kind seen first. It also says the third line prints only over a directory,
+  that `govern audit verify` sets nothing aside so the file is still at `.rig/provenance.key`,
+  and not to carry the set-aside passage's four kinds down to this one. **Recorded and not
+  fixed:** a FIFO, a device or a dangling symlink at the key path is still reported as the key
+  being *absent* — an operator told the key was deleted over a FIFO goes looking for a backup,
+  while `accept` on the same repository sets that FIFO aside with a warning of its own — because
+  `is_file` and `is_dir` are the only two questions the `FileStore` port answers and neither says
+  yes to one. It is the same defect one shape further out, and its fix is a port change with its
+  own callers. Second: on a ledger with *no* signed entries, a directory at the key path whose
+  `is_dir` is refused mid-race now produces no problem rather than the third one, because the
+  neighbouring problem only fires where entries carry `sig`. No signature check is skipped by it
+  — there are none — so the cost is a diagnostic that is flaky under a race rather than a verdict
+  that is wrong, which is the trade the guard is there to make; it is driven in the test rather
+  than only written down, because a recorded cost nobody ran is a claim like any other. Third,
+  older than all of this: under a forced race a concurrent `accept` can overwrite an aside and
+  destroy the earlier file's bytes, so the "nothing is overwritten" guarantee above does not hold
+  there. It is the unlocked-concurrency residual recorded four rounds back; these remedies sit
+  safely beside it because they describe the allocation rather than the outcome.
 
 **Three acceptance-gate integrity holes, each measured on a scratch `feature` task before it
 was closed.**
