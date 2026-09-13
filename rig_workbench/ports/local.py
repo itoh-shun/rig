@@ -135,6 +135,29 @@ class LocalFileStore:
     def is_dir(self, path: pathlib.Path) -> bool:
         return pathlib.Path(path).is_dir()
 
+    def presence(self, path: pathlib.Path) -> Literal["present", "absent", "unknown"]:
+        # `os.lstat` and not the pair the signer asked before this method existed
+        # (`Path.is_symlink() or Path.exists()`): `exists()` follows the link, so a
+        # dangling symlink comes back `False` from it, and both re-raise `EACCES` out of
+        # callers whose contract is to report. One call rather than two also means one
+        # answer — the pair could have a sibling change the path between its halves.
+        #
+        # **Absence is the allow-list; the refusal is the fall-through.** The two errnos
+        # below are the ones where the lookup itself settled the question: `ENOENT` walked
+        # the path and found nothing, `ENOTDIR` found a non-directory above it, so nothing
+        # can be at the path either way. Everything else — `EACCES` on a directory above,
+        # `ELOOP` in the prefix, `EIO`, and the `ValueError` a path with a NUL in it
+        # raises — is this process failing to look, and it lands on `"unknown"` because it
+        # is what the `except` clauses do not name rather than because a reader remembered
+        # to route it. An errno nobody has thought of is caught by the same shape.
+        try:
+            os.lstat(path)
+        except (FileNotFoundError, NotADirectoryError):
+            return "absent"
+        except (OSError, ValueError):
+            return "unknown"
+        return "present"
+
     def glob(self, path: pathlib.Path, pattern: str) -> list[pathlib.Path]:
         return sorted(pathlib.Path(path).glob(pattern))
 

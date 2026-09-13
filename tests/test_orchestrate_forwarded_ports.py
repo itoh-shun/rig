@@ -182,6 +182,9 @@ class MemoryFiles:
     def is_dir(self, path) -> bool:
         return False
 
+    def presence(self, path) -> str:
+        return "present" if str(path) in self.written else "absent"
+
     def glob(self, path, pattern: str) -> list[pathlib.Path]:
         return []
 
@@ -287,7 +290,7 @@ def no_ambient_files(monkeypatch: pytest.MonkeyPatch) -> None:
     """`LocalFileStore`, disarmed over the one command that holds a `FileStore`."""
     _disarm(monkeypatch, ports_local.LocalFileStore,
             ("read_text", "read_bytes", "write_text", "append_line", "is_file", "is_dir",
-             "glob", "mkdir", "write_secret_bytes", "read_secret_bytes",
+             "presence", "glob", "mkdir", "write_secret_bytes", "read_secret_bytes",
              "append_secret_line"),
             "cmd_models takes a file store and this write did not use it.")
 

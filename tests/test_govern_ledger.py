@@ -16,8 +16,12 @@ import json
 import os
 import pathlib
 import re
+import shutil
+import socket
+import stat
 import subprocess
 import sys
+import tempfile
 from collections import Counter
 
 import pytest
@@ -821,7 +825,10 @@ def test_the_unusable_key_problem_says_which_of_the_three_situations_it_is(tmp_p
     owner, or an untraversable directory arrives here with its bytes intact and verifies
     again the moment the permissions do — so the problem claims nothing and asks for the
     permissions. The directory was never read as a key at all, because both readers gate on
-    `is_file`, so no signature in this ledger was made with what is sitting there.
+    `is_file`, so no signature in this ledger was made with what is sitting there. Its
+    enumeration is open and identical to the signer's, because a FIFO, a device and a
+    dangling symlink reach this branch too; while presence was `is_dir`, a directory was
+    the only kind that could, and the line named it alone.
 
     The clause they share is the one that is true of all three: no signature was checked,
     and the hash chain still was.
@@ -849,10 +856,12 @@ def test_the_unusable_key_problem_says_which_of_the_three_situations_it_is(tmp_p
     directory = _key_problem(tmp_path / "dir", _directory)
     assert directory == (
         ".rig/provenance.key exists but could not be read as a key (it is not a regular "
-        "file — a directory is at the key path), so no signature was checked; the hash "
-        "chain was still checked. Find out what put a directory there — no entry in this "
-        "ledger was signed with it, because a path of that kind is never read as a key, so "
-        "there is no key to recover. The next `accept` sets it aside under "
+        "file, such as a FIFO, a directory, a device, or a symlink that resolves to "
+        "nothing), so no signature was checked; the hash chain was still checked. Find "
+        "out what is at the key path — no entry in this ledger was signed with it, "
+        "because a path of that kind is never read as a key, so there is no key to "
+        "recover. Identify it rather than opening it, because reading a FIFO blocks until "
+        "something writes. The next `accept` sets it aside under "
         ".rig/provenance.key.unusable, numbered past any already there, and then generates "
         "a key, or refuses without generating one if it cannot move it; this problem is "
         "then replaced by `signature does not verify` on every entry signed before it, or "
@@ -1046,69 +1055,96 @@ def test_both_readers_of_the_key_path_delegate_to_the_one_observation(tmp_path,
     assert len(pulled) > 3, pulled
 
 
-def test_the_presence_check_answers_rather_than_raising_when_it_cannot_look(tmp_path,
-                                                                            monkeypatch):
-    """`_is_dir` is guarded for the reason the observation's own `stat` is.
+def test_the_presence_question_answers_rather_than_raising_when_it_cannot_look(tmp_path,
+                                                                               monkeypatch):
+    """`key_path_present` is guarded for the reason the observation's own `stat` is, and it
+    takes a refusal the other way from the helper it replaces.
 
-    `verify` asks `is_dir` about the key path to tell "present and unusable" from "gone",
-    and `Path.is_dir()` re-raises `EACCES` exactly as `is_file` does. Driven — one process
-    in `verify` while another flipped `0o755`/`0o000` on `.rig/` — the bare call put
-    `PermissionError` back out of `verify` in roughly 8,000 of 30,000 attempts, which is
-    the same contract breach this change closes one call earlier.
+    `verify` asks it to tell "present and unusable" from "gone". `Path.is_dir()`, which
+    used to answer that, re-raises `EACCES` exactly as `is_file` does, and `_is_dir`'s
+    guard spent the refusal on `False` — the answer that says the key is gone. The port
+    answers `"unknown"`, the caller reads `!= "absent"`, and so a `stat` that never settled
+    lands on *something is there*, which is the only one of the two readings that can be
+    established.
 
-    A refusal is not an answer, so it is `False`: the path is not *claimed* to be a
-    directory, and it joins the FIFO in being reported as an absent key rather than having
-    a kind invented for it.
+    **The mutation this pins**, run rather than named: flipping `key_path_present` to
+    `files.presence(p) == "present"` — the one-word edit that spends the refusal the old
+    way — turns the assertion below back into `is absent, so no signature could be checked
+    (the key was removed, ...)` over a FIFO whose `lstat` was refused, and this test fails
+    on it.
     """
+    from rig_workbench.ports.local import LOCAL_FILES
+
     seed(tmp_path, n=1)
     assert ledger.verify(tmp_path).signed == 1
     ledger.key_path(tmp_path).unlink()
     os.mkfifo(ledger.key_path(tmp_path))              # `is_file` False, `is_dir` False
-
     denied = ledger.key_path(tmp_path)
 
-    def refuses(self):
-        if self == denied:
-            raise PermissionError(13, "Permission denied")
-        return real(self)
+    # The bare `pathlib` probes this replaced, on the path this test then refuses: both of
+    # them re-raise, which is what the port must not do one call further in.
+    real_is_dir, real_is_symlink = pathlib.Path.is_dir, pathlib.Path.is_symlink
 
-    real = pathlib.Path.is_dir
-    monkeypatch.setattr(pathlib.Path, "is_dir", refuses)
-    result = ledger.verify(tmp_path)                  # reported, not raised
-    assert not result.ok
-    assert not any(p.startswith(".rig/provenance.key exists") for p in result.problems)
-    assert any("is absent" in p for p in result.problems)
-    # …and the guard is the only reason: the unguarded call raises where this one answers.
+    def refusing(real):
+        def probe(self):
+            if self == denied:
+                raise PermissionError(13, "Permission denied")
+            return real(self)
+        return probe
+
+    monkeypatch.setattr(pathlib.Path, "is_dir", refusing(real_is_dir))
+    monkeypatch.setattr(pathlib.Path, "is_symlink", refusing(real_is_symlink))
+    real_lstat = os.lstat
+    monkeypatch.setattr(os, "lstat", lambda path, *a, **k: (
+        (_ for _ in ()).throw(PermissionError(13, "Permission denied"))
+        if pathlib.Path(path) == denied else real_lstat(path, *a, **k)))
+
     with pytest.raises(PermissionError):
         denied.is_dir()
-    assert ledger._is_dir(denied) is False
+    with pytest.raises(PermissionError):
+        denied.is_symlink()
+    assert LOCAL_FILES.presence(denied) == "unknown"          # answered, not raised
+    assert ledger.key_path_present(denied) is True            # …and unknown counts as there
 
-    # **What the guard costs, driven rather than described.** On a ledger with no signed
-    # entries a directory at the key path whose `is_dir` is refused mid-race produces no
-    # problem at all — not the third one — because the neighbouring problem only fires
-    # where entries carry `sig`. Nothing skips a signature check (there are none), so the
-    # cost is a diagnostic that is flaky under a race rather than a verdict that is wrong,
-    # and that is the trade this guard makes. Written down in `_is_dir` and measured here,
-    # because a recorded cost nobody drove is a claim like any other.
-    quiet = tmp_path / "unsigned"
-    (quiet / ".rig").mkdir(parents=True)
-    ledger.append(quiet, "accept", actor="alice", subject="task-0")     # no key, no `sig`
-    assert not any("sig" in e for e in ledger.read_ledger(quiet))
-    ledger.key_path(quiet).mkdir()
-    assert any("a directory is at the key path" in p
-               for p in ledger.verify(quiet).problems)                  # …with `is_dir` up
+    result = ledger.verify(tmp_path)                          # reported, not raised
+    assert not result.ok
+    assert not any("is absent" in p for p in result.problems)
+    assert any(p.startswith(".rig/provenance.key exists but could not be read as a key")
+               for p in result.problems)
 
-    quiet_denied = ledger.key_path(quiet)
-    real_dir = pathlib.Path.is_dir
 
-    def refuses_quietly(self):
-        if self == quiet_denied:
-            raise PermissionError(13, "Permission denied")
-        return real_dir(self)
+def test_presence_is_the_one_question_and_both_sides_ask_it_through_the_port(tmp_path,
+                                                                             monkeypatch):
+    """`state._key_path_present` is `ledger.key_path_present` is `FileStore.presence`.
 
-    monkeypatch.setattr(pathlib.Path, "is_dir", refuses_quietly)
-    assert ledger.verify(quiet).problems == []          # the diagnostic, gone for this run
-    assert ledger.verify(quiet).ok                      # …and no verdict changed by it
+    Agreement over a handful of shapes is not delegation — the two sides agreed on regular
+    files and on directories right up until one of them was edited, which is the whole
+    defect. So the answer injected at the port below is one no filesystem produces for the
+    file that is really there, and both callers have to come back carrying it. A reader
+    that reached round the port answers from the file and fails.
+    """
+    from rig_workbench.ports import local as ports_local
+    from rig_workbench.workbench import state
+
+    p = tmp_path / ".rig" / "provenance.key"
+    p.parent.mkdir(parents=True)
+    assert ledger.key_path_present(p) is state._key_path_present(p) is False
+    p.write_bytes(b"k" * 32)
+    assert ledger.key_path_present(p) is state._key_path_present(p) is True
+
+    for answer, expected in (("absent", False), ("unknown", True), ("present", True)):
+        monkeypatch.setattr(ports_local.LocalFileStore, "presence",
+                            lambda self, path, _a=answer: _a)
+        assert ledger.key_path_present(p) is expected, answer
+        assert state._key_path_present(p) is expected, answer
+        monkeypatch.undo()
+
+    # …and an injected store reaches the ledger side without the local adapter at all.
+    class OnlyUnknown:
+        def presence(self, path):
+            return "unknown"
+
+    assert ledger.key_path_present(tmp_path / "nowhere", files=OnlyUnknown()) is True
 
 
 def test_asking_whether_this_repository_signs_answers_rather_than_raising(tmp_path,
@@ -1120,12 +1156,14 @@ def test_asking_whether_this_repository_signs_answers_rather_than_raising(tmp_pa
     may not traverse came back as `PermissionError` out of an approval check — a crash where
     a verdict was wanted.
 
-    **The default is the opposite of `_is_dir`'s, and that is deliberate.** `_is_dir` is
-    asked whether it may *claim* something, so a refusal is `False`. This one is asked which
-    of two readings to hold a decision to, and its own docstring settles that: answering "no
-    key" hands the decision back to the looser reading exactly where the stricter one is
-    called for. So where nothing can be established it answers `True` — this repository
-    signs — and the chain stays required.
+    **A refusal answers `True`, and it is the same direction `key_path_present` takes.**
+    Both are asked whether to read a `stat` that never answered as *nothing is there*, and
+    both refuse to: this one because answering "no key" hands the decision back to the
+    looser reading exactly where the stricter one is called for, and that one because
+    "gone" is the half an operator acts on. (The helper this sentence used to contrast
+    with, `_is_dir`, took a refusal the other way and has been removed with the reading it
+    was spent on.) So where nothing can be established this repository signs, and the chain
+    stays required.
     """
     (tmp_path / ".rig").mkdir(parents=True)
     ledger.key_path(tmp_path).write_bytes(b"k" * 32)
@@ -1302,49 +1340,226 @@ def test_the_remedies_promise_only_what_the_next_accept_does(tmp_path, monkeypat
     assert restored.ok and restored.signed == 2, restored.problems
 
 
-def _problems_after(root, shape):
-    """A one-entry signed ledger with `shape` at the key path; every problem `verify` gives."""
-    seed(root, n=1)
-    assert ledger.verify(root).signed == 1
-    ledger.key_path(root).unlink()
-    shape(ledger.key_path(root))
-    return ledger.verify(root).problems
+#: The kinds a key path can hold, beyond a key. `_character_device` needs `mknod`, which an
+#: unprivileged suite does not have; it is dropped there rather than faked, because a symlink
+#: to `/dev/null` is a *symlink* and would test the shape below it twice.
+def _character_device(p):
+    os.mknod(p, 0o600 | stat.S_IFCHR, os.makedev(1, 3))
 
 
-def test_the_line_that_names_a_directory_is_printed_only_where_is_dir_said_so(tmp_path):
-    """The coupling the third problem's wording rests on, forty-nine lines away from it.
+def _socket(p):
+    """A unix socket at the key path — bound short, then renamed onto it.
 
-    That line says a directory is at the key path, and it is entitled to because
-    `key_present` asks `is_dir` — so of everything `is_file` answers `False` about, only a
-    directory is ever *present* enough to reach it. Nothing pinned that: the branch tests
-    `key_kind == "other"`, which is also a FIFO, a device and a dangling symlink, so
-    widening presence by one line would print "a directory is at the key path" over a FIFO
-    and the branch test would still pass.
+    A reviewer found this shape reaching the not-a-regular-file branch while appearing in
+    no enumeration and no fixture; the enumeration stays open (`such as`) and this is the
+    fixture.
 
-    The other half of the same coupling is a live defect, reproduced here rather than
-    described: a FIFO on a signed ledger is reported as the key being *absent* — "the key
-    was removed, or this is a checkout that never had it" — over a path that is sitting
-    right there, while `accept` on the same repository sets that FIFO aside with a warning
-    of its own. An operator reading "removed" goes looking for a backup. It is recorded in
-    `verify` and in the operator prose and left for the port change that can fix it, and
-    this test is what fails if presence is widened without the wording following.
+    **Short, because `AF_UNIX` caps the bind path at about 108 bytes** and a `tmp_path` key
+    path measures 97 on this suite — close enough that binding in place would start failing
+    on a machine whose temp root is a few characters longer, which is a shape that stops
+    being tested without saying so. `rename` moves the inode like any other, so the socket
+    lands at the full path whatever its length.
+
+    **And under the same root the target is, because `rename` does not cross filesystems.**
+    `mkdtemp()` with no `dir` follows `TMPDIR`, which is where pytest derives `tmp_path`
+    from, so the two are on one filesystem by construction rather than by luck; a literal
+    `/tmp` here would not move with `TMPDIR` and would raise `EXDEV` on a runner that sets
+    it. `--basetemp` can still put them apart, so the rename falls back to binding in
+    place — which works whenever the path fits, and that is the ordinary case.
     """
-    directory = _problems_after(tmp_path / "dir", _directory)
-    assert any("a directory is at the key path" in p for p in directory)
-    assert not any("is absent" in p for p in directory)
+    short = pathlib.Path(tempfile.mkdtemp()) / "s"
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+            sock.bind(str(short))
+        try:
+            os.rename(short, p)
+        except OSError:                     # EXDEV: a basetemp on another filesystem
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+                sock.bind(str(p))
+    finally:
+        shutil.rmtree(short.parent, ignore_errors=True)
 
-    for name, shape in (("fifo", _fifo), ("dangling", _dangling_symlink)):
-        problems = _problems_after(tmp_path / name, shape)
-        # The same kind the directory has — `is_file` answered `False` for all three — and
-        # yet no key problem at all, because `is_dir` is what decides presence.
-        assert ledger.observe_key_file(ledger.key_path(tmp_path / name))[1] == "other"
-        assert ledger.observe_key_file(ledger.key_path(tmp_path / "dir"))[1] == "other"
-        assert not any(p.startswith(".rig/provenance.key exists") for p in problems), name
-        assert any("is absent, so no signature could be checked (the key was removed, or "
-                   "this is a checkout that never had it)" in p for p in problems), name
-        # …and the path really is there, which is what makes "removed" the wrong event.
-        assert ledger.key_path(tmp_path / name).is_symlink() \
-            or ledger.key_path(tmp_path / name).exists()
+
+def _symlink_loop(p):
+    p.symlink_to(p)
+
+
+def _nothing(p):
+    return None
+
+
+def _key_shapes():
+    shapes = [("absent", _nothing), ("short", _short_file), ("directory", _directory),
+              ("fifo", _fifo), ("dangling", _dangling_symlink), ("loop", _symlink_loop),
+              ("socket", _socket)]
+    probe = pathlib.Path(tempfile.mkdtemp()) / "dev"
+    try:
+        _character_device(probe)
+    except OSError:
+        return shapes
+    finally:
+        shutil.rmtree(probe.parent, ignore_errors=True)
+    return shapes + [("device", _character_device)]
+
+
+def test_a_non_directory_above_the_key_path_is_absence_and_not_a_kind(tmp_path):
+    """`ENOTDIR` at the caller, where the port-level table only reaches the adapter.
+
+    It is one of the two errnos `presence` reads as a settled absence, and the argument for
+    it is that the lookup answered: something that is not a directory is in the way, so
+    nothing can be at the path either way. This is what that costs or saves where an
+    operator sees it.
+
+    A `.rig` that is a regular file is the reachable shape — the key path and the ledger
+    path share that one component, so there is no ledger to read either, and the honest
+    verdict is a repository with nothing in it rather than one with a broken key.
+
+    **The mutation this pins**, run: dropping `NotADirectoryError` from the adapter's
+    absent clause sends `ENOTDIR` to the fall-through, `key_present` becomes true, and
+    `verify` turns `ledger intact — 0 entries, unsigned` into `ledger BROKEN` with `it is
+    not a regular file, such as a FIFO, …` asserted over a path that cannot hold anything
+    at all — a kind claimed about a lookup that did not fail, which is the branch that is
+    least entitled to guess.
+    """
+    from rig_workbench.ports.local import LOCAL_FILES
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / ".rig").write_text("not a directory", encoding="utf-8")
+
+    # The caller first, so that is what fails under the mutation above: the port-level
+    # table already has this errno, and what this test is for is where an operator meets it.
+    result = ledger.verify(root)
+    assert result.summary() == "ledger intact — 0 entries, unsigned"
+    assert result.problems == []
+    assert result.ok and result.entries == 0
+
+    assert LOCAL_FILES.presence(ledger.key_path(root)) == "absent"
+    assert ledger.key_path_present(ledger.key_path(root)) is False
+
+
+def test_a_sibling_linking_a_key_does_not_get_a_kind_asserted_over_it(tmp_path):
+    """The order of `verify`'s two looks at the path, pinned by the interleaving it decides.
+
+    They are two calls, so a sibling between them is reported from a state that never
+    existed. The one that matters is an ordinary concurrent `accept`: it sets an unusable
+    file aside and links a fresh key, and asked *after* the observation the presence
+    question then answered `present` about the new key while `key_kind` still said `other`
+    about the FIFO — so `verify` printed `it is not a regular file … no entry in this
+    ledger was signed with it` over a live 32-byte key. That is the one claim
+    `KeyFileKind`'s note says must never be made on an unestablished reading, and the
+    branch making it is the only one entitled to claim a kind at all.
+
+    Asked first, presence answers `absent` before the sibling runs, the observation then
+    reads the key that really is there, and there is no key problem to get wrong.
+
+    **The mutation this pins**, run: moving `key_path_present` back below
+    `observe_key_file` fails this test with the kind line asserted over the live key.
+
+    **What it does not close**, and the `verify` comment says so: a key *removed* between
+    the two calls still reaches that branch. Nothing here does that — the loader returns on
+    a usable key and only renames what it read as unusable — so it wants a hand `rm`.
+    """
+    seed(tmp_path, n=1)
+    assert ledger.verify(tmp_path).signed == 1
+    key_file = ledger.key_path(tmp_path)
+    signed_with = key_file.read_bytes()
+    key_file.unlink()
+    os.mkfifo(key_file)                       # what the sibling `accept` is about to move
+
+    class LinksAKeyMidLook:
+        """`LOCAL_FILES`, with the sibling's rename-and-link inside the presence call."""
+
+        def __init__(self) -> None:
+            self.fired = False
+
+        def __getattr__(self, name):
+            from rig_workbench.ports.local import LOCAL_FILES
+            return getattr(LOCAL_FILES, name)
+
+        def presence(self, path):
+            from rig_workbench.ports.local import LOCAL_FILES
+            if pathlib.Path(path) == key_file and not self.fired:
+                self.fired = True
+                answer = LOCAL_FILES.presence(path)
+                key_file.unlink()             # the set-aside's rename …
+                key_file.write_bytes(signed_with)          # … and the link after it
+                return answer
+            return LOCAL_FILES.presence(path)
+
+    files = LinksAKeyMidLook()
+    result = ledger.verify(tmp_path, files=files)
+    assert files.fired, "the sibling never ran, so this asserts nothing"
+    assert ledger.usable_key(key_file.read_bytes()) is not None   # …a live key is there
+    assert not [p for p in result.problems if "no entry in this ledger was signed" in p], (
+        "a kind was asserted over a key this process never established the kind of")
+    assert result.ok, result.problems
+
+
+def test_the_two_commands_do_not_contradict_each_other_about_the_key_path(tmp_path, capsys):
+    """Every shape, driven through `govern audit verify` and through `accept`'s key loader.
+
+    The two do not print the same words — one sets the file aside and the other only reports
+    — but they must not say different things about whether anything is *there*. They did.
+    Measured on this tree at 2ced317, on a one-entry signed ledger, per shape:
+
+    * FIFO, character device, dangling symlink, self-referential symlink, unix socket —
+      `verify` printed `.rig/provenance.key is absent, so no signature could be checked
+      (the key was removed, or this is a checkout that never had it)` while the loader on
+      the same repository set that same path aside as *not a regular file*. Five shapes,
+      one contradiction each, and "removed" sends an operator looking for a backup of a key
+      that was never there.
+    * A directory and a short regular file agreed already, because `is_dir` and `is_file`
+      are the two questions that used to decide presence.
+
+    After: all seven (or eight, where `mknod` is permitted) agree. The loop below asserts
+    the equivalence in both directions, so a later widening of one side alone fails here
+    even if every message is still well-formed on its own.
+
+    **The socket is here because a reviewer found it with no fixture and no enumeration.**
+    The printed line's list is open — `such as` — and it always covered this shape; what
+    was missing was anything driving it, so it was added rather than written down.
+
+    **The mutation this pins**, run: dropping `key_path_present` back to `key_kind !=
+    "other" or _is_dir(...)` — i.e. presence decided by `is_dir` again — fails this test on
+    the FIFO with `verify said gone and the signer set it aside`.
+    """
+    for name, shape in _key_shapes():
+        reporting, signing = tmp_path / f"{name}-verify", tmp_path / f"{name}-accept"
+        for root in (reporting, signing):
+            seed(root, n=1)
+            assert ledger.verify(root).signed == 1
+            ledger.key_path(root).unlink()
+            shape(ledger.key_path(root))
+
+        problems = ledger.verify(reporting).problems
+        gone = [p for p in problems if "is absent, so no signature could be checked" in p]
+        there = [p for p in problems
+                 if p.startswith(".rig/provenance.key exists but could not be read as a key")]
+
+        capsys.readouterr()
+        load_or_create_provenance_key(signing)
+        warned = [ln for ln in capsys.readouterr().out.splitlines()
+                  if ln.startswith("[WARN]") and "It has been moved to" in ln]
+
+        assert not (gone and warned), f"{name}: verify said gone and the signer set it aside"
+        assert bool(there) == bool(warned), (
+            f"{name}: verify {'did' if there else 'did not'} report something at the path "
+            f"and the signer {'did' if warned else 'did not'}")
+        assert bool(gone) != bool(there), f"{name}: {problems}"
+        if name == "absent":
+            assert gone and not warned
+        else:
+            assert there and len(warned) == 1, (name, problems, warned)
+
+        # **And where both speak, the enumeration is one string, not two that agree today.**
+        # This is the branch whose wording claimed a kind, and it claimed the wrong one for
+        # four of these shapes for as long as only a directory could reach it.
+        kinds = ("it is not a regular file, such as a FIFO, a directory, a device, or a "
+                 "symlink that resolves to nothing")
+        if name not in ("absent", "short"):
+            assert kinds in there[0], (name, there[0])
+            assert kinds in warned[0], (name, warned[0])
 
 
 def _fifo(p):
@@ -1369,9 +1584,16 @@ def test_the_operator_prose_quotes_the_problems_this_code_actually_reports(tmp_p
     **What is still held by a reader and not by this file**, in two classes, because naming
     only the first is how the second got through twice.
 
-    *A sentence that means its opposite.* Four are load-bearing, reversible by a one-word
+    *A sentence that means its opposite.* Seven are load-bearing, reversible by a one-word
     edit, and would stay green — written down because five rounds of review found the
-    unheld half every time, and an unwritten list is the one nobody checks:
+    unheld half every time, and an unwritten list is the one nobody checks. The guard below
+    keys on remedies, on `accept`, on filenames and on deletion, and none of these is any
+    of those. **One came off rather than on:** the count of kinds is derived from the printed
+    line at the end of this test now — every `N 種` in the passage, the bullet's and the
+    paragraph's alike, since the digit appears in both places and the first form of that
+    check only read bullets — so reversing the bullet to "only a directory" takes its digit
+    with it and fails there; what is left of it on this list is the clause saying the list
+    of kinds is open, which no count can hold.
 
     * `本物の鍵が無傷で残っている場合がある` on the permissions bullet. Reversed, it is
       permission to delete a live key.
@@ -1380,10 +1602,22 @@ def test_the_operator_prose_quotes_the_problems_this_code_actually_reports(tmp_p
     * `消えたことを直ったと読まない` on the length bullet. Reversed, it is a false all-clear
       over a state that reads as tampering, and unlike the entry below nothing near it
       contradicts the reversal.
-    * `直すものは無い`, also on the length bullet — the weakest of the four, since the
+    * `直すものは無い`, also on the length bullet — the weakest of the seven, since the
       sentence after it says the entries are gone for good either way.
+    * `これが全部ではない` on the kind bullet. Dropped, four reads as the whole set, and an
+      operator meeting a shape that is not one of the four — a unix socket is the one
+      nobody has written down — reads the line as not applying to them. The count beside it
+      is held below; this clause is what says the count is not a census.
+    * `種類を `stat` できなかった場合もここに出る` on the permissions bullet. Reversed, a
+      refused `stat` routes to the kind bullet, which is the one branch entitled to say
+      nothing in the ledger was signed with what is there — said over a live key behind a
+      mode, which is what `KeyFileKind` exists to forbid.
+    * `unknown になり、「ある」側として扱う` in the paragraph under the bullets — the same
+      claim as the entry above, in the second of the two places a reader has to check, and
+      counted separately for exactly that reason. Reversed there, the prose says a refused
+      `stat` means the key is gone while the code reports it present.
 
-    Two of the four are on the permissions bullet on purpose: it is the branch with the
+    Three of the seven are on the permissions bullet on purpose: it is the branch with the
     least machine coverage, because it is the only one whose remedy names no `accept`, no
     file and no deletion, so the derived rules below have nothing of its own to key on.
 
@@ -1523,6 +1757,50 @@ def test_the_operator_prose_quotes_the_problems_this_code_actually_reports(tmp_p
     claimed = [int(n) for ln in lines[bottom + 1:bottom + 40] if "文字が同じ" in ln
                for n in re.findall(r"(\d+) 文字が同じ", ln)]
     assert claimed == [len(shared)], (claimed, len(shared), shared)
+
+    # **And the same shape for the kind count, which rots in the direction the docstring's
+    # list does not cover.** That list enrols the sentence against *reversal* — somebody
+    # writing "only a directory" back into it — and reversal is not the only way it goes
+    # wrong: the code gaining a fifth kind updates the fenced block, because the block is
+    # tied byte for byte above, while the prose goes on saying four and nothing notices.
+    # So the number is derived from the line it explains rather than typed beside it: the
+    # reason string enumerates after `such as`, one item per comma, and the prose has to
+    # agree. This takes that half of the sentence off the unheld list; what stays unheld is
+    # the clause saying the enumeration is open, which no count can hold.
+    #
+    # **Every `N 種` in the passage, and not only the ones on a bullet.** The first form of
+    # this read `bullets`, which filters on `- ` plus a backtick, and the paragraph under
+    # them opens with the same digit — so an identical untethered number sat one line below
+    # the derivation, where a reader fixing the bullet has no reason to look. Two reviewers
+    # found it separately, which is what an enumerated window earns. The passage is bounded
+    # by the next heading rather than by a line count, so a mention added anywhere in it is
+    # enrolled by being written, and `(?!類)` keeps a `3 種類` elsewhere out of it.
+    #
+    # No `== 4` anywhere below: a literal here would be the second constant the paragraph
+    # above warns about, one line later. The only check on the split is that it split.
+    heading = next(i for i in range(bottom + 1, len(lines)) if lines[i].startswith("###"))
+    passage = lines[bottom + 1:heading]
+    kinds = reported[2].split("such as ", 1)[1].split("), so no signature")[0].split(", ")
+    assert len(kinds) > 1 and all(kind.strip() for kind in kinds), kinds
+    counted = [(offset, int(n)) for offset, ln in enumerate(passage)
+               for n in re.findall(r"(\d+) 種(?!類)", ln)]
+    assert {n for _, n in counted} == {len(kinds)}, (counted, kinds)
+    # …and the **kind** bullet still has to carry one, or reversing *that* sentence would
+    # leave the paragraph's digit agreeing with the code by itself and this check would
+    # pass over the exact prose the run exists to kill. A widened window that stops failing
+    # is worse than the literal it replaced.
+    #
+    # **`bullets[2]`, and the index is a name here rather than a position.** The first form
+    # of this asked whether *any* bullet carried a digit, which a reviewer broke by
+    # reversing the kind bullet and planting `4 種` on the permissions bullet: green, with
+    # the sentence gone. Index 2 is safe because of the loop above, not because the order
+    # happens to hold — that loop zips the bullets against `reported` and requires each
+    # bullet's leading fragment to match its own line **and no other**, so `bullets[2]` is
+    # "the bullet that identifies `reported[2]`", which is the line `kinds` is read out of
+    # two statements up. The `len(bullets) == 3` beside it only makes the zip total; on its
+    # own it would allow any ordering, and that is the assertion this one leans on.
+    assert re.findall(r"(\d+) 種(?!類)", bullets[2]), (
+        "the kind bullet no longer states how many kinds the line it explains names")
 
 
 def test_the_conformance_report_says_the_approver_names_it_counted_are_claims(tmp_path):

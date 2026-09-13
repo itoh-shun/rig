@@ -1049,6 +1049,158 @@ reproduced through the real CLI before it was touched.**
   there. It is the unlocked-concurrency residual recorded four rounds back; these remedies sit
   safely beside it because they describe the allocation rather than the outcome.
 
+- **`govern audit verify` and `accept` stop contradicting each other about whether anything is at
+  the key path.** The entry above recorded this as fixed nowhere: a FIFO, a device or a dangling
+  symlink at `.rig/provenance.key` was reported by `verify` as the key being *absent* while
+  `accept` on the same repository set that same path aside as *not a regular file*. Measured on
+  this tree at the parent commit, one-entry signed ledger, one repository per shape and a fresh
+  copy for each command: five shapes contradicted — a FIFO, a character device (`mknod`, not a
+  symlink to one), a dangling symlink, a symlink pointing at itself and a unix socket — each
+  giving `.rig/provenance.key is absent, so no signature could be checked (the key was removed, or
+  this is a checkout that never had it)` on one side and `could not be read as a key by this
+  process (it is not a regular file, ...)` with a set-aside on the other. A directory and an
+  8-byte regular file already agreed, because `is_dir` and `is_file` were the two questions
+  presence was decided by. After: all eight shapes agree, absent included, and the third problem's
+  enumeration is the signer's string character for character rather than two that happen to match.
+  The socket was the one a reviewer found with no fixture and no enumeration behind it: the
+  printed line's list is open (`such as`) and always covered it, so what it wanted was driving,
+  not wording. Its fixture binds short and renames onto the key path, because `AF_UNIX` caps the
+  bind path at about 108 bytes where a `tmp_path` key path measures 97; the short root is
+  `mkdtemp()` with no `dir`, which follows `TMPDIR` exactly as pytest derives `tmp_path` from it,
+  so the two are on one filesystem by construction — a literal `/tmp` there would not move with
+  `TMPDIR` and would raise `EXDEV` on a runner that sets it. `--basetemp` can still separate them,
+  so the rename falls back to binding in place, and both branches were driven.
+
+  **The port answers a third question, and it is about the entry rather than what it resolves
+  to.** `FileStore.presence` returns `"present"`, `"absent"` or `"unknown"`, because both callers
+  need the two readings a `bool` has nowhere to put: `"absent"` is what sends the signer to
+  *create a key* and the verifier to report *the key was removed*, and a `stat` that never
+  answered establishes neither. `lstat`, so a dangling symlink is the name an operator can see and
+  `rm` rather than a thing reported gone — `exists()` follows the link and calls it absent, which
+  is the wrong half of exactly this defect. Callers ask `!= "absent"`, so everything that is not a
+  settled absence counts as presence; `ledger.key_path_present` is the one function that asks it
+  and `workbench.state` delegates to that rather than to a second `is_symlink() or exists()`.
+  Both adapters answer it, and there are two: `ports.local.LocalFileStore` and the `MemoryFiles`
+  double in `tests/test_orchestrate_forwarded_ports.py`, found by grepping the tree for each of
+  the protocol's method names rather than by counting from memory — no third class defines
+  `read_text`, `is_file`, `glob` or `append_secret_line`. The protocol is `runtime_checkable`, so
+  the double is held by `isinstance`: deleting its `presence` fails
+  `test_the_injected_ports_are_ports`, run.
+
+  **The cautious answer is the fall-through, not a routed case.** Only the two errnos where the
+  lookup itself settled the question are named — `ENOENT` walked the path and found nothing,
+  `ENOTDIR` found a non-directory above it — and everything else lands on `"unknown"` by being
+  what the `except` clauses do not name. Measured, one row per failure mode: a denial on a
+  directory above the path `unknown` (in a forked child dropped to uid 65534, because `chmod
+  0o000` does not stop root), a symlink loop in the prefix `unknown`, `ENAMETOOLONG` `unknown`,
+  an `EIO` nobody enumerated `unknown`, a NUL in the path — which is a `ValueError`, not an
+  `OSError` — `unknown`, and a loop *at* the path `present`, since `lstat` sees the link itself.
+  Naming `PermissionError` beside `FileNotFoundError` on the absent clause turns the denial row
+  into `absent`, which is the bug's own shape; that mutation was run and
+  `test_presence_answers_unknown_for_every_way_the_lookup_did_not_settle` fails on it.
+
+  **What this does to the two ways out, measured rather than assumed.** `_is_dir` is removed: it
+  existed to keep `Path.is_dir()`'s re-raised `EACCES` out of `verify` and paid for it with
+  `False`, the answer that says the key is gone, and the cost it recorded (a directory whose
+  `is_dir` is refused mid-race dropping the third problem on an unsigned ledger) goes with it. On
+  the signing side the loader used to put a bare `PermissionError: [Errno 13] Permission denied:
+  .../.rig/provenance.key` out of `Path.is_symlink()` with `.rig/` at mode `0o000`; it now reaches
+  `_set_unusable_key_aside` and comes out with that function's own refusal instead — `... could
+  not be moved aside (...), and it will not be overwritten. Re-run; if it persists, move or delete
+  the file yourself`. **That is a changed sentence, not a removed raise**, and the docstring says
+  so: `cmd_accept` catches `OSError` at "(2)-c" either way, so the exit path is the one it already
+  had. A path that vanishes between the presence answer and the rename is a `FileNotFoundError`
+  the loader already re-reads on — driven, it returns a fresh 32-byte key with no warning — and
+  `verify` in the mirror-image window reports the key absent, which is what it now is; the two
+  still agree under the race.
+
+  **Recorded and not fixed, because it is not this defect.** With `.rig/` itself untraversable,
+  `verify` raises before it ever reaches the key path: `read_ledger`'s own `is_file` gives
+  `PermissionError: [Errno 13] Permission denied: .../.rig/ledger.jsonl`, measured in the same
+  unprivileged child, identically before and after this change.
+
+  **Eight test functions added and two deleted, counted from the range diff** — `test_govern_ledger.py`
+  67 to 70, `test_ports.py` 32 to 34, `test_provenance.py` 29 to 30, and the narrow suite 258 to
+  264. The two deleted pinned the old behaviour and had to go: one asserted `_is_dir`'s
+  `False`-on-refusal and the cost of it, the
+  other asserted that the directory line printed only over a directory *and reproduced the
+  contradiction as the documented defect*. In their place: the shapes driven through both commands
+  with the agreement asserted in both directions, the refusal answering instead of raising, both
+  sides reaching the port (injected at `LocalFileStore.presence`, so a reader going round it
+  answers from the file and fails), the ordering test below, and the two `presence` contract tests.
+  **Two more close the last claims nothing was holding.** The loader's changed refusal is one of
+  them, and it was the sentence this change is argued on: in a privilege-dropped child with `.rig/`
+  at `0o000` over a real key, the type is pinned as *exactly* `OSError` — `PermissionError` is an
+  `OSError`, asserted in the test rather than left to the reader, which is why the class alone
+  cannot separate the two shapes — along with the message and the promise inside it, that the key
+  is still there and unmoved afterwards. The other takes `ENOTDIR` to a caller: a `.rig` that is
+  itself a regular file, where the honest verdict is a repository with nothing in it. `_problems_after`
+  went with the test that was its last caller. Six mutations run, not named: `!= "absent"` to `== "present"` fails the refusal and delegation tests;
+  `key_path_present` back to `key_kind != "other" or _is_dir(...)` fails the agreement test on the
+  FIFO with `verify said gone and the signer set it aside`; `lstat` to `stat` fails both contract
+  tests on the dangling symlink and the prefix loop; moving the presence question back below
+  the observation fails the ordering test; putting the loader back on `p.is_symlink() or
+  p.exists()` fails the refusal test with `PermissionError: [Errno 13] Permission denied:
+  .../.rig/provenance.key`, which is the base behaviour exactly; and dropping
+  `NotADirectoryError` from the absent clause turns that last caller's `ledger intact — 0
+  entries, unsigned` into `ledger BROKEN — 1 problem(s) over 0 entries`, a kind asserted over a
+  path that cannot hold anything. The facet's operator prose said the third line printed
+  only over a directory and told the reader not to carry the set-aside passage's kinds down to it;
+  both are now false and both are corrected, the kind bullet gained the caution its own printed
+  line carries — reading a FIFO blocks until something writes, so identify it with `ls -l` rather
+  than opening it, which the set-aside bullet twenty lines up had and this one did not — and the
+  quoted block is tied to what `verify` prints by the test that was already there. That bullet
+  also handed over `ls -l` with no argument while the set-aside bullet twenty lines up named its
+  path, so it names `.rig/provenance.key` now; and the two bullets described one set of shapes
+  with two precisions, so both now say *a symlink that resolves to nothing, self-pointing
+  ones included* — `accept` sets a self-pointing link aside exactly as `verify` reports it.
+  The docstring
+  list of sentences that are load-bearing and held by no assertion goes from four to seven, and one
+  of the additions came straight back off. The count of kinds is now derived from the printed line
+  — the reason string enumerates after `such as`, one item per comma, and **every** stated count
+  in the passage has to agree, the bullet's and the paragraph's alike. That last part was a second
+  reviewer's: the first form of the check read only lines beginning `- ` plus a backtick, which
+  left an identical untethered digit one line below the derivation, where somebody fixing the
+  bullet has no reason to look. The passage is bounded by the next heading rather than a line
+  count, so a mention added anywhere in it is enrolled by being written. Four mutations run: the
+  code gaining a fifth kind with the byte-tied block updated as a developer would have and the
+  prose left at four; the same with the bullet corrected and the paragraph not, which is the case
+  the widening exists for; the bullet reversed to "only a directory" — which the widened check
+  would have *passed*, since the paragraph's digit still agreed with the code, so the kind bullet
+  has to carry a digit too; and that reversal again with a count planted on the neighbouring
+  bullet, which is how the first form of *that* requirement went green with the sentence gone,
+  because it asked whether **some** bullet carried a digit rather than the kind one. It keys on
+  `bullets[2]` now, and that index is a name rather than a position: the loop above zips the
+  bullets against the reported lines and requires each bullet's leading fragment to match its own
+  line **and no other**, so index 2 *is* the bullet identifying the line the count is read out of.
+  The `len(bullets) == 3` beside it only makes that zip total; on its own it would allow any
+  ordering. A widened window that stops failing is worse than the literal it replaced, twice over.
+  There is no `== 4` anywhere in it, because a literal there would be the second constant its own
+  neighbouring paragraph warns about. What stays on the list from that
+  sentence is the clause saying the list of kinds is open, which no count can hold; beside it, the
+  claim that a refused `stat` is read as present, counted twice because it is written in two
+  places a reader has to check separately.
+
+  **The two looks at the path are ordered, and the order was measured rather than argued.** They
+  are two calls, so a sibling between them is reported from a state that never existed; what the
+  order decides is which interleaving that is. Asked *after* the observation — the shape this
+  change first had — an ordinary concurrent `accept` (set an unusable file aside, link a fresh
+  key) gave a kind from before the rename with a presence from after it, and `verify` asserted `it
+  is not a regular file … no entry in this ledger was signed with it` over a live 32-byte key:
+  driven with a store that links the key inside the presence call, that is what it printed, where
+  the parent commit printed the milder stale `is absent`. Asked first, the same interleaving comes
+  back `ok=True` with no key problem at all, driven the same way. **Not closed, and the comment
+  says which is left:** a key *removed* between the two calls still reaches that branch, driven —
+  but nothing here removes a usable key, since the loader returns on one and renames only what it
+  read as unusable, so it wants a hand `rm` where the other order wanted an ordinary `accept`.
+
+  **And one reader of this path still disagrees, which predates all of this.** `signs_here` is a
+  bare `is_file`, so on a FIFO, a device, a dangling symlink and a directory it answers *this
+  repository does not sign* while `verify` reports something is at the key path — measured, all
+  four, on an unsigned ledger. It is what `approval.ledger_attestations` asks, not what an
+  operator reads, and moving it is a decision-path change with its own argument; it is recorded
+  here as the last disagreeing reader rather than folded into this one.
+
 **Three acceptance-gate integrity holes, each measured on a scratch `feature` task before it
 was closed.**
 

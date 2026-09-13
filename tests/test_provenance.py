@@ -860,6 +860,97 @@ def test_the_operator_prose_quotes_the_warnings_this_code_actually_prints(tmp_pa
     assert quoted == printed
 
 
+def test_the_loader_refuses_with_its_own_message_where_it_used_to_raise_an_errno(tmp_path):
+    """The sentence the presence change is argued on, which nothing was holding.
+
+    `load_or_create_provenance_key` asked `p.is_symlink() or p.exists()` before the port
+    had a presence question, and `Path.is_symlink()` re-raises `EACCES`: with `.rig/` at
+    mode `0o000` that put a bare `PermissionError: [Errno 13] Permission denied:
+    .../.rig/provenance.key` out of the loader. `FileStore.presence` answers `"unknown"`
+    there, which counts as present, so the loader goes on to `_set_unusable_key_aside` and
+    comes out with that function's own refusal instead.
+
+    **This is a changed message and not a removed raise, and the distinction is the whole
+    claim.** `PermissionError` *is* an `OSError` — asserted below rather than left to the
+    reader — so `cmd_accept`'s `except OSError` at "(2)-c" caught it before and catches it
+    now, and the exit path is the one it already had. What moved is the sentence the
+    operator is handed: from an errno and a path to what to do about it. So the type is
+    pinned as *exactly* `OSError`, which is what separates the two, and the text with it.
+
+    **And the refusal's own promise is checked, not assumed:** it says the file will not be
+    overwritten, so the key is still there and unmoved when the child is done.
+
+    The denial has to be real: `mode 0o000` does not stop root, so the loader runs in a
+    forked child that drops to an unprivileged uid first.
+    """
+    import os
+    import select
+    import shutil
+    import signal
+    import tempfile
+
+    from rig_workbench.workbench.state import (                    # imported before the
+        load_or_create_provenance_key)                             # fork, as above
+    assert issubclass(PermissionError, OSError)     # …which is why the type alone is not
+    assert tmp_path                                 # the point, and the message is
+
+    nobody = 65534
+    root = pathlib.Path(tempfile.mkdtemp())      # not tmp_path: the chain above `.rig/`
+    rig = root / ".rig"                          # has to be traversable by the child
+    key = rig / "provenance.key"
+    real = bytes(range(32))
+    try:
+        os.chmod(root, 0o755)
+        rig.mkdir()
+        key.write_bytes(real)                    # a genuine key, behind a denied directory
+        os.chmod(rig, 0o000)
+
+        read_fd, write_fd = os.pipe()
+        pid = os.fork()
+        if pid == 0:                                               # pragma: no cover
+            try:
+                os.close(read_fd)
+                if os.getuid() == 0:
+                    os.setgid(nobody)
+                    os.setuid(nobody)
+                got = len(load_or_create_provenance_key(pathlib.Path(root)))
+                os.write(write_fd, f"returned={got}".encode())
+            except BaseException as exc:                           # noqa: BLE001
+                os.write(write_fd, f"{type(exc).__name__}\n{exc}".encode())
+            finally:
+                os._exit(0)
+        os.close(write_fd)
+        # Bounded, for the reason the neighbouring fork is: an unbounded read on a child
+        # that never writes turns a failure into a hung suite.
+        answer = ""
+        if select.select([read_fd], [], [], 60)[0]:
+            answer = os.read(read_fd, 65536).decode()
+        else:
+            os.kill(pid, signal.SIGKILL)
+        os.close(read_fd)
+        os.waitpid(pid, 0)
+        assert answer, "the child produced nothing within 60s"
+
+        kind, _, message = answer.partition("\n")
+        # Exactly `OSError`: `PermissionError` is the shape this change replaced, and it
+        # would satisfy any assertion written on the base class.
+        assert kind == "OSError", answer
+        assert message.startswith(f"{key} could not be moved aside ("), message
+        assert "[Errno 13] Permission denied" in message
+        assert str(key) in message and f"{key}.unusable" in message
+        assert message.endswith("), and it will not be overwritten. Re-run; if it "
+                                "persists, move or delete the file yourself"), message
+
+        os.chmod(rig, 0o700)
+        # The promise in that sentence: nothing overwritten, nothing set aside, and the key
+        # still the key — so a re-run once the mode is fixed has something to find.
+        assert key.read_bytes() == real
+        assert not list(rig.glob("provenance.key.unusable*"))
+    finally:
+        os.chmod(rig, 0o700)
+        shutil.rmtree(root, ignore_errors=True)
+
+
 def test_a_key_is_created_without_clobbering_one_that_appeared_first(tmp_path):
     """The creation is a link from a complete temporary file, not a write to the path.
 

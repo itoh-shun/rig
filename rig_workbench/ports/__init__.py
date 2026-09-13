@@ -214,6 +214,44 @@ class FileStore(Protocol):
         """Whether a directory is there, as `policy.resolve_layer_paths` asks of `.rig/policy`."""
         ...
 
+    def presence(self, path: pathlib.Path) -> Literal["present", "absent", "unknown"]:
+        """Whether anything is at `path` at all — the entry itself, not what it resolves to.
+
+        Shaped by the two commands that contradicted each other without it.
+        `govern audit verify` (through `ledger.key_path_present`) and `accept`'s key loader
+        (`workbench.state.load_or_create_provenance_key`) both have to tell *the key is
+        gone* from *something is at the key path that is not a key*, and the two probes
+        above cannot: `is_file` and `is_dir` both answer `False` to a FIFO, a device and a
+        dangling symlink, so the only reading left on this side was "gone". Measured, on a
+        one-entry signed ledger with a FIFO at `.rig/provenance.key`: `govern audit verify`
+        printed `.rig/provenance.key is absent, so no signature could be checked (the key
+        was removed, or this is a checkout that never had it)` while `accept` on the same
+        repository moved that same path aside as *not a regular file*. A device and a
+        dangling symlink gave the same pair.
+
+        **The entry and not its target.** A dangling symlink is one of those shapes, and
+        it is a name in a directory an operator can see and `rm`; a question that resolved
+        the link would report it gone, which is the wrong half of exactly this defect.
+
+        **Three answers, because `"unknown"` is an answer and not a failure to give one.**
+        A denial on a directory above the path, a symlink loop in the prefix, an I/O
+        error: each leaves this process unable to establish either reading, and both
+        readings are load-bearing here — `"absent"` sends the signer to *create a key* and
+        the verifier to report *the key was removed*. A `bool` has nowhere to put that, so
+        a caller holding one is forced to guess, which is what `pathlib`'s `False` already
+        made it do. Callers ask `!= "absent"`, so everything that is not a settled absence
+        counts as presence: on this path that is the direction that neither generates a
+        key over something unread nor tells an operator their key was removed.
+
+        **And it does not raise.** `is_file` and `is_dir` above hand back `pathlib`'s own
+        behaviour, which swallows `ENOENT`, `ENOTDIR`, `EBADF` and `ELOOP` and re-raises
+        the rest; a bare `EACCES` out of that pair, and out of `Path.is_symlink()` beside
+        it, is how `PermissionError` reached the key loader's caller. An adapter that
+        raised here would put the same crash back, one call further in, so answering is
+        part of the contract and not of one implementation.
+        """
+        ...
+
     def glob(self, path: pathlib.Path, pattern: str) -> list[pathlib.Path]:
         """Matching entries directly under `path`, in sorted order.
 

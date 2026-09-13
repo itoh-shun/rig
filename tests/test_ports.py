@@ -16,10 +16,13 @@ that sentence unenforceable from the first day.
 
 import ast
 import datetime
+import errno
 import json
 import os
 import pathlib
+import select
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -184,6 +187,122 @@ def test_reads_and_probes_match_pathlib(tmp_path):
     assert LOCAL_FILES.is_dir(tmp_path / ".rig") is (tmp_path / ".rig").is_dir() is True
     with pytest.raises(FileNotFoundError):
         LOCAL_FILES.read_text(p)
+
+
+def test_presence_answers_about_the_entry_itself_and_not_what_it_resolves_to(tmp_path):
+    """The question `is_file` and `is_dir` could not answer, and why it is a third method.
+
+    Both of those say `False` to a FIFO, a character device, a dangling symlink and a
+    symlink to itself, so a caller holding only them has "gone" as the single reading left
+    — which is how `govern audit verify` came to report a key as removed over a FIFO that
+    was sitting there. `presence` is `lstat`, so it answers about the name in the
+    directory: `exists()` follows the link and calls a dangling symlink absent, and that is
+    the wrong half of exactly this defect.
+
+    Every row below is asserted against the `pathlib` probes beside it, so the table is a
+    comparison rather than a restatement of the adapter's own body.
+    """
+    shapes = {"regular": lambda p: p.write_bytes(b"k" * 32),
+              "dir": lambda p: p.mkdir(),
+              "fifo": os.mkfifo,
+              "dangling": lambda p: p.symlink_to(p.parent / "nothing-is-here"),
+              "loop": lambda p: p.symlink_to(p)}
+    try:
+        os.mknod(tmp_path / "probe-dev", 0o600 | 0o020000, os.makedev(1, 3))
+    except OSError:
+        pass                       # `mknod` wants privilege; the other five carry the case
+    else:
+        (tmp_path / "probe-dev").unlink()
+        shapes["device"] = lambda p: os.mknod(p, 0o600 | 0o020000, os.makedev(1, 3))
+
+    for name, make in shapes.items():
+        path = tmp_path / name
+        make(path)
+        assert LOCAL_FILES.presence(path) == "present", name
+        if name not in ("regular", "dir"):
+            # The shapes the two existing probes cannot see, which is the whole reason for
+            # a third question rather than a wider reading of one of them.
+            assert LOCAL_FILES.is_file(path) is path.is_file() is False, name
+            assert LOCAL_FILES.is_dir(path) is path.is_dir() is False, name
+    # …and the entry, not the target: `exists()` is what would have called these gone.
+    assert (tmp_path / "dangling").exists() is (tmp_path / "loop").exists() is False
+
+    assert LOCAL_FILES.presence(tmp_path / "nothing-is-here") == "absent"
+    assert LOCAL_FILES.presence(tmp_path / "regular" / "below") == "absent"   # ENOTDIR
+
+
+def test_presence_answers_unknown_for_every_way_the_lookup_did_not_settle(tmp_path,
+                                                                          monkeypatch):
+    """`"unknown"` is the fall-through, not a routed case, and that is the point of it.
+
+    Only the two errnos where the lookup itself settled the question are named — `ENOENT`
+    walked the path and found nothing, `ENOTDIR` found a non-directory above it. Everything
+    else is this process failing to look, and it reaches `"unknown"` by being what the
+    `except` clauses do not name, so an errno nobody thought of takes the cautious answer
+    without a reader having to remember it.
+
+    **The mutation this pins**, run rather than named: naming `PermissionError` beside
+    `FileNotFoundError` on the `"absent"` clause — the shape of the bug, since both callers
+    read `!= "absent"` — turns the denial row below into `absent`, and this test fails on
+    it.
+
+    The denial is a real one. `chmod 0o000` does not stop root, so it is measured in a
+    forked child that drops to an unprivileged uid first.
+    """
+    (tmp_path / "loopdir").symlink_to(tmp_path / "loopdir")
+    assert LOCAL_FILES.presence(tmp_path / "loopdir" / "below") == "unknown"   # ELOOP
+    assert LOCAL_FILES.presence(tmp_path / ("z" * 400)) == "unknown"     # ENAMETOOLONG
+    assert LOCAL_FILES.presence(pathlib.Path(f"{tmp_path}/a\x00b")) == "unknown"  # ValueError
+
+    # The errno nobody enumerated: it has to land on `"unknown"` structurally.
+    real = os.lstat
+    target = tmp_path / "io-error"
+    target.write_text("x", encoding="utf-8")
+    monkeypatch.setattr(os, "lstat", lambda path, *a, **k: (
+        (_ for _ in ()).throw(OSError(errno.EIO, "Input/output error"))
+        if pathlib.Path(path) == target else real(path, *a, **k)))
+    assert LOCAL_FILES.presence(target) == "unknown"
+    monkeypatch.undo()
+
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    (vault / "provenance.key").write_bytes(b"k" * 32)
+    tmp_path.chmod(0o755)
+    vault.chmod(0o000)
+    try:
+        assert _answered_by_an_unprivileged_child(vault / "provenance.key") == "unknown"
+    finally:
+        vault.chmod(0o700)
+
+
+def _answered_by_an_unprivileged_child(path: pathlib.Path) -> str:
+    """`LOCAL_FILES.presence(path)` as uid 65534 sees it, or what it raised instead."""
+    read_fd, write_fd = os.pipe()
+    pid = os.fork()
+    if pid == 0:                                                  # pragma: no cover
+        try:
+            os.close(read_fd)
+            if os.getuid() == 0:
+                os.setgroups([])
+                os.setgid(65534)
+                os.setuid(65534)
+            os.write(write_fd, str(LOCAL_FILES.presence(path)).encode())
+        except BaseException as exc:                              # noqa: BLE001
+            os.write(write_fd, f"raised={type(exc).__name__}: {exc}".encode())
+        finally:
+            os._exit(0)
+    os.close(write_fd)
+    # Bounded: an unbounded read on a child that never writes turns a failure into a hung
+    # suite, and this repository sets no global test timeout to catch it.
+    answer = ""
+    if select.select([read_fd], [], [], 60)[0]:
+        answer = os.read(read_fd, 4096).decode()
+    else:
+        os.kill(pid, signal.SIGKILL)
+    os.close(read_fd)
+    os.waitpid(pid, 0)
+    assert answer, "the child produced nothing within 60s"
+    return answer
 
 
 def test_glob_returns_what_policy_resolution_asks_for(tmp_path):

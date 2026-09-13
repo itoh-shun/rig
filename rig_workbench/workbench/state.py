@@ -712,7 +712,7 @@ def load_or_create_provenance_key(root: pathlib.Path) -> bytes:
         existing = provenance_key(root)
         if existing is not None:
             return existing
-        if p.is_symlink() or p.exists():
+        if _key_path_present(p):
             observed, kind = _observe_key_file(p)
             aside = _set_unusable_key_aside(p)
             if aside is None:
@@ -836,6 +836,36 @@ def _observe_key_file(p: pathlib.Path) -> tuple[bytes | None, _KeyFileKind]:
     from ..govern.ledger import observe_key_file
 
     return observe_key_file(p)
+
+
+def _key_path_present(p: pathlib.Path) -> bool:
+    """`govern.ledger.key_path_present`, for the reason `_observe_key_file` is that shape.
+
+    The loader used to ask `p.is_symlink() or p.exists()` here while `ledger.verify` asked
+    `is_file` or `is_dir` there, and on every shape that is neither a regular file nor a
+    directory the two answers differed: measured on a signed ledger with a FIFO at the key
+    path, this side set it aside as not a regular file and `govern audit verify` on the same
+    repository called the key removed. One question, asked through the port by one function,
+    is what keeps them from saying different things about the same path.
+
+    **It does not stop the loader raising; it changes what it raises and what that says.**
+    `Path.is_symlink()` re-raises `EACCES`, so with `.rig/` at mode `0o000` this line put a
+    bare `PermissionError: [Errno 13] Permission denied: .../.rig/provenance.key` out of
+    the loader — measured in a forked child that dropped to an unprivileged uid, over a
+    repository holding a real 32-byte key. The port answers `"unknown"` there, which counts
+    as present, so the loader now goes on to `_set_unusable_key_aside` and comes out of the
+    same shape with that function's own refusal: `OSError: .../.rig/provenance.key could
+    not be moved aside ([Errno 13] Permission denied: ... -> ....unusable), and it will not
+    be overwritten. Re-run; if it persists, move or delete the file yourself`. `cmd_accept`
+    catches `OSError` at "(2)-c" either way, so the exit path is the one it already had and
+    what moved is the sentence the operator is given — from an errno to the thing to do.
+
+    Present is the safe direction for this caller too: the other one creates a fresh key
+    over a path that may hold the real one.
+    """
+    from ..govern.ledger import key_path_present
+
+    return key_path_present(p)
 
 
 def _usable(raw: bytes | None) -> bytes | None:
