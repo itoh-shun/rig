@@ -18,11 +18,29 @@ them).
 """
 
 import pathlib
-
-from rig_workbench.orchestrate.gates import is_runtime_gate
+from typing import Protocol, runtime_checkable
 
 from .config import FACETS, SKILLS
+from .rig_surfaces import RECIPE_GATE
 from .state import _emit, parse_frontmatter
+
+
+@runtime_checkable
+class RuntimeGateTest(Protocol):
+    """Whether a `gate:` string names a gate the runner will actually run.
+
+    Drill coverage is a question about gates that produce a verdict somebody could have
+    rubber-stamped, so a recipe with no runtime gate is out of scope entirely. Which
+    strings those are is the orchestrator's vocabulary — "acceptance-gate" and
+    "review-gate" today — and a copy of the list here would decide the scope of this check
+    from a second source that nothing keeps in step. Stated as what this module needs
+    rather than imported, because the import is the edge `tests/test_layering_contract.py`
+    forbids; `rig_surfaces.RECIPE_GATE` satisfies it, and satisfies `recipes.RecipeGate`
+    at the same time without either declaration widening to the other's needs.
+    """
+
+    def is_runtime_gate(self, gate: object) -> bool:
+        ...
 
 # The seed catalog table is anchored by this header cell (perspective column).
 _PERSPECTIVE_HEADER = "検出すべき観点"
@@ -273,6 +291,8 @@ def check_drill_coverage(
     recipe_files: list[pathlib.Path],
     drill_instruction: pathlib.Path | None = None,
     fixture_corpus: pathlib.Path | None = None,
+    *,
+    gates: RuntimeGateTest = RECIPE_GATE,
 ) -> None:
     """WARN for gate-bearing recipes that /rig:drill cannot exercise (#266)."""
     drill_md = drill_instruction or (FACETS / "instructions" / "drill.md")
@@ -294,7 +314,7 @@ def check_drill_coverage(
         if not isinstance(steps, list):
             continue
         steps = [s for s in steps if isinstance(s, dict)]
-        if not any(is_runtime_gate(s.get("gate")) for s in steps):
+        if not any(gates.is_runtime_gate(s.get("gate")) for s in steps):
             continue  # gate-less recipes are out of drill's scope
         gated_total += 1
 

@@ -13,6 +13,8 @@ from rig_workbench.orchestrate import config
 from rig_workbench.orchestrate.recipes import load_steps
 from rig_workbench.orchestrate.runstate import new_state
 
+from conftest import pin_runs_path
+
 
 def _recipe(write_recipe):
     return write_recipe(
@@ -136,7 +138,7 @@ def test_http_provider_uses_configured_timeout_and_preserves_default(
 def test_real_short_cli_timeout_stops_with_duration(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setattr(config, "RUNS_PATH", tmp_path / "runs.jsonl")
+    pin_runs_path(monkeypatch, tmp_path / "runs.jsonl")
     monkeypatch.setattr(config, "GLOBAL_RUNS_PATH", tmp_path / "global-runs.jsonl")
     steps = load_steps({"steps": [{"id": "implement", "instruction": "work"}]})
     state = new_state("timeout-flow", steps, None)

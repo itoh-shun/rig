@@ -31,6 +31,7 @@ from rig_workbench.eval.promote import promote_case
 from rig_workbench.packs.cli import init_pack
 from rig_workbench.packs.sync import sync_manifest
 from rig_workbench.packs.validation import validate_pack
+from rig_workbench.packs.resolver import core_reference_ids
 
 CASE_ID = "demo-persona-case"
 
@@ -140,7 +141,7 @@ def test_a_prompt_bearing_pack_can_be_authored_end_to_end(authored):
     evidence that actually passed rather than by an assertion that it would."""
     repo, pack, _draft_path = authored
     with pytest.raises(Exception, match="requires at least one evaluation case"):
-        validate_pack(pack)
+        validate_pack(pack, core_ids=core_reference_ids())
 
     baseline, current = _measure(repo, "baseline"), _measure(repo, "current")
     destination, promoted = promote_case(repo, CASE_ID, baseline, current, into=pack)
@@ -148,7 +149,7 @@ def test_a_prompt_bearing_pack_can_be_authored_end_to_end(authored):
 
     assert destination == pack / "evals" / "cases" / CASE_ID / "case.json"
     assert promoted["status"] == "approved"
-    assert validate_pack(pack)["assets"]["eval-case"] == [f"evals/cases/{CASE_ID}/case.json"]
+    assert validate_pack(pack, core_ids=core_reference_ids())["assets"]["eval-case"] == [f"evals/cases/{CASE_ID}/case.json"]
 
 
 def test_the_draft_stays_in_the_project_where_it_is_nobody_s_undeclared_file(authored):

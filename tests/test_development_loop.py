@@ -13,8 +13,8 @@ import sys
 
 import pytest
 
-from rig_workbench.workbench import development_loop
-from rig_workbench.workbench.development_loop import (BLOCKED, MAX_CYCLES, NO_PROGRESS,
+from rig_workbench.assurance import development_loop
+from rig_workbench.assurance.development_loop import (BLOCKED, MAX_CYCLES, NO_PROGRESS,
                                                      TARGET_NOT_IMMUTABLE,
                                                       READY_FOR_ASSURANCE,
                                                       REPEATED_FAILURE, SCHEMA, Cycle,
@@ -323,10 +323,21 @@ def test_the_judgement_touches_nothing_and_calls_no_model():
     for something, this fails.
     """
     import ast
-    tree = ast.parse((REPO_ROOT / "rig_workbench" / "workbench"
+    tree = ast.parse((REPO_ROOT / "rig_workbench" / "assurance"
                       / "development_loop.py").read_text(encoding="utf-8"))
     reaching = {"subprocess", "socket", "http", "urllib", "requests", "os", "pathlib", "open"}
-    judging = {"validate", "load", "must_stop", "handoff", "_trailing_repeats"}
+    # `_longest_run`, not `_trailing_repeats`: the name in this set was stale and the
+    # function had gone unchecked, which is what the precondition below now catches.
+    judging = {"validate", "load", "must_stop", "handoff", "_longest_run"}
+    # An `ast.walk` loop that matches nothing passes, so an empty or mis-pathed file would
+    # read as a clean module. Assert the functions being judged are in the file first.
+    found = {node.name for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)}
+    assert judging <= found, (
+        "the module this test reads does not define the functions it is about: "
+        f"{sorted(judging - found)}. The loop below judges whatever it finds, "
+        "so a file that lost these names — or a path that stopped resolving to this "
+        "module — would walk zero functions and pass."
+    )
     for node in ast.walk(tree):
         if not (isinstance(node, ast.FunctionDef) and node.name in judging):
             continue
@@ -360,7 +371,7 @@ def _invoke(tmp_path, payload, target=IMMUTABLE, monkeypatch=None, text=None, **
     `test_assurance_target` gives: a test that skips when it cannot find one kills no
     mutation, and what is under test is the exit code, not `build_receipt`.
     """
-    import rig_workbench.workbench.assurance as assurance_module
+    import rig_workbench.assurance.assurance as assurance_module
     import rig_workbench.workbench.state as state_module
 
     monkeypatch.setattr(assurance_module, "build_receipt", lambda root, task_id: target)
@@ -417,7 +428,7 @@ def test_a_receipt_with_no_base_leaves_the_command_with_the_weaker_answer(tmp_pa
     """Without both ends there is no range, and building a history from one of them would ask
     a question with no lower bound — the defect round 4 found. The answer says which one it
     got rather than pretending."""
-    import rig_workbench.workbench.assurance as assurance_module
+    import rig_workbench.assurance.assurance as assurance_module
     import rig_workbench.workbench.state as state_module
 
     receipt = _receipt(base=None)
@@ -438,7 +449,7 @@ def test_a_receipt_with_no_base_leaves_the_command_with_the_weaker_answer(tmp_pa
 def test_the_range_starts_where_the_delivered_work_does_after_a_rebase(tmp_path, monkeypatch):
     """Which base is not a detail. After a rebase the originally registered one is not in the
     delivered history at all, so a range starting there would put every product outside it."""
-    import rig_workbench.workbench.assurance as assurance_module
+    import rig_workbench.assurance.assurance as assurance_module
     import rig_workbench.workbench.state as state_module
 
     receipt = _receipt()

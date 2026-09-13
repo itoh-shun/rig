@@ -140,8 +140,8 @@ def test_a_task_is_visible_from_the_worktree_it_lives_in(tmp_path):
     assert task_id in seen.stdout
 
 
-# ── the hint that sends the session there ────────────────────────────────────
-def test_creating_a_worktree_says_to_open_the_session_in_it(tmp_path):
+# ── the hint that names the directory without moving the session ─────────────
+def test_creating_a_worktree_names_the_path_it_made_and_how_to_reach_it(tmp_path):
     main = tmp_path / "main"
     main.mkdir()
     _git(main, "init", "-q", "-b", "master")
@@ -160,11 +160,19 @@ def test_creating_a_worktree_says_to_open_the_session_in_it(tmp_path):
     # The path is what makes the hint actionable; a hint naming no directory is a slogan.
     assert worktree in created.stdout
     assert f"cd {worktree}" in created.stdout
+    # ...and it is not an instruction to go there. README §1/§2 promise that `/rig:go "<task>"`
+    # is enough and that the session that said it keeps driving — which is also what
+    # `facets/instructions/workbench` §③-2 implements, by pinning each subagent's working
+    # directory to this path. The command used to close with 「この worktree の中でセッションを
+    # 開き直す」, a step the documentation says nobody has to take.
+    assert "開き直さなくていい" in created.stdout, (
+        "the last lines no longer say that this session keeps driving, so a reader is back to "
+        "guessing whether `/rig:go` was enough:\n" + created.stdout)
 
 
 def test_a_task_with_no_worktree_is_not_told_to_go_to_one(tmp_path):
     """`--no-worktree` writes into the main tree, so there is nowhere else to go and the
-    hint would send the operator to a directory that does not exist."""
+    hint would name a directory that does not exist."""
     main = tmp_path / "main"
     main.mkdir()
     _git(main, "init", "-q", "-b", "master")
@@ -178,7 +186,8 @@ def test_a_task_with_no_worktree_is_not_told_to_go_to_one(tmp_path):
         [sys.executable, str(WORKBENCH), "new", "--type", "bugfix", "--no-worktree", "probe"],
         capture_output=True, text=True, cwd=main, timeout=120)
     assert created.returncode == 0, created.stderr
-    assert "セッションを開き直す" not in created.stdout
+    assert "Next:" not in created.stdout, (
+        "a task with no worktree was still given the worktree hint:\n" + created.stdout)
 
 
 # ── state is shared; what the caller is looking at is not ────────────────────
@@ -824,7 +833,7 @@ def test_the_owner_lookup_is_given_the_same_root_the_source_was_found_in(tmp_pat
 
     monkeypatch.setattr(resolver, "_pack_entries", lambda root: [("project", pack)])
     monkeypatch.setattr("rig_workbench.packs.validation.validate_tiered_collection",
-                        lambda entries: [("project", pack, manifest)])
+                        lambda entries, *, core_ids: [("project", pack, manifest)])
     monkeypatch.setattr(
         resolver, "resolve_owned_asset",
         lambda kind, name, pack_id, *, project=None, shared=None:
@@ -846,7 +855,7 @@ def test_the_pack_collection_is_the_repositorys_one(tmp_path, monkeypatch):
     monkeypatch.setattr(resolver, "_pack_entries_with_trust",
                         lambda root: (seen.setdefault("root", root) and [] or [], {}))
     monkeypatch.setattr("rig_workbench.packs.validation.validate_tiered_collection",
-                        lambda entries: [])
+                        lambda entries, *, core_ids: [])
     resolver.resolved_collection(project=tmp_path / "tree", shared=tmp_path / "shared")
     assert seen["root"] == (tmp_path / "shared").resolve()
 

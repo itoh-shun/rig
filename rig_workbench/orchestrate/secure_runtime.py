@@ -19,6 +19,8 @@ import sys
 import tempfile
 from typing import Callable
 
+from ..ports import Env
+from ..ports.local import OS_ENV
 from .secure_fs import read_bytes as read_secure_bytes
 
 
@@ -534,10 +536,15 @@ def run_secure_provider(
     cfg: dict,
     *,
     environ: dict[str, str] | None = None,
-    run_command: Callable[..., subprocess.CompletedProcess] = subprocess.run,
+    # noqa is permanent: the call below passes `pass_fds=launcher.launcher_fds`, handing
+    # the child the sealed provider descriptors. That is the design, and `ProcessRunner`
+    # has no `pass_fds` — nor should it, since every other caller would inherit a way to
+    # leak descriptors into a subprocess.
+    run_command: Callable[..., subprocess.CompletedProcess] = subprocess.run,  # noqa: TID251
+    env: Env = OS_ENV,
 ) -> tuple[int, str]:
     """Execute only the sealed bytes, with prompt on stdin and vendor-scoped env."""
-    source_env = os.environ if environ is None else environ
+    source_env = env.snapshot() if environ is None else environ
     allowed = _PROVIDER_ENV[launcher.provider]
     environment = {key: value for key, value in source_env.items() if key in allowed}
     environment["PATH"] = FIXED_PROVIDER_PATH

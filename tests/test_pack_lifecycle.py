@@ -12,10 +12,11 @@ import pytest
 
 from test_eval_cases import valid_case
 from test_packs import _write_pack
+from rig_workbench.packs.resolver import core_reference_ids
 
 
 def _quality_pack(root: pathlib.Path, monkeypatch) -> pathlib.Path:
-    from rig_workbench import __version__
+    from rig_workbench.eval.cases import EXECUTOR_VERSION
     from rig_workbench.eval.runner import run_case
     from rig_workbench.packs.manifest import canonical, digest, read_json_yaml
     from rig_workbench.packs.lock import tree_hash
@@ -55,7 +56,10 @@ def _quality_pack(root: pathlib.Path, monkeypatch) -> pathlib.Path:
         ]}
     judge.judge_provider = "codex"
     judge.judge_model = "fixture"
-    judge.judge_executor_version = __version__
+    # The eval executor's version, not the package release: the gate compares this
+    # against `eval.cases.EXECUTOR_VERSION`, which is eval's own constant and is allowed
+    # to sit still through a release that does not change how a measurement is executed.
+    judge.judge_executor_version = EXECUTOR_VERSION
     result_root = root / "generated-results"
     monkeypatch.setattr(
         "rig_workbench.eval.runner._execute",
@@ -90,7 +94,7 @@ def test_install_local_is_atomic_canonical_and_does_not_modify_source(tmp_path):
     before = tree_hash(source)
     root = tmp_path / "installed"
     result = install_pack(
-        source, scope="project", project=tmp_path, root=root, allow_unverified=True,
+        source, scope="project", project=tmp_path, root=root,
     )
 
     assert result.path == root / "local-pack" and result.verification_status == "verified-local"
@@ -125,7 +129,6 @@ def test_unsigned_project_escape_hatch_cannot_target_other_or_external_roots(
         with pytest.raises(PackError, match="inside the project"):
             install_pack(
                 source, scope="project", project=project, root=root,
-                allow_unverified=True,
             )
         assert not root.exists()
 
@@ -135,14 +138,12 @@ def test_unsigned_project_escape_hatch_cannot_target_other_or_external_roots(
     with pytest.raises(PackError, match="symlink"):
         install_pack(
             source, scope="project", project=project, root=project / "linked-packs",
-            allow_unverified=True,
         )
     assert not org_target.exists()
 
     monkeypatch.chdir(project)
     assert cmd_pack([
         "install", str(source), "--scope", "project", "--root", str(org_target),
-        "--allow-unverified",
     ]) == 2
     assert not org_target.exists()
 
@@ -154,13 +155,14 @@ def test_lock_scope_mismatch_fails_closed(tmp_path):
 
     project = tmp_path / "project"
     source = _write_pack(tmp_path / "source", "scope-lock", recipe=False)
-    install_pack(source, scope="project", project=project, allow_unverified=True)
+    install_pack(source, scope="project", project=project)
     root = project / ".rig/packs"
     lock = read_lock(root)
     lock["packs"][0]["scope"] = "org"
     write_lock(root, lock)
     with pytest.raises(PackError, match="scope mismatch"):
-        validate_lock_root(root, expected_scope="project")
+        validate_lock_root(root, core_ids=core_reference_ids(),
+                           expected_scope="project")
 
 
 @pytest.mark.parametrize("link_component", [".rig", ".rig/packs", "broken/intermediate"])
@@ -183,14 +185,13 @@ def test_default_and_intermediate_project_root_symlinks_fail_before_write(
     with pytest.raises(PackError, match="symlink"):
         install_pack(
             source, scope="project", project=project, root=root,
-            allow_unverified=True,
         )
     assert not external.exists() and not target.exists()
 
     if root is None:
         monkeypatch.chdir(project)
         assert cmd_pack([
-            "install", str(source), "--scope", "project", "--allow-unverified",
+            "install", str(source), "--scope", "project",
         ]) == 2
         assert not external.exists()
 
@@ -230,7 +231,7 @@ def test_default_absent_project_pack_root_is_created_normally(tmp_path):
     project.mkdir()
     source = _write_pack(tmp_path / "source", "normal-default", recipe=False)
     result = install_pack(
-        source, scope="project", project=project, allow_unverified=True,
+        source, scope="project", project=project,
     )
     assert result.path == project / ".rig/packs/normal-default"
 
@@ -247,7 +248,7 @@ def test_install_safe_zip_and_tar(tmp_path, kind):
         archive = pathlib.Path(shutil.make_archive(str(tmp_path / "pack"), "gztar",
                                                    root_dir=source.parent, base_dir=source.name))
     result = install_pack(archive, scope="project", project=tmp_path,
-                          root=tmp_path / f"installed-{kind}", allow_unverified=True)
+                          root=tmp_path / f"installed-{kind}")
     assert result.manifest["id"] == f"archive-{kind}"
 
 
@@ -289,7 +290,7 @@ def test_install_rejects_scan_findings_missing_dependency_and_incompatible_engin
     (dangerous / "pack.yaml").write_text(canonical(manifest), encoding="utf-8")
     with pytest.raises(PackError, match="destructive"):
         install_pack(dangerous, scope="project", project=tmp_path,
-                     root=tmp_path / "danger-installed", allow_unverified=True)
+                     root=tmp_path / "danger-installed")
 
     missing = _write_pack(tmp_path / "missing", "dependent", recipe=False,
                           dependency=[{"id": "absent", "range": "*"}])
@@ -310,27 +311,123 @@ def test_install_rejects_scan_findings_missing_dependency_and_incompatible_engin
                      root=tmp_path / "future")
 
 
-def test_unverified_prompt_pack_is_project_only_and_quality_fixture_installs(tmp_path, monkeypatch):
+def test_an_unverified_prompt_pack_installs_in_every_scope_and_the_lock_still_says_so(
+        tmp_path, monkeypatch):
+    """Nothing gates an install on trust any more — but the verdict is still measured.
+
+    Installing used to refuse anything that was not `verified-publisher` unless the caller
+    said `--allow-unverified`, and that flag was refused outside project scope. Both are
+    gone, and so is the signature the first of them asked for, so `user` scope takes the
+    same pack `project` scope takes. What has not changed is the verdict: a status is still
+    computed from the pack's own evaluation evidence and still written into the lock, so
+    `pack list` and `pack info` answer exactly as they did.
+    """
     from rig_workbench.packs.installer import install_pack
     from rig_workbench.packs.lock import read_lock
-    from rig_workbench.packs.model import PackError
+
+    monkeypatch.setenv("RIG_USER_HOME", str(tmp_path / "user-home"))
+    user_root = tmp_path / "user-home" / ".rig" / "packs"
+    # A second id, because the user tier is a real tier the project install then resolves
+    # against, and one pack in two tiers is a duplicate-id refusal for its own reasons.
+    for_user = _write_pack(tmp_path / "for-user", "unverified-user-pack", recipe=True)
+    user = install_pack(for_user, scope="user", project=tmp_path, root=user_root)
+    assert user.verification_status == "unverified"
+    assert read_lock(user_root)["packs"][0]["verification_status"] == "unverified"
 
     unverified = _write_pack(tmp_path / "unverified", "unverified-pack", recipe=True)
-    with pytest.raises(PackError, match="unsigned packs require"):
-        install_pack(unverified, scope="project", project=tmp_path,
-                     root=tmp_path / "verified-required")
-    with pytest.raises(PackError, match="restricted to project"):
-        install_pack(unverified, scope="user", project=tmp_path,
-                     root=tmp_path / "user", allow_unverified=True)
     installed = install_pack(unverified, scope="project", project=tmp_path,
-                             root=tmp_path / "project", allow_unverified=True)
+                             root=tmp_path / "project")
     assert installed.verification_status == "unverified"
     assert read_lock(tmp_path / "project")["packs"][0]["verification_status"] == "unverified"
 
     quality = _quality_pack(tmp_path / "quality", monkeypatch)
     verified = install_pack(quality, scope="project", project=tmp_path,
-                            root=tmp_path / "quality-installed", allow_unverified=True)
+                            root=tmp_path / "quality-installed")
     assert verified.verification_status == "verified-local"
+
+
+def test_the_lock_keeps_its_schema_version_and_both_publisher_columns_on_disk(tmp_path):
+    """The disk format an already-installed project has, after signing was removed.
+
+    Two assertions moved here from the publisher suite when that suite was deleted, because
+    neither was about signing:
+
+      * the schema version, pinned as a literal rather than against `LOCK_SCHEMA_VERSION`.
+        A lock format change is a migration question for every installed project, and this
+        is the canary that makes somebody answer it. The version moved 2 -> 3 when a git
+        source gained `source_id` and `revision`, and 3 -> 4 when entries began recording
+        which version satisfied each dependency. Removing the signing mechanism did not
+        move it, which is the point.
+      * a fresh install writes `publisher_key_id` and `signed_digest` as `None`, and the
+        lock it wrote validates.
+
+    Both columns are dead weight to the code and load-bearing to the disk: see
+    `test_a_lock_that_still_claims_a_publisher_reads_clean_and_keeps_its_label` below for
+    what happens to a lock that lacks them.
+    """
+    from rig_workbench.packs.installer import install_pack
+    from rig_workbench.packs.lock import read_lock, validate_lock_root
+
+    project = tmp_path / "project"
+    root = project / ".rig/packs"
+    source = _write_pack(tmp_path / "source", "columns-pack", recipe=False)
+    result = install_pack(source, scope="project", project=project)
+    assert result.verification_status == "verified-local"
+
+    assert read_lock(root)["pack_lock_schema_version"] == 4
+    entries = validate_lock_root(root, core_ids=core_reference_ids())
+    assert [(item["id"], item["verification_status"],
+             item["publisher_key_id"], item["signed_digest"]) for item in entries] == [
+        ("columns-pack", "verified-local", None, None)]
+
+
+def test_a_lock_that_still_claims_a_publisher_reads_clean_and_keeps_its_label(
+    tmp_path, monkeypatch,
+):
+    """`verified-publisher` is written by nothing and checked by nothing, and still parses.
+
+    That is the whole compatibility obligation of removing publisher signing. A lock on a
+    user's disk may say `verified-publisher` with a key id and a signed digest in it; there
+    is no signature left to confirm or deny that, so the value is accepted on the file's
+    word and reported back unchanged. The label going stale is the accepted price. Refusing
+    it would not be: `_pack_entries_with_trust` is fail-closed, so a lock this refused would
+    take persona, recipe and wiki resolution down for the whole project — the second half of
+    this test is that failure, reproduced against a column that was removed rather than
+    kept.
+    """
+    from rig_workbench.packs.installer import install_pack
+    from rig_workbench.packs.lock import read_lock, write_lock
+    from rig_workbench.packs.model import PackError
+    from rig_workbench.packs.resolver import resolved_collection
+
+    monkeypatch.setenv("RIG_USER_HOME", str(tmp_path / "user-home"))
+    monkeypatch.delenv("RIG_ORG_HOME", raising=False)
+    project = tmp_path / "project"
+    root = project / ".rig/packs"
+    install_pack(_write_pack(tmp_path / "source", "legacy-claim", recipe=False),
+                 scope="project", project=project)
+
+    lock = read_lock(root)
+    entry = next(item for item in lock["packs"] if item["id"] == "legacy-claim")
+    entry["verification_status"] = "verified-publisher"
+    entry["publisher_key_id"] = "rig-release-2026"
+    entry["signed_digest"] = "b" * 64
+    write_lock(root, lock)
+
+    reported = [record.verification_status for record in resolved_collection(project=project)
+                if record.manifest["id"] == "legacy-claim"]
+    assert reported == ["verified-publisher"], (
+        "a lock written before signing was removed must still resolve, and must still be "
+        "reported under the label it recorded")
+
+    # And the reason the columns were kept rather than dropped: without one of them, every
+    # entry in the root fails the exact key-set check, and the failure is not confined to
+    # `pack` verbs — it comes out of the resolve path every run goes through.
+    lock = read_lock(root)
+    del next(item for item in lock["packs"] if item["id"] == "legacy-claim")["signed_digest"]
+    write_lock(root, lock)
+    with pytest.raises(PackError, match="invalid entry for legacy-claim"):
+        resolved_collection(project=project)
 
 
 def test_lock_write_failure_rolls_back_install(tmp_path, monkeypatch):
@@ -344,7 +441,7 @@ def test_lock_write_failure_rolls_back_install(tmp_path, monkeypatch):
     ))
     with pytest.raises(PackError, match="lock failure"):
         installer.install_pack(
-            source, scope="project", project=tmp_path, root=root, allow_unverified=True,
+            source, scope="project", project=tmp_path, root=root,
         )
     assert not (root / "rollback-pack").exists()
 
@@ -358,8 +455,7 @@ def test_lock_drift_blocks_resolve_doctor_and_remove(tmp_path, monkeypatch):
 
     project = tmp_path / "project"
     source = _write_pack(tmp_path / "source", "tampered-pack", recipe=True)
-    installed = install_pack(source, scope="project", project=project,
-                             allow_unverified=True)
+    installed = install_pack(source, scope="project", project=project)
     recipe = installed.path / "recipes/hello.md"
     recipe.write_text(recipe.read_text() + "tampered\n", encoding="utf-8")
     with pytest.raises(PackError, match="hash mismatch|lock drift"):
@@ -378,12 +474,12 @@ def test_remove_is_dry_run_then_yes_and_refuses_dependents(tmp_path):
 
     project = tmp_path / "project"
     base = _write_pack(tmp_path / "base", "base-pack", recipe=False)
-    install_pack(base, scope="project", project=project, allow_unverified=True)
+    install_pack(base, scope="project", project=project)
     target, removed = remove_pack("base-pack", scope="project", project=project)
     assert not removed and target.exists()
     dependent = _write_pack(tmp_path / "dependent", "dependent-pack", recipe=False,
                             dependency=[{"id": "base-pack", "range": "*"}])
-    install_pack(dependent, scope="project", project=project, allow_unverified=True)
+    install_pack(dependent, scope="project", project=project)
     with pytest.raises(PackError, match="dependents"):
         remove_pack("base-pack", scope="project", project=project, yes=True)
     _target, removed = remove_pack("dependent-pack", scope="project", project=project, yes=True)
@@ -399,7 +495,7 @@ def test_remove_delete_failure_restores_exact_lock_and_target(tmp_path, monkeypa
 
     project = tmp_path / "project"
     source = _write_pack(tmp_path / "source-rollback", "remove-rollback", recipe=False)
-    installed = install_pack(source, scope="project", project=project, allow_unverified=True)
+    installed = install_pack(source, scope="project", project=project)
     lock_path = project / ".rig/packs/pack.lock.json"
     original = lock_path.read_bytes()
     monkeypatch.setattr(remover.shutil, "rmtree", lambda _path: (
@@ -418,7 +514,7 @@ def test_remove_lock_failure_restores_target_without_changing_lock(tmp_path, mon
 
     project = tmp_path / "project-lock-rollback"
     source = _write_pack(tmp_path / "source-lock-rollback", "lock-rollback", recipe=False)
-    installed = install_pack(source, scope="project", project=project, allow_unverified=True)
+    installed = install_pack(source, scope="project", project=project)
     lock_path = project / ".rig/packs/pack.lock.json"
     original = lock_path.read_bytes()
     monkeypatch.setattr(remover, "write_lock", lambda *_args: (
@@ -438,10 +534,10 @@ def test_lock_ownership_is_bidirectional_and_lockless_root_is_diagnosed(tmp_path
     project = tmp_path / "project-owned"
     root = project / ".rig/packs"
     source = _write_pack(tmp_path / "owned-source", "owned-pack", recipe=False)
-    install_pack(source, scope="project", project=project, allow_unverified=True)
+    install_pack(source, scope="project", project=project)
     _write_pack(root, "unowned-pack", recipe=False)
     with pytest.raises(PackError, match="directory ownership mismatch.*unowned-pack"):
-        validate_lock_root(root)
+        validate_lock_root(root, core_ids=core_reference_ids())
     assert any(item["code"] == "lock_drift" for item in diagnose(project=project)["findings"])
 
     legacy_project = tmp_path / "legacy-project"
@@ -530,21 +626,30 @@ def test_pack_test_structural_mock_and_provider_unavailable(tmp_path, monkeypatc
     # The adapters run from the eval harness's own 0555 workspace — one implementation,
     # externality check and cleanup included — and not from a second hand-rolled 0555
     # directory left behind under the result dir.
-    from rig_workbench.packs import tester as pack_tester
+    from rig_workbench.packs.eval_bridge import EVALUATION
     opened_workspaces = []
-    real_read_only_workspace = pack_tester.read_only_workspace
 
     @contextlib.contextmanager
     def recording_workspace(root):
-        with real_read_only_workspace(root) as workspace:
+        # Still the harness's own workspace, reached through the `CaseRunner` collaborator
+        # `test_pack` declares rather than through a module-level name it happened to
+        # import. The wrapper only records; what is asserted about the directory is
+        # asserted about the one the harness built.
+        with EVALUATION.read_only_workspace(root) as workspace:
             opened_workspaces.append(workspace)
             assert workspace.is_dir() and workspace.stat().st_mode & 0o222 == 0
             yield workspace
 
-    monkeypatch.setattr(pack_tester, "read_only_workspace", recording_workspace)
+    class _RecordingRunner:
+        validate_case = staticmethod(EVALUATION.validate_case)
+        result_failures = staticmethod(EVALUATION.result_failures)
+        make_judge_adapter = staticmethod(EVALUATION.make_judge_adapter)
+        run_case = staticmethod(EVALUATION.run_case)
+        read_only_workspace = staticmethod(recording_workspace)
+
     mock, code = test_pack(pack, project=tmp_path, provider="mock", model="fixture",
                            judge_provider="mock", judge_model="fixture",
-                           result_dir=result_dir)
+                           result_dir=result_dir, evaluation=_RecordingRunner())
     assert opened_workspaces and not any(item.exists() for item in opened_workspaces)
     assert not (result_dir / ".read-only-workspace").exists()
     assert code == 0 and mock["status"] == "non_quality_mock"
@@ -664,7 +769,7 @@ def test_import_results_validates_every_staged_file_and_is_atomic(
         "import-results", str(pack), "--result-dir", str(staged),
     ]) == 0
     assert capsys.readouterr().out == f"imported: {relative}\n"
-    validated = validate_pack(pack)
+    validated = validate_pack(pack, core_ids=core_reference_ids())
     assert validated["assets"]["eval-result"] == [relative]
     assert (pack / relative).is_file()
 
@@ -672,6 +777,7 @@ def test_import_results_validates_every_staged_file_and_is_atomic(
 def test_import_results_rejects_stale_prompt_binding_and_unsafe_stage_paths(
     tmp_path, monkeypatch,
 ):
+    from rig_workbench.packs.eval_bridge import EVALUATION
     from rig_workbench.packs.evidence import import_results
     from rig_workbench.packs.lock import tree_hash
     from rig_workbench.packs.manifest import canonical, digest, read_json_yaml
@@ -696,26 +802,39 @@ def test_import_results_rejects_stale_prompt_binding_and_unsafe_stage_paths(
     (pack / "pack.yaml").write_text(canonical(manifest), encoding="utf-8")
     before = tree_hash(pack)
 
-    monkeypatch.setattr(
-        "rig_workbench.packs.evidence._git_identity",
-        lambda _root: (result["execution_commit"], result["execution_base_commit"], "available"),
-    )
-    monkeypatch.setattr(
-        "rig_workbench.packs.evidence.execution_diff_sha256",
-        lambda *_args, **_kwargs: result["execution_diff_sha256"],
-    )
+    # The two facts this test has to pin — which commit the repository is at, and what the
+    # tree differs by — now arrive through the `EvalEvidence` collaborator `import_results`
+    # declares, rather than through two module-level names it happened to import. Passed in
+    # rather than monkeypatched, which is the seam doing its job: every other question the
+    # collaborator answers still goes to the real machinery, so the rules under test run
+    # against it and not against a stub. The two pinned facts are unchanged.
+    class _PinnedIdentity:
+        CaseError = EVALUATION.CaseError
+        validate_case = staticmethod(EVALUATION.validate_case)
+        canonical_json = staticmethod(EVALUATION.canonical_json)
+        result_failures = staticmethod(EVALUATION.result_failures)
+
+        @staticmethod
+        def git_identity(_root):
+            return (result["execution_commit"], result["execution_base_commit"], "available")
+
+        @staticmethod
+        def execution_diff(*_args, **_kwargs):
+            return result["execution_diff_sha256"]
+
+    pinned = _PinnedIdentity()
     with pytest.raises(PackError, match="prompt/asset binding is stale"):
-        import_results(pack, staged=staged, project=repository)
+        import_results(pack, staged=staged, project=repository, evaluation=pinned)
     assert tree_hash(pack) == before
 
     inside = repository / "staged"
     shutil.copytree(staged, inside)
     with pytest.raises(PackError, match="outside the project"):
-        import_results(pack, staged=inside, project=repository)
+        import_results(pack, staged=inside, project=repository, evaluation=pinned)
     linked = tmp_path / "linked-stage"
     linked.symlink_to(staged, target_is_directory=True)
     with pytest.raises(PackError, match="symlink"):
-        import_results(pack, staged=linked, project=repository)
+        import_results(pack, staged=linked, project=repository, evaluation=pinned)
 
 
 def test_pack_cli_requires_paid_opt_in_before_codex_execution(tmp_path, monkeypatch, capsys):

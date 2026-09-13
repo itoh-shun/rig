@@ -163,13 +163,22 @@ python3 scripts/workbench.py diff [<task_id>]
 python3 scripts/workbench.py accept [<task_id>]
 ```
 
-`accept` はまず **accept_requirements チェックリスト**を表示する（`worktree_exists` / `base_branch_recorded` / `diff_summary_generated` / `acceptance_gate_not_failed` / `no_unrelated_diff`）。**accept 前に必ず**:
+`accept` はまず **accept_requirements チェックリスト**を表示する。項目は6件:
+
+- `worktree_exists`
+- `base_branch_recorded`
+- `diff_summary_generated`
+- `acceptance_gate_not_failed`
+- `no_unrelated_diff`
+- `gate_judged_this_head`
+
+**accept 前に必ず**:
 1. `workbench.py diff <task_id>` の内容（Summary/Risk/Tests/Unrelated diff）をユーザーに要約提示する。
 2. `worktree_exists`/`base_branch_recorded`/`diff_summary_generated` は**構造的な前提**であり `--force` でも上書きできない（diff.md が無ければ先に書く以外に道はない）。
-3. `acceptance_gate_not_failed`/`no_unrelated_diff` が未達（gate が `pending`/`failed`）の場合、スクリプトはエラーで拒否する（exit 1）。**`--force` は安全側のガードレールを外す明示操作**であり、以下を満たさない限り提案しない：
+3. 後半の3件が未達なら、スクリプトはエラーで拒否する（exit 1）。`acceptance_gate_not_failed` の未達とは、gate が `pending`／`failed`／全 criterion `skipped` のいずれかであることを指す。`gate_judged_this_head` の未達とは、3 つの commit が一致しないことを指す。3 つとは `evaluated_head`・squash 対象 branch の先端・worktree の HEAD である。head を記録していない run も「不明」＝未達である。この1件だけが未達なら、`gate` を評価し直すのが筋になる。`gate` 自身の終了コードは、決着した gate が 0、`failed` が 1、センサーと食い違う `--set` が 2 になる。判定に届かないうちは 3 を返す。`pending` が残るか、全件が `skipped` のときである。`wb contract` の `pending` と同じ 3 で、未判定を 0 と読ませない。**`--force` は安全側のガードレールを外す明示操作**であり、以下を満たさない限り提案しない：
    - ユーザーが未達基準を確認した上で明示的にリスクを許容している
    - `--force` 使用は `task.json.forced: true` として記録される旨を伝える
-4. gate が `passed_with_warnings`（`warning` 判定の criterion が残っている）場合も accept 自体はスクリプトが許可するが、**未解決の警告を要約提示してから**実行する。
+4. gate が `passed_with_warnings` の場合も accept 自体はスクリプトが許可する。ただし**未解決の項目を要約提示してから**実行する。この状態になるのは `warning` の criterion が残っているときである。`skipped` の criterion が1件でもあるときも同じ状態になる（判定していないものを `passed` にはしない）。`accept` は「N criteria nobody judged」の行で skip した criterion 名を出す。同じ名前が provenance.json の `skipped_criteria` にも残る。
 
 accept 成功後（squash merge → **staged**・コミットはしない）:
 - `git diff --staged` で確認できる旨と、コミットは人（またはユーザーの明示指示）が行う旨を案内する。
@@ -185,6 +194,46 @@ accept 成功後（squash merge → **staged**・コミットはしない）:
 `accept` は成功のたびに `.rig/runs/<task_id>/provenance.json`（task_type/recipe/base/gate結果/checks を含むレコード＋署名）を書く。鍵は `.rig/provenance.key`（初回accept時に自動生成・gitignore済み・第三者と共有しない）で HMAC-SHA256 署名する。`workbench.py verify-provenance <task_id>` で署名検証でき、レコードまたは鍵が事後に改変されていれば `✗ INVALID` で exit 1 になる。
 
 **スコープの誠実な明示**：これは非対称鍵（Ed25519/SLSA）による第三者公開検証ではない——鍵を持つ**同一環境内での事後改ざん検知**にとどまる（stdlib-onlyのworkbench.py依存原則を保つための意図的な選択）。SLSA相当の公開検証が要る場合は別途の仕組みが必要と案内する。
+
+#### 鍵として使えないファイルの扱い
+
+HMAC は鍵が空でも署名できてしまう。そのため16バイト未満のファイルは鍵として拒否する。空ファイル、`echo >` が残す改行1バイト、切り詰められたコピーなどが該当する。rig 自身が生成する鍵は常に32バイトなので、この下限で拒否されることはない。
+
+署名する側（`accept`）は、使えないファイルを退避してから新しい鍵を生成する。退避先は `.rig/provenance.key.unusable` で、既にあれば `.unusable-2`, `.unusable-3` と続く。番号は既存の最大値の次を使うため、途中を削除しても名前は再利用されない。上書きはしないので旧バイト列は消えない。シンボリックリンクの先にも書き込まない（リンク自体を退避する）。
+
+鍵の取得は squash の**前**に行う。退避や生成は失敗しうる操作なので、何も適用されていない位置で止める。退避そのものができないときも拒否する。いずれも exit 2 で、`--force` 時は `accept_refused`（reason: `provenance_key_unavailable`）として記録する。
+
+退避したときに出る警告は 3 種類あり、どれが出たかが後の判断を決める。パスは実際には絶対パスで出る。
+
+```
+[WARN] /path/to/repo/.rig/provenance.key held 8 byte(s) when this process read it, below the 16 a signing key must have. It has been moved to provenance.key.unusable and a new key generated; anything signed with the moved file no longer verifies
+[WARN] /path/to/repo/.rig/provenance.key could not be read as a key by this process (the permissions may not allow it). It has been moved to provenance.key.unusable and a new key generated; its contents are unread, so whether anything signed with it still verifies is unknown — read it before deleting it
+[WARN] /path/to/repo/.rig/provenance.key could not be read as a key by this process (it is not a regular file, such as a FIFO, a directory, a device, or a symlink that resolves to nothing). It has been moved to provenance.key.unusable and a new key generated; a path of that kind is never read as a key, so nothing was signed with what was moved; identify it rather than opening it, because reading a FIFO blocks until something writes
+```
+
+3 行は末尾が違う。`anything signed with the moved file no longer verifies` で終わるのは `held N byte(s)` の側だけで、長さを測れた側にしかこの断定の根拠がないからである。`the permissions` の側は、中身を読めていないので検証できるかどうかも分からない、と言うにとどまる。`it is not a regular file` の側は、そもそも鍵として読まれない種類のパスなので、それで署名されたレコードは無い。種類を `stat` できなかったときは、読めていないものを「署名に使われていない」と言い切る方が危険なので、`the permissions` の側に出る。退避したファイルを消してよいかも、3 種のどれが出たかで決まる。
+
+- `held N byte(s)` の側：消してよい。16 バイト未満であり、`verify-provenance` も `govern audit verify` も同じ規則で拒む。そのファイルで署名済みのレコードは、以後検証できないままになる。
+- `the permissions` の側：消してはいけない。この行は中身を読めなかったと言っているだけで、中身が本物の鍵でないとは言っていない。権限やパスの途中のディレクトリだけが問題で、バイト列は無傷という場合がある。本物の鍵であれば、そのファイルで署名済みのレコードを検証できるのはそのファイルだけである。行自体も、消す前に読めと言っている。権限を直して `.rig/provenance.key` に戻せば、そのファイルで署名済みのレコードは再び検証できる。その代わり、新しい鍵で署名したレコードの側が検証できなくなる。
+- `it is not a regular file` の側：正体を確かめてから消す。FIFO・ディレクトリ・デバイス・解決先の無いシンボリックリンク（自分を指すものを含む）など、通常ファイルでないものは鍵として読まれたことがないので、失われるレコードは無い。ただし FIFO を `cat` すると書き込み側が現れるまで止まるので、中身は見ずに種類だけを確かめる。見るのは退避先の `.rig/provenance.key.unusable` であり、`ls -l` もそちらに向ける。`.rig/provenance.key` は新しい鍵に置き換わっていて、そちらを見ると通常ファイルに見える。鍵のパスにそれがあった理由の方が、退避したもの自体より重要である。
+
+検証する側（`verify-provenance`）は鍵を**読むだけ**で、生成も置換もしない。鍵が無い場合も、鍵として使えない場合も、`verify-provenance` はどちらも「検証できない」として扱う。出力は `signature: ✗ INVALID (record or key may have changed)` で exit 1 である。つまりレコードに一切触れていなくても、鍵が入れ替わっていれば INVALID になる。この点をユーザーに伝えると、原因の切り分けが早い。`govern audit verify` と共有しているのは、何を鍵と見なすかの規則（16 バイトの下限）である。鍵のパスを読む関数（`ledger.observe_key_file`）も共有する。`verify-provenance` も、退避する側も、`govern audit verify` も、いまはこの 1 つを呼ぶ。以前は 3 か所に同じ処理が手書きされていて、片方だけが直ると食い違った。ただしこの関数は `stat` と読み取りの 2 回の呼び出しで、両者の間は不可分ではない。その間に別プロセスが種類を変えると、先に見えた種類で報告される。`govern audit verify` の側は、鍵が存在するのに使えない場合に、署名検査が落ちたことを問題として報告する。鍵が無い場合は、署名付きのエントリがあるときにだけ問題として報告する。
+
+鍵が存在するのに使えないときの問題文は 3 種類ある。どれが出たかで、鍵を直して再実行するのか、そのファイルで署名済みのエントリの検証を諦めるのかが決まる。`govern audit verify` は読むだけなので、退避は起きない。鍵は `.rig/provenance.key` に置かれたままである。退避と鍵の生成をするのは `accept` の側だけである。
+
+```
+.rig/provenance.key exists but could not be read as a key (it holds 8 byte(s), below the 16 bytes a signing key must have), so no signature was checked; the hash chain was still checked. There is nothing to repair on that file — every reader refuses it and entries signed with it can never be verified again. The next `accept` sets it aside under .rig/provenance.key.unusable, numbered past any already there, and then generates a key, or refuses without generating one if it cannot move it; this problem is then replaced by `signature does not verify` on every entry signed before it, or by `unsigned, but this repository has a provenance key` where there were none, and neither goes away
+.rig/provenance.key exists but could not be read as a key (the permissions may not allow it), so no signature was checked; the hash chain was still checked. Fix the permissions on it and on the directories above it, then re-run; its contents are unread, so whether these entries still verify is unknown until something can read it
+.rig/provenance.key exists but could not be read as a key (it is not a regular file, such as a FIFO, a directory, a device, or a symlink that resolves to nothing), so no signature was checked; the hash chain was still checked. Find out what is at the key path — no entry in this ledger was signed with it, because a path of that kind is never read as a key, so there is no key to recover. Identify it rather than opening it, because reading a FIFO blocks until something writes. The next `accept` sets it aside under .rig/provenance.key.unusable, numbered past any already there, and then generates a key, or refuses without generating one if it cannot move it; this problem is then replaced by `signature does not verify` on every entry signed before it, or by `unsigned, but this repository has a provenance key` where there were none, and neither goes away
+```
+
+3 行は冒頭の 59 文字が同じである。丸括弧が開くところまで、どの行も区別がつかない。`so no signature was checked; the hash chain was still checked` も 3 行に共通である。この 1 文はどの行でも成り立つので消していない。違うのは丸括弧の中と、末尾の 1 文である。読み分けるならその 2 か所を見る。
+
+- `it holds N byte(s)` の側：直すものは無い。長さを測れていて 16 バイト未満なので、そのファイルで署名済みのエントリは以後検証できない。次の `accept` が `.rig/provenance.key.unusable` へ退避して鍵を作る。退避名は既にある最大の番号の次になるので、`.unusable-2`・`.unusable-3` のこともある。実際の名前は `accept` 側の警告に出る。`govern audit verify` はこの名前を出さない。退避に失敗すれば、鍵を作らずに `accept` が拒否する。**その後この問題は消えるが、代わりに `signature does not verify` が既存の署名付きエントリすべてに出る。**これは改竄と同じ見た目の行である。消えたことを直ったと読まない。署名付きエントリが 1 つも無い台帳では、代わりに `unsigned, but this repository has a provenance key` が出る。どちらも消えない。
+- `the permissions` の側：そのファイルと上位ディレクトリの権限を直して、もう一度実行する。何も測れていないので、本物の鍵が無傷で残っている場合がある。読めるようになるまで、署名の正否を決めない。種類を `stat` できなかった場合もここに出る。
+- `it is not a regular file` の側：何がそこにあるのかを、開かずに調べる。FIFO を `cat` すると書き込み側が現れるまで止まるので、`ls -l .rig/provenance.key` で種類だけを見る。この行が示すのは FIFO・ディレクトリ・デバイス・解決先の無いシンボリックリンク（自分を指すものを含む）の 4 種。ただし、これが全部ではない。`observe_key_file` は通常ファイル以外を読まないので、そこにあるもので署名されたエントリは無く、復旧できる鍵も無い。次の `accept` が `.rig/provenance.key.unusable` へ退避して鍵を作る。退避名は既にある最大の番号の次になるので、`.unusable-2`・`.unusable-3` のこともある。実際の名前は `accept` 側の警告に出る。`govern audit verify` はこの名前を出さない。退避に失敗すれば、鍵を作らずに `accept` が拒否する。**その後は `signature does not verify` が既存の署名付きエントリすべてに出る。**そこにあったもののせいではなく、鍵が入れ替わったからである。署名付きエントリが 1 つも無い台帳では、代わりに `unsigned, but this repository has a provenance key` が出る。どちらも消えない。
+
+この 4 種がどれもこの行に届くのは、`FileStore.presence` の答え方による。リンクを辿らず、パスそのもの（ディレクトリ内の名前）を見て present / absent / unknown を答える。リンク先を見る問いなら、壊れたシンボリックリンクは「無い」と報告されてしまう。以前は `is_file` と `is_dir` しか無く、どちらも「はい」と言わない種類は `is absent` の側に回っていた。`accept` の側は同じパスを退避していたので、2 つのコマンドが同じ状態について違うことを言っていた。`stat` そのものが拒まれた場合は unknown になり、「ある」側として扱う。読めなかったことを「鍵が消えた」と報告しないためである。
 
 ### Assurance Receipt（`receipt`・#428）
 
@@ -261,8 +310,10 @@ imported commit の位置に作る**。以降 `base..branch` が外部の変更�
   `--summary <file>` で人が書いたものを渡せば `authored` として記録される。
 
 `contract` は外部 caller が分岐するための答えで、**`die()` を一切呼ばない**。
-`die` はタスク ID の誤りでも壊れた state でも未達ゲートでも exit 1 なので、
-exit 1 だけでは「rig が拒否した」と「rig が答えられなかった」を区別できない。
+workbench の停止は 2 種類ある：`state.die` は「答えを出せなかった」で exit 2
+（タスク ID の誤り、壊れた state、git の失敗）、`state.reject` は「rig が見て否と判断した」
+で exit 1（未達ゲート、governance のブロック、accept 権限なし）。`contract` は
+`die` の SystemExit も捕まえて、exit だけでなく `execution-error` の結果ごと返す。
 
 | status | exit | 意味 |
 |---|---|---|
@@ -322,7 +373,7 @@ python3 scripts/workbench.py log --limit <N>
 python3 scripts/workbench.py board [--all]
 ```
 
-**複数タスクを並行で進めているときの単一の確認場所**（`/rig:rig` を何度も直接叩いた場合でも、`/rig:queue go --provider rig` で並列 dispatch した場合でも、全ての task は `.rig/runs/` に集約されるため同じ一覧に出る）。既定は非終端状態（`running`/`gate_passed`/`gate_failed`）のみ表示——`accepted`/`discarded` まで含めたい場合は `--all`。出力（task_id・input・type/recipe/mode/最終 step/gate）をそのまま提示する。整形の追加は不要。
+**複数タスクを並行で進めているときの単一の確認場所**。`/rig:go` を何度も直接叩いた場合でも、`/rig:queue go --provider rig` で並列 dispatch した場合でも同じ一覧に出る。全ての task が `.rig/runs/` に集約されるためだ。既定は非終端状態（`running`/`gate_passed`/`gate_failed`）のみ表示——`accepted`/`discarded` まで含めたい場合は `--all`。出力（task_id・input・type/recipe/mode/最終 step/gate）をそのまま提示する。整形の追加は不要。
 
 「ターミナルをいくつも開いていて何をしていたか忘れる」状況は、このコマンド1つに集約することで解消する——ユーザーが並行タスクの状態を尋ねたら、まず `board` を提案する。
 
@@ -382,7 +433,7 @@ python3 scripts/workbench.py gc [--older-than 14d] [--dry-run]
 python3 scripts/workbench.py audit [--limit 10] [--action accept_force] [--since 2026-07-01]
 ```
 
-`accept --force` 等で acceptance-gate の未達基準を上書きした際の恒久記録（`.rig/audit.jsonl`）の一覧。各エントリ（ts・action・task_id・bypassed 基準・gate 状態・failed checks）をそのまま提示する——整形の追加は不要。絞り込みは `--limit`（最新 N 件）・`--action`（例 `accept_force`）・`--since`（YYYY-MM-DD 以降）。
+`accept --force` の恒久記録（`.rig/audit.jsonl`）の一覧。action は 2 種あり、持つ欄が違う。`accept_force` は squash が適用された force である。欄は ts・action・task_id・bypassed 基準・gate 状態・failed checks。`accept_refused` は accept が拒んだ force である。経路は 8 本あり、`reason` の値で区別する。`branch_unresolvable` は task の branch が解決しない場合である。`governance` は定足数・権限・waiver による拒否である。`worktree_missing` は worktree が無い場合、`worktree_dirty` は worktree が汚れている場合である。`branch_empty` は base の上に commit が無い場合である。`main_tree_dirty` は main tree が汚れている場合である。`provenance_key_unavailable` は署名鍵を用意できなかった場合である。`squash_failed` は衝突、または git が merge 自体を拒んだ場合である。**8 本のいずれでも、作業ツリーには何も残らない。** 前の 7 本は squash の前に拒む。`squash_failed` は失敗した squash を `git reset --hard HEAD` で巻き戻す。欄は bypassed 基準も gate 状態も無く、代わりに reason・detail・実行者（actor）を持つ。`workbench.py audit` は 2 行目をこの 2 種で書き分ける。出力はそのまま提示する——整形の追加は不要。**ただし件数は上限つきである。** 同じ事象は 1 日あたり 4 行までしか書かれない。4 行目は `collapsed` を持つ。一覧では `(+3 more like it that day; further repeats that day were not recorded)` と出る。この行がある日の件数は「4 件」ではなく「4 件以上」である。実測では、拒まれた force を 50 回起こしても 4 行しか残らない。件数を答えるときはこの但し書きを付ける。絞り込みは `--limit`（最新 N 件）・`--action`（例 `accept_force`。拒まれた側は `accept_refused`）・`--since`（YYYY-MM-DD 以降）。
 
 ``No records (entries are appended by `accept --force`).`` の場合は「force-bypass の履歴が無い＝gate を押し切った accept が一度も無い」ことを意味するので、その旨をそのまま伝える。ユーザーが「force で通した履歴を見たい」「gate を無視した accept が無いか確認したい」と言ったらこのコマンドを提案する（**読み取り専用**——記録の追記は `workbench.py accept --force` 側が自動で行い、ここからは書き込まない）。
 
@@ -397,14 +448,14 @@ python3 scripts/workbench.py scan-secrets --diff <task_id>
 
 1. 出力の抜粋は**常にマスク済み**（先頭4文字＋末尾2文字のみ残る）——秘密の生値は findings に含まれないため、出力はそのままユーザーに提示してよい。検出ありは exit 1。
 2. `workbench.py gate` は評価のたびにこの scanner を task diff に自動適用し、findings があれば `no_secret_leak` を **failed** にする（warning ではない＝accept を機械的に止める。schema センサーと違い fail-grade）。
-3. 人が偽陽性と確認した場合の脱出口は `gate <task_id> --set no_secret_leak=passed`（明示 pass が優先され、`secret_override` として check に記録される）。判断せず黙って通さない——必ずユーザーに findings を見せてから提案する。
+3. **この criterion に `--set` の逃がし方は無い**。`gate <task_id> --set no_secret_leak=passed` はセンサーの測定と食い違うので拒否され（exit 2＝使い方の誤りで、gate 失敗の 1 とは別）、記録に残るのはセンサーの `failed` のほうである。diff から findings を取り除いて `gate` を評価し直せば、`--set no_secret_leak=passed` は測定と一致するので受け付けられる。センサーが自分で書くのは findings の有無までで、pass そのものは書かない。人が偽陽性と確認した上で進めるなら `accept --force` だけが道で、`.rig/audit.jsonl` と provenance に残る。判断せず黙って通さない——必ずユーザーに findings を見せてから提案する。
 
 ## `/rig scan-ja-prose [<task_id>]`
 
 `python3 scripts/workbench.py scan-ja-prose <task_id>` に委譲する。gate の `ja_lint_clean` センサーと同じ検査を、task の worktree の diff（base からの追加行と未追跡 file）に限って走らせ、`file:line:col: severity [rule] message` で出す。error があれば exit 1、warning だけなら 0。diff に日本語の散文が無ければその旨を出して 0。
 
 - 検査は `rig_workbench/ja_textlint.py`（`rig-wb ja-lint`）で、規則の正本は `facets/policies/japanese-textlint-rules`。project の `.claude/ja-textlint.json` があればそれを読む。
-- **判定は書き換えない。** 表示だけ。gate の状態を動かすのは `gate` の評価であり、`--set ja_lint_clean=passed` は review 後の明示的な逃がし方として記録される。
+- **判定は書き換えない。** 表示だけ。gate の状態を動かすのは `gate` の評価で、`ja_lint_clean` はセンサーが毎回書き直すため `--set ja_lint_clean=passed` は次の評価で上書きされる。人の手が残るのはセンサーより厳しい側だけ。`--set ja_lint_clean=failed` は lint が clean でも維持される。
 - 相方の `ja_prose_ai_smell_reviewed` はこのコマンドの対象ではない。あれは `ai-smell-reviewer` の verdict（`review --set ai-smell-reviewer=…`）を写す criterion で、`scripts/prose_rhythm.py` の数値は読まない。
 
 ## `/rig scan-injection [paths…] [--diff <task_id>]`
@@ -418,7 +469,7 @@ python3 scripts/workbench.py scan-injection --diff <task_id>
 
 1. 出力の抜粋では不可視文字が `<U+XXXX>` エスケープとして描画される（生の不可視文字は findings に含まれない）ため、出力はそのままユーザーに提示してよい。検出ありは exit 1。
 2. `workbench.py gate` は評価のたびにこの scanner を自動適用し、不可視 Unicode 検出で `no_injection_markers` を **failed** に（accept を機械的に止める）、フレーズのみなら **warning** にする。同様に、gate 評価ごとに anti-tamper センサー（`no_gate_tampering`）も走る——task diff 中の `.rig/gates.json`・`.rig/recipes/`・CI workflow の編集は fail-grade、bugfix/feature task での既存テスト改変・assert 削除・skip マーカー追加は warning-grade（こちらは gate 内蔵センサーのみで単独 scan コマンドは持たない）。
-3. 人がレビューして偽陽性と確認した場合の脱出口は `gate <task_id> --set no_injection_markers=passed`（`injection_override` として check に記録され、以降の評価でも維持される。`no_gate_tampering` 側は `--set no_gate_tampering=passed`＝`tamper_override`）。判断せず黙って通さない——必ずユーザーに findings を見せてから提案する。
+3. 偽陽性だと人が確認しても、`--set no_injection_markers=passed`（`no_gate_tampering` も同じ）は拒否される（exit 2）。findings を diff から消して評価し直せば、`--set no_injection_markers=passed` は測定と一致するので受け付けられる。センサーが自分で書くのは findings の有無までで、pass そのものは書かない。そのまま進めるなら `accept --force` だけが道で、`.rig/audit.jsonl` と provenance に残る。判断せず黙って通さない——必ずユーザーに findings を見せてから提案する。
 4. **`--deps`（#320・明示opt-in）**：依存ツリー（`node_modules`/`vendor`/`third_party`）配下の**prose面のみ**（`*.md`/`*.rst`/`*.txt`——ソースコードは対象外）を走査する。サードパーティ依存のドキュメントにエージェント向けの隠し指示を仕込むサプライチェーン攻撃（依存のREADMEがエージェントに出力削除を指示していた実例）への対抗。既定面には**決して含めない**（巨大ツリーの常時走査はコストが見合わない＋AI系ライブラリのREADMEはプロンプト例を正当に含むためフレーズ検出の偽陽性が多い）。検出時の推奨アクション（文脈確認→本物ならピン止め/隔離/上流報告。不可視Unicodeは正当な用途ゼロなので即隔離）は出力自体に含まれる。
 
 ## `/rig stream-checks [<task_id>] [--watch --interval N --max-passes M]`
@@ -462,7 +513,7 @@ python3 scripts/workbench.py scan-destructive --diff <task_id>
 相対パスの `rm -rf build/` は**意図的に検出しない**（Makefile の clean target 等で日常的に正当。このセンサーが守りたいのは絶対パスと空変数展開の事故）。
 
 1. `workbench.py gate` は評価のたびにこの scanner を task diff に自動適用し、fail-grade 検出で `no_destructive_operation` を **failed** に、warning のみなら **warning** にする。
-2. 人がレビューして問題なしと確認した場合の脱出口は `gate <task_id> --set no_destructive_operation=passed`（`destructive_override` として記録・以降の評価でも維持）。必ずユーザーに findings を見せてから提案する。
+2. 人がレビューして問題なしと確認しても、`gate <task_id> --set no_destructive_operation=passed` は拒否される（exit 2）。diff から該当行を消して `gate` を評価し直すか、そのまま進めるなら `accept --force`（`.rig/audit.jsonl` と provenance に残る）。必ずユーザーに findings を見せてから提案する。
 3. **スコープの正直な明示**：これは**差分に書き込まれた**破壊的コマンド（スクリプト・CI設定・マイグレーション）の検出であり、エージェントが実行時に打つコマンドの傍受ではない（それはホストのパーミッション機構の責務）。rig が完全に管理できる成果物＝diff の中の時限爆弾を人に見せるのがこのセンサーの仕事。
 
 ## `/rig scan-anchors [paths…] [--diff <task_id>]`
@@ -476,7 +527,7 @@ python3 scripts/workbench.py scan-anchors --diff <task_id>
 
 1. 解決は **worktree が先・base commit が後**。diff が削除／改名したファイルへの引用を fail にしないための必須の2段目であり、抜けると正当な引用が偽陽性になる。
 2. 判定は3値で、**SKIPPED を黙って合格にしない**（バイナリ・生成物・symlink・読めないファイルは理由つきで別枠に出す）。grade は2段階——参照先を特定できたのにアンカーが誤り（行数超過・行 0・範囲逆転・ディレクトリ指定）は **fail-grade**、ファイル自体を特定できなかった（`streaming.py:67` のような裸の basename 等）は **warning-grade**。
-3. gate 側は **既定では走らない**。`evidence_anchors_resolve` はどのプリセットにも入っておらず、プロジェクトが `.rig/gates.json` の `extra_criteria` で追加したときだけ有効になる（未導入のうちは no-op）。有効時は fail-grade 検出で **failed**、warning のみなら **warning**。脱出口は `gate <task_id> --set evidence_anchors_resolve=passed`（`anchor_override` として記録・以降の評価でも維持）。必ずユーザーに findings を見せてから提案する。
+3. gate 側は **既定では走らない**。`evidence_anchors_resolve` はどのプリセットにも入っておらず、プロジェクトが `.rig/gates.json` の `extra_criteria` で追加したときだけ有効になる（未導入のうちは no-op）。有効時は fail-grade 検出で **failed**、warning のみなら **warning**。`--set evidence_anchors_resolve=passed` は測定と食い違えば拒否される（exit 2）。アンカーを直して評価し直すのが筋で、そのまま進めるなら `accept --force`（記録に残る）。必ずユーザーに findings を見せてから提案する。
 4. **どこに入れるか**：アンカーは **task の worktree を基準に解決する**ので、worktree を持つ task 種別のプリセットに入れる。既定は `standard`（`bugfix`/`feature`/`refactor`/`test`/`performance`/`documentation`/`design`/`investigation`/`release_support` が合成する土台）＝
 
    ```json

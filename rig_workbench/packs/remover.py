@@ -9,7 +9,7 @@ from .installer import scope_root
 from .lock import (LOCK_SCHEMA_VERSION, lock_path, read_lock, validate_lock_root, write_lock,
                    write_lock_bytes)
 from .model import PackError
-from .resolver import pack_roots
+from .resolver import core_reference_ids, pack_roots
 from .validation import validate_pack
 
 
@@ -22,14 +22,14 @@ def remove_pack(
         scope, project=project_path,
         root=pathlib.Path(root) if root is not None else None,
     )
-    entries = validate_lock_root(destination_root)
+    entries = validate_lock_root(destination_root, core_ids=core_reference_ids())
     owned = next((item for item in entries if item["id"] == pack_id), None)
     if owned is None:
         raise PackError(f"pack is not owned by this scope lock: {pack_id}")
     target = destination_root / owned["path"]
     if target.resolve().parent != destination_root.resolve() or target.name != pack_id:
         raise PackError("pack lock ownership path is unsafe")
-    manifest = validate_pack(target)
+    manifest = validate_pack(target, core_ids=core_reference_ids())
     dependents: list[str] = []
     roots = [pack_root for _tier, pack_root in pack_roots(project_path)]
     if destination_root.resolve() not in {item.resolve() for item in roots}:
@@ -41,7 +41,7 @@ def remove_pack(
                                 and not item.name.startswith((".", "_"))):
             if candidate.resolve() == target.resolve():
                 continue
-            candidate_manifest = validate_pack(candidate)
+            candidate_manifest = validate_pack(candidate, core_ids=core_reference_ids())
             if any(dep["id"] == manifest["id"] for dep in candidate_manifest["dependencies"]):
                 dependents.append(candidate_manifest["id"])
     if dependents:

@@ -15,6 +15,7 @@ import sys
 import yaml
 
 from rig_workbench.packs.validation import validate_pack
+from rig_workbench.packs.resolver import core_reference_ids
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 PACK = ROOT / "packs" / "domain" / "pack-author"
@@ -26,7 +27,7 @@ def _frontmatter(path: pathlib.Path) -> dict:
 
 
 def test_the_pack_validates_and_is_a_tool_because_it_runs_checks():
-    manifest = validate_pack(PACK)
+    manifest = validate_pack(PACK, core_ids=core_reference_ids())
     assert manifest["type"] == "tool"
     assert {e["kind"] for e in manifest["entrypoints"]} == {"recipe", "command"}
 
@@ -72,7 +73,7 @@ def test_the_shipped_cases_pin_the_two_refusals():
 
 
 def test_every_prompt_asset_is_referenced_and_the_wiki_is_injected():
-    manifest = validate_pack(PACK)
+    manifest = validate_pack(PACK, core_ids=core_reference_ids())
     referenced = {(r["kind"], r["id"]) for r in manifest["references"]}
     for persona in ("pack-author", "pack-draft-reviewer"):
         assert ("persona", persona) in referenced

@@ -12,7 +12,7 @@ import re
 import pytest
 
 from rig_workbench.eval.cases import ISOLATION_RANK
-from rig_workbench.workbench import assurance
+from rig_workbench.assurance import assurance
 from rig_workbench.workbench.state import sign_provenance
 
 
@@ -238,6 +238,27 @@ def test_a_deleted_evidence_file_invalidates_the_receipt(task):
     result = assurance.verify(root, receipt)
     assert result["fresh"] is False
     assert any("risk.md" in p for p in result["missing"])
+
+
+def test_the_markdown_prints_the_operators_note_beside_the_sensors_detail(task):
+    """A criterion carries two sentences when a person and a machine both spoke: `detail`
+    from whoever wrote the status, and `note` — the operator's own, from the `:DETAIL`
+    half of a `--set`, which no sensor writes or rewrites. The markdown receipt showed
+    only the first, so a reason a person recorded reached `--json` and never the page
+    anybody reads."""
+    root, task_id = task
+    acc = json.loads((_task_dir(root, task_id) / "acceptance.json").read_text(encoding="utf-8"))
+    check = next(c for c in acc["checks"] if c["name"] == "no_gate_tampering")
+    check["detail"] = "(tamper sensor) 1 test-weakening pattern(s) in the diff"
+    check["note"] = "reviewed - the test moved to tests/test_new.py"
+    check["by"] = "tamper-sensor"
+    _write(_task_dir(root, task_id), "acceptance.json", acc)
+
+    page = assurance.render_markdown(assurance.build_receipt(root, task_id))
+    assert "| criterion | status | detail | note |" in page
+    assert "1 test-weakening pattern(s) in the diff" in page
+    # escaped on the way out like every other value the receipt took off disk
+    assert r"reviewed - the test moved to tests/test\_new.py" in page
 
 
 def test_a_receipt_of_an_unknown_schema_is_refused(task):
@@ -655,7 +676,7 @@ def test_the_page_accounts_for_every_field_a_contract_has():
     """
     import dataclasses
 
-    from rig_workbench.workbench import intent
+    from rig_workbench.assurance import intent
 
     fields = {f.name for f in dataclasses.fields(intent.IntentContract)}
     assert assurance._unrendered(fields, assurance._INTENT_RENDERED,

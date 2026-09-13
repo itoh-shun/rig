@@ -6,6 +6,8 @@ import hashlib
 import pathlib
 import subprocess
 
+from ..ports import ProcessRunner
+from ..ports.local import SUBPROCESS
 from .cases import EvalCaseError
 
 # Pinned rather than inherited from whoever invokes us.
@@ -38,11 +40,19 @@ GIT_DETERMINISTIC = (
 )
 
 
-def _run(repo: pathlib.Path, argv: list[str]) -> bytes:
+def _run(repo: pathlib.Path, argv: list[str], *,
+         proc: ProcessRunner = SUBPROCESS) -> bytes:
+    """One git read, in bytes.
+
+    `text=False` because both reads here are hashed byte for byte into the execution
+    identity: `git diff --binary` frames binary hunks and `ls-files -z` separates paths with
+    NUL, and a maintainer's machine and CI have to agree on the digest exactly. Decoding
+    with any handler changes those bytes on some input, which turns into an
+    `execution_diff_mismatch` nobody can explain — the failure this module's pins exist to
+    stop.
+    """
     try:
-        completed = subprocess.run(
-            argv, cwd=repo, capture_output=True, timeout=15, shell=False,
-        )
+        completed = proc.run(argv, cwd=repo, timeout=15, text=False)
     except (OSError, subprocess.SubprocessError) as exc:
         raise EvalCaseError("cannot compute execution diff identity") from exc
     if completed.returncode != 0:
@@ -54,6 +64,7 @@ def _run(repo: pathlib.Path, argv: list[str]) -> bytes:
 def execution_diff_sha256(
     repo: pathlib.Path, *, base: str, head: str = "working",
     ignored_untracked_prefixes: tuple[str, ...] = (),
+    proc: ProcessRunner = SUBPROCESS,
 ) -> str:
     """Hash base→head/working tracked diff plus untracked path/content framing."""
     diff_argv = [
@@ -63,7 +74,7 @@ def execution_diff_sha256(
     if head != "working":
         diff_argv.append(head)
     diff_argv.append("--")
-    tracked = _run(repo, diff_argv)
+    tracked = _run(repo, diff_argv, proc=proc)
     digest = hashlib.sha256()
     digest.update(b"rig-eval-execution-diff-v1\0")
     digest.update(len(tracked).to_bytes(8, "big"))
@@ -72,6 +83,7 @@ def execution_diff_sha256(
         raw_paths = _run(
             repo, ["git", *GIT_DETERMINISTIC,
                    "ls-files", "--others", "--exclude-standard", "-z"],
+            proc=proc,
         )
         paths = sorted(
             path for path in raw_paths.split(b"\0") if path

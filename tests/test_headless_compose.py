@@ -1,5 +1,6 @@
 """Provider-agnostic prompt composition for headless generator steps."""
 
+import ast
 import json
 import pathlib
 import hashlib
@@ -8,6 +9,7 @@ import stat
 
 import pytest
 
+from rig_workbench.orchestrate import composition
 from rig_workbench.orchestrate import providers
 from rig_workbench.orchestrate import config
 from rig_workbench.orchestrate.recipes import (
@@ -218,9 +220,7 @@ def test_pack_owned_recipe_never_falls_back_to_shadow_for_an_unbound_reference(
     shadow = ResolvedAsset("persona", "writer", attacker, "core", "attacker", "attacker")
     monkeypatch.setattr(resolver, "resolve_bound_asset", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(resolver, "resolve_asset", lambda *_args, **_kwargs: shadow)
-    monkeypatch.setattr(
-        providers, "_recipe_pack_owner", lambda _source: "owner", raising=False,
-    )
+    monkeypatch.setattr(composition, "_recipe_pack_owner", lambda _source: "owner")
     step = _step(
         personas=["writer"], instruction="owned-write",
         output_contract=None, policies=[],
@@ -614,10 +614,16 @@ def test_cmd_run_supplies_stdin_revision_draft_to_reviewer_without_persisting_it
     monkeypatch.setattr(commands.sys, "stdin", io.BytesIO(source_draft.encode("utf-8")))
     monkeypatch.setattr(commands, "preflight_secure_runtime", lambda *_a, **_k: launchers)
     monkeypatch.setattr(providers, "run_provider", fake_run_provider)
+    # The facets are stubbed to keep this test about the source draft rather than about
+    # pack resolution — but an empty stub is indistinguishable from the stub never being
+    # reached, and a patch written against the wrong module reads as a pass. The sentinel
+    # is what tells the two apart: it can only appear in a prompt that this binding
+    # composed.
+    facet_sentinel = "FACET-STUB-e3b0c44298fc"
     monkeypatch.setattr(
-        providers, "_generator_facets",
+        composition, "_generator_facets",
         lambda _step: {
-            "persona": [], "knowledge": [], "instruction": [],
+            "persona": [facet_sentinel], "knowledge": [], "instruction": [],
             "output_contract": [], "policy": [],
         },
     )
@@ -632,6 +638,10 @@ def test_cmd_run_supplies_stdin_revision_draft_to_reviewer_without_persisting_it
 
     assert finished.value.code == 0
     review_prompt = next(prompt for role, prompt in prompts if role == "verifier")
+    assert prompts and all(facet_sentinel in prompt for _role, prompt in prompts), (
+        "the stubbed facets never reached a prompt, so nothing below is evidence about "
+        "the composer this test means to drive"
+    )
     assert providers.wrap_untrusted(source_draft, "source draft") in review_prompt
     assert source_draft not in "\0".join(run_argv)
     persisted = state_path.read_text(encoding="utf-8")
@@ -656,7 +666,7 @@ def test_japanese_material_profile_fails_closed_on_asset_contract_drift(
     )
     resolved, _warnings = resolve_extends(parse_frontmatter(recipe), recipe)
     write = load_steps(resolved)[0]
-    original = providers._load_composition_asset
+    original = composition._load_composition_asset
 
     def drifted(kind, name, **kwargs):
         frontmatter, body = original(kind, name, **kwargs)
@@ -670,7 +680,7 @@ def test_japanese_material_profile_fails_closed_on_asset_contract_drift(
                 frontmatter["material_provenance"] = provenance
         return frontmatter, body
 
-    monkeypatch.setattr(providers, "_load_composition_asset", drifted)
+    monkeypatch.setattr(composition, "_load_composition_asset", drifted)
     with pytest.raises(PackError):
         providers.japanese_material_metadata(write, "technical")
 
@@ -1461,7 +1471,6 @@ def test_disappeared_persisted_owner_never_uses_unqualified_asset_fallback(
 
     attacker = tmp_path / "attacker.md"
     attacker.write_text("ATTACKER PERSONA", encoding="utf-8")
-    monkeypatch.setattr(providers, "_recipe_pack_owner", lambda _source: None)
     monkeypatch.setattr(
         resolver, "resolve_asset",
         lambda *_args, **_kwargs: ResolvedAsset(
@@ -1477,8 +1486,140 @@ def test_disappeared_persisted_owner_never_uses_unqualified_asset_fallback(
         "recipe_owner": "trusted-owner",
         "recipe_owner_root": str(tmp_path / "gone-pack"),
     })
+    state = {"recipe": "writing", "goal": None, "history": []}
 
+    # A pack that is gone from disk resolves to no owner on its own, so a patch saying
+    # "gone" agrees with the unpatched answer and pins nothing — including a patch written
+    # against the wrong module. Raise from the owner resolver first: the sentinel can only
+    # come back out if the composer really consults *this* binding on *this* path.
+    class _OwnerProbe(Exception):
+        pass
+
+    def _probe(_source):
+        raise _OwnerProbe("the composer asked who owns the recipe")
+
+    monkeypatch.setattr(composition, "_recipe_pack_owner", _probe)
+    with pytest.raises(_OwnerProbe):
+        providers._build_prompt(state, step)
+
+    # Now the answer the disappeared pack actually gives, and the refusal it must produce.
+    monkeypatch.setattr(composition, "_recipe_pack_owner", lambda _source: None)
     with pytest.raises(PackError, match="owner.*unavailable"):
-        providers._build_prompt(
-            {"recipe": "writing", "goal": None, "history": []}, step,
-        )
+        providers._build_prompt(state, step)
+
+
+# ── The bridge `providers` keeps over `composition` ──────────────────────────
+# The composition cluster moved to `orchestrate/composition.py` (design brief §11 T12)
+# and `providers` re-exports it, so nothing outside the package had to change. That
+# bridge is load-bearing in a way a re-export usually is not: several tests here and in
+# `test_runtime_security.py` substitute one of these names to prove a facet cannot be
+# swapped underneath a prompt, and a substitution only bites if the name the test writes
+# to is the name the caller reads. If a future edit trims one entry out of the re-export
+# block, or rebinds it to something else, `providers.X` and `composition.X` stop being one
+# object and those tests keep passing while asserting nothing. The two checks below are
+# what stands between that and a silent hole: neither retypes the list of names — one
+# reads it out of the re-export block, the other out of the call sites.
+
+_PACKAGE = pathlib.Path(providers.__file__).parent
+
+
+def _module_tree(name):
+    source = (_PACKAGE / f"{name}.py").read_text(encoding="utf-8")
+    return ast.parse(source, filename=f"{name}.py")
+
+
+def _reexported_names():
+    """The names `providers` re-exports from `composition`, read out of the import."""
+    return {
+        alias.name
+        for node in ast.walk(_module_tree("providers"))
+        if isinstance(node, ast.ImportFrom)
+        and node.level == 1
+        and node.module == "composition"
+        for alias in node.names
+    }
+
+
+def _composition_owned_names():
+    """Every name `composition.py` defines at module level."""
+    owned = set()
+    for node in _module_tree("composition").body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            owned.add(node.name)
+        elif isinstance(node, ast.Assign):
+            owned.update(t.id for t in node.targets if isinstance(t, ast.Name))
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            owned.add(node.target.id)
+    return owned
+
+
+def _names_reached_through_providers():
+    """Composition-owned names that callers outside the package still read as `providers.X`."""
+    owned = _composition_owned_names()
+    repo = pathlib.Path(__file__).resolve().parents[1]
+    reached = {}
+    for path in sorted(repo.glob("tests/**/*.py")) + sorted(repo.glob("benchmarks/**/*.py")):
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        except SyntaxError:            # a fixture that is deliberately not valid Python
+            continue
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Attribute)
+                and isinstance(node.value, ast.Name)
+                and node.value.id == "providers"
+                and node.attr in owned
+            ):
+                reached.setdefault(node.attr, set()).add(
+                    f"{path.relative_to(repo)}:{node.lineno}"
+                )
+            elif isinstance(node, ast.ImportFrom) and (node.module or "").endswith("providers"):
+                for alias in node.names:
+                    if alias.name in owned:
+                        reached.setdefault(alias.name, set()).add(
+                            f"{path.relative_to(repo)}:{node.lineno}"
+                        )
+    return reached
+
+
+def test_every_re_exported_composition_name_is_the_same_object_on_both_modules():
+    """`providers.X is composition.X`, for the whole re-export block.
+
+    Identity, not equality: a test that writes to `providers.X` and a composer that reads
+    `composition.X` have to be touching one binding, or the substitution is a no-op that
+    reads as a pass.
+    """
+    names = _reexported_names()
+    assert names, (
+        "providers.py no longer re-exports anything from composition.py. If the bridge is "
+        "being retired, retire this test with it — but check "
+        "_names_reached_through_providers() is empty first."
+    )
+    detached = [
+        name for name in sorted(names)
+        if getattr(providers, name, None) is not getattr(composition, name, None)
+    ]
+    assert not detached, (
+        "these names are re-exported from composition but are not the same object on both "
+        f"modules, so substituting either one is invisible to the other: {detached}"
+    )
+
+
+def test_no_caller_reads_a_composition_name_that_providers_stopped_re_exporting():
+    """The bridge may only shrink from the far end: drop the call sites, then the entry.
+
+    Removing an entry while somebody still reads it through `providers` is an AttributeError
+    at best. At worst — for a name a test substitutes — it is a `monkeypatch.setattr` that
+    invents an attribute nobody reads, which is exactly the failure the test above is for.
+    """
+    reached = _names_reached_through_providers()
+    exported = _reexported_names()
+    orphaned = {
+        name: sorted(sites) for name, sites in sorted(reached.items())
+        if name not in exported
+    }
+    assert not orphaned, (
+        "these call sites reach a composition-owned name through `providers`, which no "
+        "longer re-exports it — point them at `rig_workbench.orchestrate.composition` "
+        f"instead: {orphaned}"
+    )

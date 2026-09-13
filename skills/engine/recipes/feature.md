@@ -62,6 +62,20 @@ steps:
       - "tests_added_or_explained — テストを追加したか、理由を説明した"
       - "public_api_changes_documented — 公開 API 変更が説明されている"
       - "migration_or_backward_compatibility_considered — 移行・後方互換性を検討した"
+    acceptance_binding:
+      - task_intent_satisfied
+      - no_unrelated_diff
+      - diff_summary_written
+      - risk_summary_written
+      - tests_pass_or_explained
+      - no_type_errors_or_explained
+      - no_secret_leak
+      - no_destructive_operation
+      - requirement_summary_written
+      - implementation_matches_requirement
+      - tests_added_or_explained
+      - public_api_changes_documented
+      - migration_or_backward_compatibility_considered
     personas: [implementer]
 ---
 

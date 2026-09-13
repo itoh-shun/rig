@@ -5,7 +5,7 @@ argument-hint: "<add \"task\" | list | go | done id | retry id | cancel id> [--d
 
 # rig/queue — a task queue: stack them up, then GO 📋
 
-**Start the `rig:engine` skill with the Skill tool first and follow its SKILL.md** (context-minimal, computational orchestration in §4.3). The queue itself is `scripts/orchestrate.py queue`, the deterministic runner that is the GO engine.
+**Start the `rig:engine` skill with the Skill tool first and follow its SKILL.md** (context-minimal, computational orchestration in `RESOLVE.md` §4.3). The queue itself is `scripts/orchestrate.py queue`, the deterministic runner that is the GO engine.
 
 ```
 $ARGUMENTS

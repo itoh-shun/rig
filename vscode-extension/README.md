@@ -1,6 +1,6 @@
 # rig board (VS Code extension) — #286
 
-A read-only sidebar view of rig's `.rig/runs/` task/gate state, so you don't have to leave the editor to run `/rig:rig board`.
+A read-only sidebar view of rig's `.rig/runs/` task/gate state, so you don't have to leave the editor to run `/rig:go board`.
 
 **Read-only, by design.** This extension never writes anything — there is no accept/discard/gate command here. It parses the same JSON files `scripts/workbench.py` already writes (`task.json` / `acceptance.json` / `steps.json`) and renders them; no new state-management engine.
 

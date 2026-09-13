@@ -337,8 +337,13 @@ def fleet_snapshot(root: pathlib.Path) -> dict[str, Any]:
         if since_days < 1:
             raise ValueError("fleet since_days must be >= 1")
         from .govern import conformance
+        from .workbench.reporting import read_all_tasks
 
-        result = conformance.rollup(roots, since_days=since_days).to_dict()
+        # `conformance` scores run records and does not read them (its `RunRecords`
+        # docstring says why), so the caller says what reading means. This is the same
+        # function, on the same path, that the rollup used to call for itself.
+        result = conformance.rollup(roots, read_records=read_all_tasks,
+                                    since_days=since_days).to_dict()
     except (OSError, TypeError, ValueError) as exc:
         return {"configured": True, "error": str(exc)}
     return {"configured": True, "since_days": since_days, **result}

@@ -61,6 +61,20 @@ steps:
       - "regression_test_added_or_explained — 回帰テストを追加したか、不要な理由を説明した"
       - "existing_behavior_preserved — 既存の正常系挙動を壊していない"
       - "no_unrelated_refactor — 依頼にない広範なリファクタが混ざっていない"
+    acceptance_binding:
+      - task_intent_satisfied
+      - no_unrelated_diff
+      - diff_summary_written
+      - risk_summary_written
+      - tests_pass_or_explained
+      - no_type_errors_or_explained
+      - no_secret_leak
+      - no_destructive_operation
+      - bug_cause_identified
+      - fix_is_minimal
+      - regression_test_added_or_explained
+      - existing_behavior_preserved
+      - no_unrelated_refactor
 ---
 
 # max-bugfix

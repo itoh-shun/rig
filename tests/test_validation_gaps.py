@@ -17,6 +17,7 @@ import pathlib
 import pytest
 
 from rig_workbench.orchestrate.recipes import suggest_recipe_names
+from rig_workbench.validation import catalog
 from rig_workbench.validation import state as validation_state
 from rig_workbench.validation.accumulated import check_accumulated
 from rig_workbench.validation.recipes import _check_auto_route, _check_model_field
@@ -126,7 +127,8 @@ def test_every_shipped_pattern_is_listed_in_the_skill_catalog():
     """The regression #364 describes: patterns/failure-taxonomy was wired in,
     used, and tested, yet absent from §2 with nothing able to notice."""
     root = pathlib.Path(__file__).resolve().parent.parent
-    skill = (root / "skills/engine/SKILL.md").read_text(encoding="utf-8")
+    skill = "\n".join((root / "skills/engine" / name).read_text(encoding="utf-8")
+                      for name in catalog.INVENTORY_DOCUMENTS)
     patterns = sorted(root.glob("skills/engine/patterns/*.md"))
     assert patterns, "no shipped patterns found"
     missing = [p.stem for p in patterns if p.stem.startswith("_") is False and p.stem not in skill]
@@ -134,8 +136,6 @@ def test_every_shipped_pattern_is_listed_in_the_skill_catalog():
 
 
 def _catalog_tree(tmp_path, monkeypatch):
-    from rig_workbench.validation import catalog
-
     skills = tmp_path / "skills" / "engine"
     facets = skills / "facets"
     for directory in (
@@ -144,8 +144,12 @@ def _catalog_tree(tmp_path, monkeypatch):
         facets / "knowledge" / "wiki",
     ):
         directory.mkdir(parents=True, exist_ok=True)
-    (skills / "SKILL.md").write_text(
-        "## 2. ブリック目録\n\n## 3. PARSE\n", encoding="utf-8"
+    # Every inventory document, because a missing one is now a FAIL rather than a quietly
+    # smaller corpus; only `CATALOG_FILE` carries §2's bounds.
+    for name in catalog.INVENTORY_DOCUMENTS:
+        (skills / name).write_text("", encoding="utf-8")
+    (skills / catalog.CATALOG_FILE).write_text(
+        f"{catalog.CATALOG_SECTION[0]}\n\n{catalog.CATALOG_SECTION[1]}\n", encoding="utf-8"
     )
     monkeypatch.setattr(catalog, "SKILLS", skills)
     monkeypatch.setattr(catalog, "FACETS", facets)
@@ -177,8 +181,9 @@ def test_catalog_drift_warns_for_an_unlisted_brick(relative, tmp_path, monkeypat
 def test_catalog_drift_accepts_a_listed_brick(relative, tmp_path, monkeypatch):
     catalog, skills = _catalog_tree(tmp_path, monkeypatch)
     (skills / relative).write_text("listed", encoding="utf-8")
-    (skills / "SKILL.md").write_text(
-        f"## 2. ブリック目録\n`{relative.removesuffix('.md')}`\n\n## 3. PARSE\n",
+    (skills / catalog.CATALOG_FILE).write_text(
+        f"{catalog.CATALOG_SECTION[0]}\n`{relative.removesuffix('.md')}`\n\n"
+        f"{catalog.CATALOG_SECTION[1]}\n",
         encoding="utf-8",
     )
 

@@ -228,7 +228,7 @@ def test_the_gate_node_reports_the_recorded_status_not_a_recomputed_one(task):
 
 def test_the_decision_node_comes_from_the_receipt(task):
     root, task_id = task
-    from rig_workbench.workbench import assurance
+    from rig_workbench.assurance import assurance
     root_, task_id_ = task
     g = graph.build_graph(root, task_id)
     receipt = assurance.build_receipt(root_, task_id_)
@@ -323,7 +323,7 @@ def test_importing_the_module_never_raises_on_an_unknown_verdict(monkeypatch):
 
 @pytest.mark.parametrize("verdict", ["approve", "APPROVE ", " APPROVE", "Approve"])
 def test_a_verdict_rig_would_have_refused_to_write_reads_as_pending(task, verdict):
-    """`rig-wb review` validates against `VALID_VERDICT` before writing, so these can
+    """`rig-wb wb review` validates against `VALID_VERDICT` before writing, so these can
     only come from a hand-edited file. Normalising them here would accept values rig
     itself rejects; `pending` says the record was not understood."""
     root, task_id = task
@@ -335,7 +335,7 @@ def test_a_verdict_rig_would_have_refused_to_write_reads_as_pending(task, verdic
 
 
 def test_two_verdicts_for_one_persona_do_not_collapse_silently(task):
-    """`rig-wb review` upserts, so it cannot produce this; a hand-edited file can. The
+    """`rig-wb wb review` upserts, so it cannot produce this; a hand-edited file can. The
     last row wins — matching the writer — but a conflicting pair must not vanish."""
     root, task_id = task
     d = root / ".rig" / "runs" / task_id

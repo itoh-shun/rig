@@ -26,6 +26,9 @@ steps:
     acceptance:
       - 再現ステップがエラーなく通ること
       - 既存テスト（lint/type/unit）がグリーンであること
+    acceptance_binding:
+      - unobserved
+      - unobserved
     max_retries: 2
     personas: [implementer]
     policies: [risk-based-testing, ci-cost]

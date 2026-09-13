@@ -450,7 +450,7 @@ def cmd_instincts(args: argparse.Namespace) -> None:
         for rec in selected:
             print(f"- [{rec['confidence']}] {rec['text']}")
         return
-    # default: list everything (/rig:rig instincts)
+    # default: list everything (/rig:go instincts)
     merged, project, host = _load_tiered(root)
     if not merged:
         print("No instincts recorded.")

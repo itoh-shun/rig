@@ -7,10 +7,14 @@ import pathlib
 import re
 import subprocess
 import tempfile
-from typing import Any
+from collections.abc import Collection, Sequence
+from typing import Any, Protocol, runtime_checkable
 
+from ..ports import ProcessRunner
+from ..ports.local import SUBPROCESS
 from .cases import EvalCaseError, canonical_json, validate_case
 from .execution import GIT_DETERMINISTIC
+from .source_graph import SOURCE_TREE_GRAPH
 
 REGISTRY_VERSION = 2
 _SURFACE_PREFIXES = (
@@ -68,7 +72,8 @@ def prompt_surface_registry() -> dict:
     }
 
 
-def _merge_base(root: pathlib.Path, base: str, head: str) -> str:
+def _merge_base(root: pathlib.Path, base: str, head: str, *,
+                proc: ProcessRunner = SUBPROCESS) -> str:
     """The commit this branch actually forked from.
 
     Diffing against the base *tip* attributes everything the base branch did
@@ -80,11 +85,7 @@ def _merge_base(root: pathlib.Path, base: str, head: str) -> str:
     """
     revision = "HEAD" if head == "working" else head
     try:
-        completed = subprocess.run(
-            ["git", "merge-base", base, revision], cwd=root,
-            capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=15, shell=False,
-        )
+        completed = proc.run(["git", "merge-base", base, revision], cwd=root, timeout=15)
     except (OSError, subprocess.SubprocessError):
         return base
     value = completed.stdout.strip()
@@ -93,7 +94,8 @@ def _merge_base(root: pathlib.Path, base: str, head: str) -> str:
     return value
 
 
-def _changed_files(root: pathlib.Path, base: str, head: str) -> list[str]:
+def _changed_files(root: pathlib.Path, base: str, head: str, *,
+                   proc: ProcessRunner = SUBPROCESS) -> list[str]:
     for value, label in ((base, "base"), (head, "head")):
         if not isinstance(value, str) or not value or "\n" in value or "\x00" in value:
             raise EvalCaseError(f"affected {label} revision is invalid")
@@ -103,26 +105,21 @@ def _changed_files(root: pathlib.Path, base: str, head: str) -> list[str]:
     # non-ASCII path arrives in a form any surface prefix can match.
     args = ["git", *GIT_DETERMINISTIC,
             "diff", "--name-only", "--relative", "--no-ext-diff", "--no-textconv",
-            _merge_base(root, base, head)]
+            _merge_base(root, base, head, proc=proc)]
     if head != "working":
         args.append(head)
     args.append("--")
     try:
-        completed = subprocess.run(
-            args, cwd=root, capture_output=True, text=True, encoding="utf-8",
-            errors="replace", timeout=15, shell=False,
-        )
+        completed = proc.run(args, cwd=root, timeout=15)
     except (OSError, subprocess.SubprocessError) as exc:
         raise EvalCaseError("cannot compute affected git diff") from exc
     if completed.returncode != 0:
         raise EvalCaseError("cannot compute affected git diff")
     paths = set(completed.stdout.splitlines())
     if head == "working":
-        untracked = subprocess.run(
+        untracked = proc.run(
             ["git", *GIT_DETERMINISTIC, "ls-files", "--others", "--exclude-standard"],
-            cwd=root,
-            capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=15, shell=False,
+            cwd=root, timeout=15,
         )
         if untracked.returncode != 0:
             raise EvalCaseError("cannot enumerate untracked affected files")
@@ -131,13 +128,12 @@ def _changed_files(root: pathlib.Path, base: str, head: str) -> list[str]:
     return sorted(safe)
 
 
-def _resolved_head(root: pathlib.Path, head: str) -> str:
+def _resolved_head(root: pathlib.Path, head: str, *,
+                   proc: ProcessRunner = SUBPROCESS) -> str:
     revision = "HEAD" if head == "working" else head
     try:
-        completed = subprocess.run(
-            ["git", "rev-parse", "--verify", f"{revision}^{{commit}}"], cwd=root,
-            capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=10, shell=False,
+        completed = proc.run(
+            ["git", "rev-parse", "--verify", f"{revision}^{{commit}}"], cwd=root, timeout=10,
         )
     except (OSError, subprocess.SubprocessError) as exc:
         raise EvalCaseError("cannot resolve affected head revision") from exc
@@ -174,7 +170,8 @@ def _surface(path: str) -> dict | None:
     return None
 
 
-def prompt_surface_digests(root: pathlib.Path, revision: str) -> dict[str, str]:
+def prompt_surface_digests(root: pathlib.Path, revision: str, *,
+                           proc: ProcessRunner = SUBPROCESS) -> dict[str, str]:
     """Every prompt surface in `revision`'s tree, mapped to its git object id.
 
     Signed into the evidence so that "has this measurement's tree moved?" can be
@@ -194,10 +191,7 @@ def prompt_surface_digests(root: pathlib.Path, revision: str) -> dict[str, str]:
     measured.
     """
     try:
-        completed = subprocess.run(
-            ["git", "ls-tree", "-r", "-z", revision], cwd=root, capture_output=True,
-            text=True, encoding="utf-8", errors="replace", timeout=30, shell=False,
-        )
+        completed = proc.run(["git", "ls-tree", "-r", "-z", revision], cwd=root, timeout=30)
     except (OSError, subprocess.SubprocessError) as exc:
         raise EvalCaseError("cannot read prompt surface digests") from exc
     if completed.returncode != 0:
@@ -215,114 +209,52 @@ def prompt_surface_digests(root: pathlib.Path, revision: str) -> dict[str, str]:
     return digests
 
 
-def _graph(
-    root: pathlib.Path, *, mode: str = "source-tree", strict: bool = False,
-) -> tuple[dict[str, dict], list[dict]]:
-    """Use a hermetic source-tree graph for prompt regression analysis.
+#: Nodes keyed by their path in the tree, and the edges between their ids. What a
+#: brick graph is, as far as this module is concerned: enough to answer "which recipes
+#: reach this surface?" and nothing about how the answer was obtained.
+BrickGraph = tuple[dict[str, dict], list[dict]]
 
-    Installed extension tiers are intentionally excluded: affected-case
-    selection must describe the checked-out source tree, not ambient user or
-    project pack state.
 
-    `strict` raises `EvalCaseError` where the default answers an unreadable tree
-    with an empty graph, and exists because those two answers mean opposite things
-    depending on who is asking. Reading the *working tree*, an empty graph costs a
-    demand the gate would otherwise make — the failure is toward asking for less,
-    and a raise there is a crash in the middle of an ordinary run. Reading a
-    *revision*, an empty graph is indistinguishable from "the base branch wired
-    nothing up", which is exactly the sentence that restores the bypass the
-    revision reading exists to close. So `_graph_at` asks strictly and turns the
-    refusal into a named failure, and nothing else does.
+@runtime_checkable
+class BrickGraphSource(Protocol):
+    """Reading a source tree into a brick graph — stated here, implemented elsewhere.
+
+    This module *uses* the graph to decide which cases a change affects; it does not
+    *build* it, and the difference is the whole of why this protocol exists. Building it
+    means reading `RIG_HOME`, `build_brick_graph` and recipe frontmatter — the
+    orchestrator's data model, which is not one of the three things a judgement module may
+    import (`tests/test_layering_contract.py`), and which sat here as three function-local
+    imports until this protocol replaced them. A function-local import hides that
+    dependency rather than removing it, which is the brief's own point in §3.
+
+    So the dependency is inverted: `eval/source_graph.py` satisfies this structurally, the
+    shell (`eval/cli.py`) and `workbench/prompt_regression.py` hand it in, and nothing in
+    this file knows what a recipe's frontmatter looks like.
+
+    **The layout goes out and the graph comes back.** `prefixes` and `suffixes` are this
+    pillar's own declaration of what a prompt surface is — the same tuples
+    `prompt_surface_registry()` publishes and `_surface()` classifies with — so they are
+    passed rather than read by the source. One definition, and no way for the registry the
+    gate publishes to drift from the layout the graph was built over.
     """
-    if mode != "source-tree":
-        raise ValueError(f"unknown affected graph mode: {mode}")
-    try:
-        from rig_workbench.orchestrate import config
-        from rig_workbench.orchestrate.graph import build_brick_graph
-        if config.RIG_HOME.resolve() == root.resolve():
-            graph = build_brick_graph(project=root, mode="core")
-            return ({node["path"]: node for node in graph["nodes"]}, graph["edges"])
-    except (OSError, ValueError):
-        pass
-    # Fixture/project adapter: derive the same relations needed for reverse impact.
-    try:
-        from rig_workbench.orchestrate.recipes import parse_frontmatter
-        nodes: dict[str, dict] = {}
-        for prefix, kind in _SURFACE_PREFIXES:
-            directory = root / prefix
-            if not directory.is_dir():
-                continue
-            for path in sorted(directory.rglob("*")):
-                if path.is_file() and path.suffix in _KNOWN_SUFFIXES:
-                    name = str(path.relative_to(directory).with_suffix(""))
-                    node_id = f"{kind}:{name}"
-                    nodes[path.relative_to(root).as_posix()] = {
-                        "id": node_id, "kind": kind,
-                        "path": path.relative_to(root).as_posix(),
-                    }
-        edges: list[dict] = []
-        for node in nodes.values():
-            path = root / node["path"]
-            if node["kind"] == "recipe":
-                fm = parse_frontmatter(path)
-                if fm.get("extends"):
-                    edges.append({"from": node["id"], "to": f"recipe:{fm['extends']}"})
-                for step in fm.get("steps") or []:
-                    if not isinstance(step, dict):
-                        continue
-                    for field, kind in (("instruction", "instruction"),
-                                        ("pattern", "pattern"),
-                                        ("output_contract", "contract")):
-                        if step.get(field):
-                            edges.append({"from": node["id"],
-                                          "to": f"{kind}:{step[field]}"})
-                    # A gate is a pattern too, reached through a second field. Same
-                    # sentinel as `build_brick_graph`: a step with no gate spells it
-                    # as a placeholder dash, and a plain truth test grows an edge to
-                    # `pattern:—`. Missing this field made every gate in the
-                    # repository invisible to the revision reader — which is the
-                    # whole of the coverage a `gate:` earns — while `pattern:` on the
-                    # same step was seen, so whether the ratchet held came down to
-                    # which of two fields the wiring used.
-                    if step.get("gate") not in (None, "—", "-"):
-                        edges.append({"from": node["id"],
-                                      "to": f"pattern:{step['gate']}"})
-                    for persona in step.get("personas") or []:
-                        edges.append({"from": node["id"], "to": f"persona:{persona}"})
-                    for policy in step.get("policies") or []:
-                        edges.append({"from": node["id"], "to": f"policy:{policy}"})
-            elif node["kind"] == "persona":
-                fm = parse_frontmatter(path)
-                for value in fm.get("inject") or []:
-                    match = re.fullmatch(r"\[\[([a-z0-9-]+)(?:\|[^]]*)?\]\]", str(value))
-                    if match:
-                        candidates = [item["id"] for item in nodes.values()
-                                      if item["kind"] == "wiki"
-                                      and item["id"].split(":", 1)[1].endswith(match.group(1))]
-                        target = candidates[0] if len(candidates) == 1 else f"wiki:{match.group(1)}"
-                        edges.append({"from": node["id"], "to": target})
-        return nodes, edges
-    except Exception as exc:
-        if strict:
-            # Anything at all: `parse_frontmatter` hands `yaml.safe_load` straight
-            # through, so a broken revision raises `YAMLError` — not a `ValueError`
-            # — and a scalar where a mapping belongs raises `AttributeError`. The
-            # question being answered is "could this tree be read", and every one of
-            # those is the same no. Wider than the list because the list is a moving
-            # target: it would have to name whatever `yaml` raises next. A defect in
-            # this function is caught too, and reported as an unreadable base rather
-            # than as a traceback — the same direction, and the price of not having
-            # to keep an exhaustive list correct.
-            raise EvalCaseError("cannot read the brick graph") from exc
-        if not isinstance(exc, (OSError, UnicodeError, ValueError)):
-            raise
-        return {}, []
+
+    def __call__(self, root: pathlib.Path, *,
+                 prefixes: Sequence[tuple[str, str]], suffixes: Collection[str],
+                 strict: bool = False) -> BrickGraph | None:
+        """The graph in the tree at `root`.
+
+        `strict` says what an unreadable tree means to the caller, because the two callers
+        mean opposite things by it: None — a named failure — when a *revision* is being
+        read, an empty graph when it is the working tree. `_graph_at` carries the argument
+        for that reason.
+        """
+        ...
 
 
 def _graphable(path: str) -> bool:
-    """Whether `_graph`'s adapter would turn `path` into a node.
+    """Whether the graph source's adapter would turn `path` into a node.
 
-    The adapter is the only reader the temporary tree ever gets — `_graph`'s other
+    The adapter is the only reader the temporary tree ever gets — the source's other
     branch is for the rig checkout itself and a `TemporaryDirectory` is never that
     — so writing a file it cannot use is work that cannot change the answer. Wider
     than the adapter would be wrong in a second way as well: `_surface` also calls
@@ -340,10 +272,11 @@ def _graphable(path: str) -> bool:
 _REGULAR_FILE_MODES = frozenset({"100644", "100755"})
 
 
-def _surfaces_at(root: pathlib.Path, revision: str, destination: pathlib.Path) -> int | None:
+def _surfaces_at(root: pathlib.Path, revision: str, destination: pathlib.Path, *,
+                 proc: ProcessRunner = SUBPROCESS) -> int | None:
     """Write `revision`'s graphable prompt surfaces into `destination`; count them.
 
-    `_graph` reads frontmatter off the filesystem, so answering "what did the
+    The graph source reads frontmatter off the filesystem, so answering "what did the
     graph look like at that commit" means putting that commit's surfaces on a
     filesystem. `git ls-tree -r` to name them and one `git cat-file --batch` to
     read them, which is what `prompt_surface_digests` and `_coverage_at` already
@@ -363,14 +296,14 @@ def _surfaces_at(root: pathlib.Path, revision: str, destination: pathlib.Path) -
     is not a rendering of the tree; it is the tree.
 
     Entries are filtered here rather than written wholesale: only regular files
-    (`ls-tree` calls a symlink a blob as well), only paths `_graph`'s adapter
+    (`ls-tree` calls a symlink a blob as well), only paths the graph source's adapter
     would make a node of, and no path that climbs out of the destination. A blob
     the batch cannot produce — a blobless clone answers `missing` — is None, not
     a skip: skipping is precisely the shrunken graph this function exists to stop
     being possible.
 
     Paths are decoded `surrogateescape` because they are used to *write files* the
-    other reader then has to recognise. `_graph` walks the result with `rglob`, so
+    other reader then has to recognise. The graph source walks the result with `rglob`, so
     a filename whose bytes are not UTF-8 comes back to it through `os.listdir`'s
     surrogateescape; decoding it as U+FFFD here would write a name that reader
     spells differently, and the branch's own graph would stop matching the base
@@ -378,10 +311,9 @@ def _surfaces_at(root: pathlib.Path, revision: str, destination: pathlib.Path) -
     it only ever uses the path as a key.
     """
     try:
-        listing = subprocess.run(
-            ["git", "ls-tree", "-r", "-z", revision, "--"], cwd=root,
-            capture_output=True, text=True, encoding="utf-8",
-            errors="surrogateescape", timeout=30, shell=False,
+        listing = proc.run(
+            ["git", "ls-tree", "-r", "-z", revision, "--"], cwd=root, timeout=30,
+            errors="surrogateescape",
         )
     except (OSError, subprocess.SubprocessError):
         return None
@@ -409,10 +341,10 @@ def _surfaces_at(root: pathlib.Path, revision: str, destination: pathlib.Path) -
     if not wanted:
         return 0
     try:
-        batch = subprocess.run(
+        batch = proc.run(
             ["git", "cat-file", "--batch"], cwd=root,
             input="".join(f"{oid}\n" for oid, _ in wanted).encode("ascii"),
-            capture_output=True, timeout=30, shell=False,
+            timeout=30, text=False,
         )
     except (OSError, subprocess.SubprocessError):
         return None
@@ -449,7 +381,9 @@ def _surfaces_at(root: pathlib.Path, revision: str, destination: pathlib.Path) -
     return written
 
 
-def _graph_at(root: pathlib.Path, revision: str) -> tuple[dict[str, dict], list[dict]] | None:
+def _graph_at(root: pathlib.Path, revision: str, *,
+              proc: ProcessRunner = SUBPROCESS,
+              graph: BrickGraphSource = SOURCE_TREE_GRAPH) -> BrickGraph | None:
     """The brick graph as it stands in `revision`'s tree, or None if unreadable.
 
     None rather than an empty graph, and the distinction is the whole point: the
@@ -459,7 +393,7 @@ def _graph_at(root: pathlib.Path, revision: str) -> tuple[dict[str, dict], list[
 
     Both facts are therefore taken where they happen. Whether git could answer is
     `_surfaces_at`'s exit codes and its parse of the batch; whether the tree could
-    be read is `strict=True`, which makes the adapter raise instead of shrugging.
+    be read is `strict=True`, which makes the supplied graph refuse instead of shrugging.
     Neither is inferred from how much came back. Counting was the earlier answer
     and it was wrong in both directions at once: it could not see a tree that was
     read but rendered (`git archive` and `export-ignore`), and it called a tree
@@ -468,12 +402,10 @@ def _graph_at(root: pathlib.Path, revision: str) -> tuple[dict[str, dict], list[
     """
     with tempfile.TemporaryDirectory(prefix="rig-eval-graph-") as directory:
         tree = pathlib.Path(directory)
-        if _surfaces_at(root, revision, tree) is None:
+        if _surfaces_at(root, revision, tree, proc=proc) is None:
             return None
-        try:
-            return _graph(tree, strict=True)
-        except EvalCaseError:
-            return None
+        return graph(tree, prefixes=_SURFACE_PREFIXES, suffixes=_KNOWN_SUFFIXES,
+                     strict=True)
 
 
 def _landing_graph(
@@ -508,7 +440,7 @@ def _landing_graph(
     branch's own push would ask for a moment later.
 
     The two revisions are read by the same reader, which is what makes the
-    subtraction safe: `_graph` describes the rig repository itself through
+    subtraction safe: the graph source describes the rig repository itself through
     `build_brick_graph` and every other tree through its adapter, and the two do
     not agree edge for edge. Any such difference is present in `base` and in `fork`
     alike and cancels; what survives is only what the base branch genuinely added.
@@ -560,8 +492,20 @@ def _landing_graph(
     return nodes, edges
 
 
-def _recipes_by_surface(root: pathlib.Path, surfaces: list[dict]) -> dict[str, list[str]]:
-    return _reachable_recipes(_graph(root), surfaces)
+def _recipes_by_surface(root: pathlib.Path, surfaces: list[dict], *,
+                        graph: BrickGraphSource = SOURCE_TREE_GRAPH) -> dict[str, list[str]]:
+    return _reachable_recipes(_head_graph(root, graph), surfaces)
+
+
+def _head_graph(root: pathlib.Path, graph: BrickGraphSource) -> BrickGraph:
+    """The working tree's graph, with an unreadable tree read as an empty one.
+
+    The lenient half of the pair `_graph_at` states strictly: here an empty graph costs a
+    demand the gate would otherwise make — the failure is toward asking for less — while a
+    refusal would be a crash in the middle of an ordinary run.
+    """
+    built = graph(root, prefixes=_SURFACE_PREFIXES, suffixes=_KNOWN_SUFFIXES)
+    return ({}, []) if built is None else built
 
 
 def _reachable_recipes(
@@ -593,7 +537,8 @@ def _reachable_recipes(
 
 
 def _surface_commits(
-    root: pathlib.Path, merge_base: str, head: str, paths: list[str],
+    root: pathlib.Path, merge_base: str, head: str, paths: list[str], *,
+    proc: ProcessRunner = SUBPROCESS,
 ) -> dict[str, list[str]]:
     """Which commits touched each uncovered path, newest first.
 
@@ -608,11 +553,10 @@ def _surface_commits(
     result: dict[str, list[str]] = {}
     for path in sorted(set(paths)):
         try:
-            completed = subprocess.run(
+            completed = proc.run(
                 ["git", "log", "--format=%h", "--max-count=5",
                  f"{merge_base}..{revision}", "--", path],
-                cwd=root, capture_output=True, text=True, encoding="utf-8",
-                errors="replace", timeout=15, shell=False,
+                cwd=root, timeout=15,
             )
         except (OSError, subprocess.SubprocessError):
             continue
@@ -623,18 +567,15 @@ def _surface_commits(
     return result
 
 
-def _registry_at(root: pathlib.Path, revision: str) -> dict[str, dict] | None:
+def _registry_at(root: pathlib.Path, revision: str, *,
+                 proc: ProcessRunner = SUBPROCESS) -> dict[str, dict] | None:
     """prefix → its declared root at `revision`, or None if unreadable.
 
     Same stance as `_coverage_at`: None means the question could not be answered,
     and the caller then declines to accuse the change of anything.
     """
     try:
-        blob = subprocess.run(
-            ["git", "show", f"{revision}:{REGISTRY_REL}"], cwd=root,
-            capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=15, shell=False,
-        )
+        blob = proc.run(["git", "show", f"{revision}:{REGISTRY_REL}"], cwd=root, timeout=15)
     except (OSError, subprocess.SubprocessError):
         return None
     if blob.returncode != 0:
@@ -685,7 +626,8 @@ def _registry_narrowings(before: dict[str, dict] | None, after: dict) -> list[st
     return lost
 
 
-def _coverage_at(root: pathlib.Path, revision: str) -> dict[str, set[str]] | None:
+def _coverage_at(root: pathlib.Path, revision: str, *,
+                 proc: ProcessRunner = SUBPROCESS) -> dict[str, set[str]] | None:
     """case id → the prompt surfaces it covered at `revision`, or None if unreadable.
 
     Read from the git tree rather than the working copy, and read at two revisions:
@@ -700,10 +642,9 @@ def _coverage_at(root: pathlib.Path, revision: str) -> dict[str, set[str]] | Non
     between a stale fork and an unmeasured prompt surface.
     """
     try:
-        listing = subprocess.run(
+        listing = proc.run(
             ["git", "ls-tree", "-r", "--name-only", revision, "--", "evals/cases/"],
-            cwd=root, capture_output=True, text=True, encoding="utf-8",
-            errors="replace", timeout=15, shell=False,
+            cwd=root, timeout=15,
         )
     except (OSError, subprocess.SubprocessError):
         return None
@@ -714,10 +655,7 @@ def _coverage_at(root: pathlib.Path, revision: str) -> dict[str, set[str]] | Non
         if not path.endswith("/case.json"):
             continue
         try:
-            blob = subprocess.run(
-                ["git", "show", f"{revision}:{path}"], cwd=root, capture_output=True,
-                text=True, encoding="utf-8", errors="replace", timeout=15, shell=False,
-            )
+            blob = proc.run(["git", "show", f"{revision}:{path}"], cwd=root, timeout=15)
         except (OSError, subprocess.SubprocessError):
             return None
         if blob.returncode != 0:
@@ -904,6 +842,7 @@ def analyze_affected(
     repo: pathlib.Path | str, *, base: str, head: str = "working",
     require_cases: bool = False, ratchet: bool = False,
     evidence_dir: pathlib.Path | str | None = None,
+    proc: ProcessRunner = SUBPROCESS, graph: BrickGraphSource = SOURCE_TREE_GRAPH,
 ) -> dict:
     """Which prompt surfaces a change touches, and whether cases cover them.
 
@@ -956,11 +895,11 @@ def analyze_affected(
         root = pathlib.Path(repo).resolve()
     except OSError as exc:
         raise EvalCaseError("cannot resolve affected repository") from exc
-    changed = _changed_files(root, base, head)
-    resolved_head = _resolved_head(root, head)
-    merge_base = _merge_base(root, base, head)
+    changed = _changed_files(root, base, head, proc=proc)
+    resolved_head = _resolved_head(root, head, proc=proc)
+    merge_base = _merge_base(root, base, head, proc=proc)
     surfaces = [surface for path in changed if (surface := _surface(path)) is not None]
-    head_graph = _graph(root)
+    head_graph = _head_graph(root, graph)
     recipes_by_surface = _reachable_recipes(head_graph, surfaces)
     recipes = sorted({recipe for values in recipes_by_surface.values() for recipe in values})
     cases = _load_cases(root)
@@ -975,9 +914,10 @@ def analyze_affected(
     # Only under the ratchet. Strict mode already fails every affected surface this
     # branch does not cover, whatever the base branch says about it, so it has
     # nothing to gain from the landing view and keeps its exact old meaning.
-    base_coverage = _coverage_at(root, base) if ratchet else None
+    base_coverage = _coverage_at(root, base, proc=proc) if ratchet else None
     landing_coverage = (
-        _landing_coverage(head_coverage, base_coverage, _coverage_at(root, merge_base))
+        _landing_coverage(head_coverage, base_coverage,
+                          _coverage_at(root, merge_base, proc=proc))
         if ratchet else None
     )
     # Both arguments of "is this covered?" get the same correction, or the fix is
@@ -992,7 +932,8 @@ def analyze_affected(
     # must not fire in.
     needs_landing_graph = bool(ratchet and surfaces)
     landing_graph = (
-        _landing_graph(head_graph, _graph_at(root, base), _graph_at(root, merge_base))
+        _landing_graph(head_graph, _graph_at(root, base, proc=proc, graph=graph),
+                       _graph_at(root, merge_base, proc=proc, graph=graph))
         if needs_landing_graph else None
     )
     landing_by_surface = (_reachable_recipes(landing_graph, surfaces)
@@ -1070,11 +1011,11 @@ def analyze_affected(
     # The registry is monotonic too, in both modes. Widening what the gate can see
     # is the direction it is meant to move; narrowing it is coverage going down.
     registry_changed = REGISTRY_REL in changed
-    base_registry = _registry_at(root, base) if registry_changed else None
+    base_registry = _registry_at(root, base, proc=proc) if registry_changed else None
     registry_narrowings = (
         _registry_narrowings(base_registry,
                              _landing_registry(prompt_surface_registry(), base_registry,
-                                               _registry_at(root, merge_base)))
+                                               _registry_at(root, merge_base, proc=proc)))
         if registry_changed else []
     )
     evidence: dict[str, str] = {}
@@ -1128,6 +1069,7 @@ def analyze_affected(
         "coverage_base_unreadable": coverage_unreadable,
         "evidence_status": evidence,
         "surface_commits": _surface_commits(root, merge_base, head,
-                                            [*uncovered, *debt, *sorted(stale_by_path)]),
+                                            [*uncovered, *debt, *sorted(stale_by_path)],
+                                            proc=proc),
         "status": status,
     }

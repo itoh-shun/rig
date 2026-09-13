@@ -31,6 +31,7 @@ import zipfile
 
 from .manifest import safe_relative
 from .model import PackError
+from .resolver import core_reference_ids
 from .validation import validate_pack
 
 #: The zip format's own epoch. Any fixed value works; this one is conventional for
@@ -41,9 +42,9 @@ ZIP_EPOCH = (1980, 1, 1, 0, 0, 0)
 #: the build is not a property of the pack.
 FILE_ATTR = (0o100644 << 16)
 
-#: Written beside the assets. `pack.sig.json` is included when it exists — a signature that
-#: did not travel with the pack it signs would make every install unverifiable.
-MANIFEST_FILES = ("pack.yaml", "compatibility.yaml", "pack.sig.json")
+#: Written beside the assets, and the only two files a bundle carries that the manifest does
+#: not declare.
+MANIFEST_FILES = ("pack.yaml", "compatibility.yaml")
 
 
 def bundle_paths(manifest: dict) -> list[str]:
@@ -63,7 +64,7 @@ def bundle_pack(source: pathlib.Path | str, *, to: pathlib.Path | str | None = N
     possible outcome is the same failure, discovered later and somewhere else.
     """
     root = pathlib.Path(source).resolve()
-    manifest = validate_pack(root)
+    manifest = validate_pack(root, core_ids=core_reference_ids())
     destination = (pathlib.Path(to) if to is not None
                    else pathlib.Path("dist") / f"{manifest['id']}-{manifest['version']}.zip")
     destination = destination.resolve()

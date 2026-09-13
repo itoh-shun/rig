@@ -21,9 +21,10 @@ Two detector classes:
 Gate wiring mirrors secrets.apply_secret_sensor: `cmd_gate` calls
 apply_injection_sensor() on every evaluation; findings are recorded on the
 check under "injection_findings" (bounded excerpts, invisible characters
-rendered as <U+XXXX> escapes — never raw); explicit
-`--set no_injection_markers=passed` is the escape hatch, recorded as
-injection_override on the check, sticky across later evaluations.
+rendered as <U+XXXX> escapes — never raw). The scan is the verdict: a
+`--set no_injection_markers=passed` that contradicts it is refused by
+`cmd_gate` (lifecycle.sensor_contradictions), and a reviewed false positive is
+carried through `accept --force`, where the bypass is audited.
 
 CLI: `workbench.py scan-injection [paths...]` scans files/trees (default: the
 repo's prose surfaces); `scan-injection --diff <task-id>` scans the task
@@ -37,7 +38,7 @@ import sys
 
 from .secrets import (MAX_FILE_BYTES, WALK_SKIP_DIRS, iter_added_lines,
                       untracked_files, worktree_diff_text)
-from .state import die, effective_base, load_task, repo_root
+from .state import die, effective_base, load_task, record_sensor_status, repo_root
 
 SENSOR_CRITERION = "no_injection_markers"
 
@@ -247,10 +248,12 @@ def format_findings(findings: list[dict]) -> list[str]:
 
 # ── the sensor (called from cmd_gate) ─────────────────────────────────────────
 _SENSOR_DETAIL_PREFIX = "(injection sensor)"
+#: config.WRITER_OPERATOR's counterpart: this sensor as the writer of a status.
+WRITER = "injection-sensor"
 
 
-def apply_injection_sensor(root: pathlib.Path, run_d: pathlib.Path, task: dict, acc: dict,
-                           explicit_set: set[str] | frozenset[str] = frozenset()) -> list[str]:
+def apply_injection_sensor(root: pathlib.Path, run_d: pathlib.Path, task: dict,
+                           acc: dict) -> list[str]:
     """Machine-back `no_injection_markers` with a diff + prose-surface scan.
 
     Mutates `acc` in place (caller persists it) and returns printable notes.
@@ -260,9 +263,9 @@ def apply_injection_sensor(root: pathlib.Path, run_d: pathlib.Path, task: dict, 
     characters are never legitimate). Phrase-only findings → the check becomes
     **warning** (docs about prompts are plausible false positives; never
     overrides an explicit failed). Findings are recorded on the check under
-    "injection_findings". Escape hatch: an explicit
-    `--set no_injection_markers=passed` in the current invocation is respected
-    and recorded as injection_override=True, sticky across later evaluations.
+    "injection_findings". The scan is the verdict, and it is written over
+    whatever the gate's `--set` put there; `cmd_gate` refuses an invocation
+    whose hand-written status this contradicts rather than recording either one.
     """
     check = next((c for c in acc.get("checks", []) if c["name"] == SENSOR_CRITERION), None)
     if check is None:
@@ -281,11 +284,9 @@ def apply_injection_sensor(root: pathlib.Path, run_d: pathlib.Path, task: dict, 
     if not findings:
         # Markers gone: clear our state; un-flag only what WE flagged.
         if check.pop("injection_findings", None) is not None:
-            check.pop("injection_override", None)
             if check["status"] in ("failed", "warning") and \
                     str(check.get("detail", "")).startswith(_SENSOR_DETAIL_PREFIX):
-                check["status"] = "pending"
-                check["detail"] = ""
+                record_sensor_status(check, "pending", "", WRITER)
                 return [f"{_SENSOR_DETAIL_PREFIX} previously detected injection markers are no "
                         f"longer present → {SENSOR_CRITERION} reset to pending"]
         return []
@@ -295,28 +296,21 @@ def apply_injection_sensor(root: pathlib.Path, run_d: pathlib.Path, task: dict, 
     n = len(findings)
     n_fail = sum(1 for f in findings if f["grade"] == "fail")
     notes: list[str] = []
-    if SENSOR_CRITERION in explicit_set and check["status"] == "passed":
-        check["injection_override"] = True
-        if str(check.get("detail", "")).startswith(_SENSOR_DETAIL_PREFIX):
-            check["detail"] = (f"{_SENSOR_DETAIL_PREFIX} {n} finding(s) manually overridden "
-                               "after review (injection_override)")
-        notes.append(f"{_SENSOR_DETAIL_PREFIX} {n} injection marker(s) still present, but "
-                     f"{SENSOR_CRITERION} was explicitly set to passed — manual override recorded:")
-    elif check.get("injection_override") and check["status"] == "passed":
-        notes.append(f"{_SENSOR_DETAIL_PREFIX} {n} injection marker(s) present — "
-                     "manual override previously recorded, keeping passed:")
-    elif n_fail:
-        check["status"] = "failed"
-        check["detail"] = (f"{_SENSOR_DETAIL_PREFIX} {n_fail} invisible-unicode marker(s) detected — "
-                           f"remove them, or after review override with --set {SENSOR_CRITERION}=passed")
+    if n_fail:
+        record_sensor_status(
+            check, "failed",
+            f"{_SENSOR_DETAIL_PREFIX} {n_fail} invisible-unicode marker(s) detected — remove "
+            f"them; a reviewed false positive is carried by `accept --force`, which records "
+            f"the bypass", WRITER)
         notes.append(f"{_SENSOR_DETAIL_PREFIX} {n} injection marker(s) detected "
                      f"({n_fail} invisible-unicode, fail-grade) → {SENSOR_CRITERION} failed:")
     else:
         if check["status"] in ("pending", "passed", "warning"):
-            check["status"] = "warning"
-            if not check.get("detail") or str(check["detail"]).startswith(_SENSOR_DETAIL_PREFIX):
-                check["detail"] = (f"{_SENSOR_DETAIL_PREFIX} {n} instruction-override phrase(s) "
-                                   f"detected — review them (override with --set {SENSOR_CRITERION}=passed)")
+            # The detail goes with the status (see hardening.py): the sensor owns both.
+            record_sensor_status(
+                check, "warning",
+                f"{_SENSOR_DETAIL_PREFIX} {n} instruction-override phrase(s) detected — "
+                f"review them (a warning never blocks accept)", WRITER)
         notes.append(f"{_SENSOR_DETAIL_PREFIX} {n} instruction-override phrase(s) detected → "
                      f"{SENSOR_CRITERION} recorded as warning:")
     notes.extend(f"  {ln}" for ln in lines)

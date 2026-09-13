@@ -355,7 +355,12 @@ def select_task_route(
 
 def _catalog() -> list[dict]:
     # catalog_records performs full canonical manifest validation and fails closed.
-    return catalog_records()
+    # The core reference set is handed in rather than fetched by `catalog`
+    # (`packs.validation.CoreReferenceIds`): `packs.resolver` imports `packs.catalog`, so
+    # catalog reaching back for it would restore the cycle that argument removed.
+    from rig_workbench.packs.resolver import core_reference_ids
+
+    return catalog_records(core_ids=core_reference_ids())
 
 
 def _catalog_hint(records: list[dict], pack_id: str, recipe: str) -> str | None:

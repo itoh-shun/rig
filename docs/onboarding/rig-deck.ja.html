@@ -715,7 +715,7 @@ rig-wb pack verify-sources --scope project</pre>
       <ul class="tight wide">
         <li><span class="term">valid はできあがりではありません</span>doctor の empty_pack 警告を見てみてください</li>
         <li><span class="term">pack.yaml は手で書きません</span>「たまたま合っている」か「間違っている」かのどちらかにしかなりません</li>
-        <li><span class="term">署名した pack は sync できません</span>いったん署名を外して、sync してから、署名し直してください</li>
+        <li><span class="term">署名した pack は sync できません</span>いったん署名を外してから sync してください。rig は署名を読みますが、もう作りません</li>
         <li><span class="term">install だけではコマンドになりません</span>command アセットは、自分で登録できるホスト向けの資料です</li>
       </ul>
     </section>
@@ -725,7 +725,7 @@ rig-wb pack verify-sources --scope project</pre>
       <h2>引っかかりやすいところ（2／2）</h2>
       <ul class="tight wide">
         <li><span class="term">project pack は最初に同意が要ります</span><code>RIG_ALLOW_PROJECT_PACKS=1</code> で同意します。同意は中身のハッシュに結びつきます</li>
-        <li><span class="term">user / org では品質検証を飛ばせません</span><code>--allow-unverified</code> が使えるのは project スコープだけです</li>
+        <li><span class="term">install は署名を要求しません</span>検証はします。結果は lock に <code>verification_status</code> として残ります</li>
         <li><span class="term">mock は品質の証拠になりません</span>結果に <code>non_quality_mock</code> とはっきり書かれます</li>
         <li><span class="term">digest は「誰が」までは答えません</span>誰が作ったかを答えるのは署名と trust root です。private であることは、その代わりになりません</li>
       </ul>

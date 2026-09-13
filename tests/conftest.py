@@ -8,8 +8,12 @@
 - Provides tmp fixtures so no test touches the real repo's .rig/ state.
 """
 
+import atexit
+import json
 import os
 import pathlib
+import shutil
+import subprocess
 import sys
 import tempfile
 
@@ -27,6 +31,47 @@ os.environ["RIG_HOME"] = str(REPO_ROOT)
 # tests/test_gh_requirement.py owns the advisory and sets this per test.
 os.environ["RIG_SKIP_GH_CHECK"] = "1"
 
+# Each fail-safe below needs a directory *before* any fixture exists, so the directories
+# are made here, at import time, and removed by `atexit` — the only teardown hook that is
+# already available this early and still fires at the end. What that does and does not
+# cover:
+#   * one root per process, removed on interpreter exit. A plain `pytest`, each `-n auto`
+#     worker, and a Ctrl-C run (pytest turns SIGINT into an ordinary exit) all unwind
+#     through atexit. A `SIGKILL`/`os._exit` does not, and leaves this one root behind.
+#   * only the process that *created* the root removes it. Under `-n auto` the workers
+#     inherit these variables from the controller's environment, so they default nothing
+#     and delete nothing; the controller, which outlives every worker, owns the root.
+#     `pytest_sessionfinish` was the other candidate and is wrong for exactly that reason:
+#     in the controller it runs while workers are still finishing, so it could pull a
+#     trust store out from under a worker still writing to it. `tmp_path_factory` is no
+#     use either — it does not exist at import time, and its own retention policy
+#     deliberately *keeps* the last few roots.
+# The previous shape passed `tempfile.mkdtemp()` as the default argument of
+# `os.environ.setdefault`, which Python evaluates whether or not the variable is set: every
+# worker minted four directories it then discarded. That was the bulk of the leak.
+_FAIL_SAFE_ROOT: str | None = None
+
+
+def _fail_safe_default(name: str, dirname: str, filename: str | None = None) -> None:
+    """Default `name` to a path inside this process's private, self-deleting temp root.
+
+    A variable that already carries a value is left untouched, so an explicit override
+    from the developer's shell (or from a parent pytest, under xdist) still wins. An
+    *empty* value counts as unset: `packs/trust.py` reads
+    `RIG_PACK_TRUST_STORE or RIG_TRUST_STORE`, so an empty string would fall through to
+    the real home — the one outcome these fail-safes exist to prevent.
+    """
+    global _FAIL_SAFE_ROOT
+    if os.environ.get(name):
+        return
+    if _FAIL_SAFE_ROOT is None:
+        _FAIL_SAFE_ROOT = tempfile.mkdtemp(prefix="rig-test-failsafe-")
+        atexit.register(shutil.rmtree, _FAIL_SAFE_ROOT, ignore_errors=True)
+    target = pathlib.Path(_FAIL_SAFE_ROOT, dirname)
+    target.mkdir(parents=True, exist_ok=True)
+    os.environ[name] = str(target if filename is None else target / filename)
+
+
 # Every run that finishes is mirrored into ~/.rig/runs.jsonl for cross-project rollups
 # (runstate.append_run_record). Tests finish runs, so without this the suite writes into
 # the developer's own cross-project history and `rig-wb usage --global` starts counting
@@ -39,12 +84,29 @@ os.environ["RIG_SKIP_GH_CHECK"] = "1"
 # (test_codex_integration runs inject-instincts.sh with a copy of os.environ). A per-file
 # fixture cannot cover those, so on a machine that has promoted even one instinct the
 # suite would inflate its hit_count and push back its decay, invisibly.
-os.environ.setdefault("RIG_USER_HOME",
-                      tempfile.mkdtemp(prefix="rig-test-user-home-"))
+_fail_safe_default("RIG_USER_HOME", "user-home")
 
-os.environ.setdefault("RIG_GLOBAL_RUNS_PATH",
-                      str(pathlib.Path(tempfile.mkdtemp(prefix="rig-test-global-runs-"))
-                          / "runs.jsonl"))
+_fail_safe_default("RIG_GLOBAL_RUNS_PATH", "global-runs", "runs.jsonl")
+
+# Pack- and recipe-trust grants (rig_workbench/packs/trust.py::_store_path,
+# rig_workbench/orchestrate/recipes.py::_trust_store_path). Both default to a path
+# under the *real* Path.home() — ~/.rig/trusted-pack-assets.json and
+# ~/.claude/rig/trusted-recipes.json — and both are written, not just read: approving
+# a project-tier asset records its hash there. Individual tests already redirect these
+# per test, and those overlays still win (monkeypatch.setenv and the `rig_cli` `env`
+# overlay are both applied after this); this is the fail-safe for the test that forgets
+# — without it, one missing overlay silently grants trust in the developer's own home
+# and the next real run trusts a fixture. Not a convenience: do not remove as redundant.
+#
+# Known property, so it is not a surprise later: packs/trust.py reads
+# RIG_PACK_TRUST_STORE *or* RIG_TRUST_STORE, so setting only the latter in a test no
+# longer redirects pack trust the way it did before this default existed — the
+# fail-safe below shadows that fallback. Redirect both, or accept the shared session
+# store. Nothing depends on the old behaviour today; identities are keyed on resolved
+# path plus content hash, which are tmp_path-unique.
+_fail_safe_default("RIG_PACK_TRUST_STORE", "pack-trust", "trusted-pack-assets.json")
+
+_fail_safe_default("RIG_TRUST_STORE", "recipe-trust", "trusted-recipes.json")
 
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
@@ -138,6 +200,30 @@ def tmp_queue(tmp_path, monkeypatch):
     return qpath
 
 
+def pin_runs_path(monkeypatch, path):
+    """Point `config.RUNS_PATH` at `path` for one test, without freezing the accessor.
+
+    `RUNS_PATH` is not a stored attribute: `config.__getattr__` (PEP 562) derives it from
+    `INVOCATION_CWD` on every read. `monkeypatch.setattr` would save the value computed at
+    that moment and, on undo, *restore* it as a real module attribute — permanently
+    shadowing the accessor for the rest of the process, and so for the rest of that xdist
+    worker. `setitem` on the module dict undoes by deleting a key that genuinely was
+    absent, so the derivation survives the test.
+
+        runs = pin_runs_path(monkeypatch, tmp_path / "runs.jsonl")
+
+    Pins the value rather than moving `INVOCATION_CWD` (the other repair shape) because most
+    callers put the log outside the layout `RUNS_PATH` derives — `<state root>/.rig/runs.jsonl`
+    — so routing the pin through the root would move the file, not just the accessor. One
+    shape for every caller, rather than two that have to be told apart. Returns the path, so a
+    fixture can hand it straight on.
+    """
+    from rig_workbench.orchestrate import config
+
+    monkeypatch.setitem(config.__dict__, "RUNS_PATH", path)
+    return path
+
+
 @pytest.fixture
 def recipe_dir(tmp_path):
     """Scratch directory for synthetic recipe .md files."""
@@ -154,3 +240,179 @@ def write_recipe(recipe_dir):
         return p
 
     return write
+
+
+# ── contract-test fixtures ───────────────────────────────────────────────────
+# Stage 1 pins the externally visible CLI contract, so these go through the real
+# process rather than through an import: `python -m rig_workbench.cli` is what a
+# user's shell reaches, and an in-process call would not see argument parsing,
+# exit codes, or stdout framing at all.
+
+# Measured, not guessed, as subprocess_timeout's docstring asks: `wb gates --json`
+# costs 0.22s on a developer machine and `wb new` in a scratch repo — the heaviest
+# thing a contract test does — costs 0.56s. Both sit far below
+# MIN_SUBPROCESS_TIMEOUT, so in practice every call gets the 30s floor; the number
+# is recorded here so a caller that grows a genuinely slow command has something
+# to raise instead of a bare literal.
+CLI_MEASURED_SECONDS = 5.0
+
+# `git init` + one commit, measured the same way: milliseconds, floor applies.
+GIT_MEASURED_SECONDS = 2.0
+
+
+@pytest.fixture
+def rig_cli(tmp_path):
+    """Run the real CLI in a subprocess; return the CompletedProcess unjudged.
+
+    Deliberately does *not* raise on a non-zero exit (no `check=True`): exit codes
+    are part of the contract these tests assert on, so the caller has to be able to
+    see them. Text is decoded as UTF-8 with `errors="replace"` and the child is
+    pinned to UTF-8 I/O, because rig prints Japanese and a Windows runner's default
+    code page would otherwise turn a passing assertion into a decode error
+    (tests/test_cli_smoke.py's run_cli learned this first).
+
+        run(*args, cwd=None, env=None, timeout=None) -> subprocess.CompletedProcess
+
+    cwd defaults to `tmp_path`, the suite's idiom for "wherever this test is
+    working"; pass `rig_git_repo` (or any path) to work somewhere else. `env` is an
+    overlay on the inherited environment — `{"RIG_ALLOW_PROJECT_PACKS": "1"}` — and
+    a value of None *removes* a variable, which is how a test unsets something
+    this conftest set for everybody (RIG_SKIP_GH_CHECK, say).
+    """
+
+    def run(*args, cwd=None, env=None, timeout=None):
+        child_env = dict(
+            os.environ,
+            # The repo root, not an install: the subprocess must import the tree
+            # under test even when a released rig-wb is on the machine.
+            PYTHONPATH=os.pathsep.join(
+                p for p in (str(REPO_ROOT), os.environ.get("PYTHONPATH")) if p),
+            PYTHONIOENCODING="utf-8",
+            PYTHONUTF8="1",
+        )
+        for key, value in (env or {}).items():
+            if value is None:
+                child_env.pop(key, None)
+            else:
+                child_env[key] = str(value)
+        return subprocess.run(
+            [sys.executable, "-m", "rig_workbench.cli", *(str(a) for a in args)],
+            cwd=str(cwd if cwd is not None else tmp_path),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            env=child_env,
+            timeout=(subprocess_timeout(CLI_MEASURED_SECONDS) if timeout is None else timeout),
+        )
+
+    return run
+
+
+@pytest.fixture
+def rig_cli_json(rig_cli):
+    """`rig_cli`, plus `json.loads` on stdout — what most `--json` callers want.
+
+        payload = rig_cli_json("wb", "gates", "--json", cwd=repo)
+
+    Takes the same keyword arguments as `rig_cli`. It forms no opinion about the
+    exit code by default (a rejected gate emits a valid envelope *and* exits 1), so
+    assert on it explicitly with `expect_returncode=` here, or use `rig_cli` when
+    the CompletedProcess itself is the thing under test.
+
+    A stdout that is not JSON fails with the exit code, the actual stdout and the
+    stderr in the message. A bare `json.JSONDecodeError` from inside a fixture says
+    only "Expecting value: line 1 column 1" and costs the next person an afternoon
+    working out that the command printed a usage error instead.
+    """
+
+    def run(*args, expect_returncode=None, **kwargs):
+        result = rig_cli(*args, **kwargs)
+        argv = " ".join(str(a) for a in args)
+        if expect_returncode is not None and result.returncode != expect_returncode:
+            pytest.fail(
+                f"`rig-wb {argv}` exited {result.returncode}, expected "
+                f"{expect_returncode}\n--- stdout ---\n{result.stdout}"
+                f"\n--- stderr ---\n{result.stderr}", pytrace=False)
+        try:
+            return json.loads(result.stdout)
+        except json.JSONDecodeError as exc:
+            # Raised outside the handler, without a traceback: the useful part is
+            # what the command printed, not json/decoder.py's own frames.
+            reason = (f"`rig-wb {argv}` (exit {result.returncode}) did not print JSON "
+                      f"on stdout: {exc}\n--- stdout ---\n{result.stdout}"
+                      f"\n--- stderr ---\n{result.stderr}")
+        pytest.fail(reason, pytrace=False)
+
+    return run
+
+
+@pytest.fixture
+def rig_git_repo(tmp_path):
+    """A tmp git repo with one commit, ready to be a rig workbench target.
+
+    `wb new` cuts a worktree off HEAD, so an empty `git init` is not enough — HEAD
+    has to resolve. Identity is set in the repo's *own* config rather than
+    globally, so the commits the CLI makes later carry it too, and the developer's
+    real git config is kept out entirely: no system config, a global config pointed
+    at a file that does not exist, and the GIT_AUTHOR_*/GIT_COMMITTER_* overrides
+    dropped from the environment. Otherwise a machine with `commit.gpgsign = true`
+    or a signing key it cannot reach fails the suite for reasons that have nothing
+    to do with rig.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    env = dict(os.environ,
+               GIT_CONFIG_NOSYSTEM="1",
+               GIT_CONFIG_GLOBAL=str(tmp_path / "absent-gitconfig"),
+               GIT_TERMINAL_PROMPT="0")
+    for leaked in ("GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL",
+                   "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"):
+        env.pop(leaked, None)
+
+    def git(*args):
+        subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True,
+                       text=True, env=env, timeout=subprocess_timeout(GIT_MEASURED_SECONDS))
+
+    git("-c", "init.defaultBranch=main", "init", "-q")
+    git("config", "--local", "user.name", "rig test")
+    git("config", "--local", "user.email", "rig-test@example.invalid")
+    git("config", "--local", "commit.gpgsign", "false")
+    (repo / "README.md").write_text("rig contract-test repository\n", encoding="utf-8")
+    git("add", "-A")
+    git("commit", "-q", "-m", "initial commit")
+    return repo
+
+
+def run_git(repo, *args, check=True):
+    """git inside `repo`, with the developer's own git configuration kept out.
+
+    The same hygiene `rig_git_repo` builds its repository under, lifted out so a test
+    that commits *into* that repo (or into a task worktree cut from it) does not have to
+    restate it: no system config, a global config pointed at a file that does not exist,
+    and the ambient GIT_AUTHOR_*/GIT_COMMITTER_* overrides dropped. Identity and
+    `commit.gpgsign` live in the repository's own local config, which the fixture already
+    wrote, so a commit made here behaves exactly like the fixture's own — and a host with
+    `commit.gpgsign = true` and an unreachable key does not fail the suite for a reason
+    that has nothing to do with rig.
+
+        run_git(repo, "add", "-A")
+        head = run_git(repo, "rev-parse", "HEAD").stdout.strip()
+
+    Returns the CompletedProcess (captured, text) rather than a string, because the three
+    private `_git` copies this consolidates disagree on that: one returns stripped stdout,
+    one the CompletedProcess, one nothing. The superset is the process object; callers
+    that want the output add `.stdout.strip()`. `check=True` by default, matching all
+    three; pass `check=False` to inspect a failure instead of raising.
+    """
+    repo = pathlib.Path(repo)
+    env = dict(os.environ,
+               GIT_CONFIG_NOSYSTEM="1",
+               GIT_CONFIG_GLOBAL=str(repo.parent / "absent-gitconfig"),
+               GIT_TERMINAL_PROMPT="0")
+    for leaked in ("GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL",
+                   "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"):
+        env.pop(leaked, None)
+    return subprocess.run(["git", *args], cwd=str(repo), check=check, capture_output=True,
+                          text=True, env=env,
+                          timeout=subprocess_timeout(GIT_MEASURED_SECONDS))

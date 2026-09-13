@@ -50,6 +50,20 @@ steps:
       - "tests_confirm_behavior_preserved — テストが挙動不変を裏付けている"
       - "no_unrelated_refactor — 依頼スコープを超えたリファクタが混ざっていない"
       - "public_api_changes_documented_if_any — 意図的な公開 API 変更があれば説明されている"
+    acceptance_binding:
+      - task_intent_satisfied
+      - no_unrelated_diff
+      - diff_summary_written
+      - risk_summary_written
+      - tests_pass_or_explained
+      - no_type_errors_or_explained
+      - no_secret_leak
+      - no_destructive_operation
+      - behavior_boundaries_identified
+      - no_unintended_behavior_change
+      - tests_confirm_behavior_preserved
+      - no_unrelated_refactor
+      - public_api_changes_documented_if_any
     personas: [implementer]
 ---
 

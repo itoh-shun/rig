@@ -25,6 +25,8 @@
 rig-wb hostcheck --json      # 未導入なら: python3 -m rig_workbench.cli hostcheck --json
 ```
 
+- **毎回走る。出力は 2 回目以降、差分だけ。** hostcheck は判定を `.rig/hostcheck.jsonl` に追記する（`runs.jsonl` などと同じ追記専用の記録・**変化した run の分だけ 1 行**）。同じリポジトリでの 2 回目以降、人間向けの出力は**判定が動いた check だけ**と要約 1 行になり、比較した相手のファイル名を出す。全部見たいときは `--full`。記録が無いリポジトリでは比較相手が無いので全文が出る。`--json` は常に全 check を返す（下の絞り込みはこちら側の仕事のまま）。
+
 - **`--strict` を付けない。exit code で分岐しない。** 前提が欠けていると exit 3 を返すが、それは助言であって失敗ではない（`--strict` の exit 1 は CI 用）。**exit 3 でもタスクを止めず、そのまま①へ進む**。ホスト側の前提はユーザーの領分で、rig は報告するだけ。
 - **出すのは欠けているものだけ。** JSON の `missing[]` に出た check だけを次の1行形式で提示する。全部揃っていれば**何も出さない**（毎回のノイズにしない）:
 
@@ -94,7 +96,7 @@ task を作らず停止する。
    明示 override）。ユーザーが時間の見積もりを口にした場合は `--budget-minutes <N>` を
    付けてよい——超過時に`status`/`board`が警告表示する。#281
    このコマンドの標準出力が**そのまま Phase 1 の選択理由バナー**になる（`▸ rig` / `task:` / `detected:` / `recipe:` / `mode:` / `gate:`）。**バナーを自分で書き直さず、コマンド出力をそのまま提示する**（散文の再現に頼らずコードの確定出力を見せる）。出力された `task_id` と `worktree_path` を以降の全 dispatch で使う。過去の類似タスクが見つかった場合は「Similar tasks」欄が続けて出る（#290・デジャブ検知）——単純な語の重なりによる簡易ヒントであり、当時の対応が今回にそのまま使える保証はない。参考程度に提示し、詳細が要れば `workbench.py status <類似task_id>` を案内する。
-2. **RUN**：選択した recipe を SKILL.md §5〜6（COMPOSE→RUN）どおりに合成・実行する。**subagent の作業ディレクトリを worktree_path に固定する**（context-minimal は維持：親は dispatch と集約のみ）。各 step 完了時に:
+2. **RUN**：選択した recipe を COMPOSE.md §5〜6（COMPOSE→RUN）どおりに合成・実行する。**subagent の作業ディレクトリを worktree_path に固定する**（context-minimal は維持：親は dispatch と集約のみ）。各 step 完了時に:
    ```
    python3 scripts/workbench.py step <task_id> --set <step-id>=passed|failed|skipped
    ```
@@ -154,7 +156,7 @@ python3 scripts/workbench.py gate <task_id> --set no_type_errors_or_explained=pa
 
 diff が日本語の散文を足したタスクでは、gate に `ja_lint_clean` と `ja_prose_ai_smell_reviewed` が現れる。前者はセンサーが書く。後者は `ai-smell-reviewer` の verdict を `workbench.py review <task_id> --set ai-smell-reviewer=<verdict>` で記録するまで `pending` のままで、accept できない（`facets/instructions/parallel-review` の日本語散文レーン）。
 
-review 系タスク（`review`/`security_review`/`pr-review`）で reviewer persona の verdict が出たら、`workbench.py review <task_id> --set <persona>=<APPROVE|REJECT|APPROVE_WITH_CONDITIONS>` で記録する。これは gate 判定そのものではなく、`/rig:rig stats` の「verifier のゴム印検知」（REJECT ゼロが続く reviewer への警告）に使う観測データ。
+review 系タスク（`review`/`security_review`/`pr-review`）で reviewer persona の verdict が出たら記録する。記録先は `workbench.py review <task_id> --set <persona>=<APPROVE|REJECT|APPROVE_WITH_CONDITIONS>`。これは gate 判定そのものではなく、`/rig:go stats` の「verifier のゴム印検知」（REJECT ゼロが続く reviewer への警告）に使う観測データ。
 
 ### ⑤ 結果サマリ
 

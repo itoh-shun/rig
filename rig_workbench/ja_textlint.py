@@ -31,7 +31,8 @@ textlint-ja の多くのルールは kuromoji の品詞情報に依存します�
     not-configured  `--if-configured` 指定時に設定ファイルも引数も無い。検査していない。
 
     0   checked かつ error 0 件。または not-configured。
-    1   checked かつ error 1 件以上（`--strict` では warning も数える）。
+    1   checked かつ error 1 件以上（`--strict` では warning と、閉じていない
+        `<!-- textlint-disable -->` も数える）。
     2   unchecked。走らなかったことを合格として扱わないための区別。
 
 `--report <path>` はどの状態でも JSON 報告を書きます。orchestrate の checks 実行系
@@ -1399,16 +1400,54 @@ def load_config(path: str | None, explicit: bool) -> tuple[dict | None, str | No
 RE_DISABLE = re.compile(
     r"<!--\s*(?:textlint|ja-lint)-(disable-line|disable-next-line|disable|enable)\b([^>]*?)-->"
 )
+#: マスク用のフェンス。字下げの許容は段落分けの `RE_FENCE` に合わせる——何がコードかの
+#: 正本は `parse_document` で、リストの中に字下げして書いたフェンスも向こうはコードとして
+#: 読む。開いた印は文字と長さごと覚える：CommonMark と同じく閉じられるのは同じ文字で
+#: 同じ長さ以上の行だけなので、```` の中の ``` では閉じない。名前を `RE_FENCE` と分けて
+#: あるのは、片方を書き換えたときにもう片方の意味が黙って変わらないようにするため。
+RE_MASK_FENCE = re.compile(r"^\s*(`{3,}|~{3,})")
+RE_CODE_SPAN = re.compile(r"(?<!`)(`+)(?!`)(.+?)(?<!`)\1(?!`)")
 
 
-def suppressions(source: str) -> list[tuple[int, int, set[str] | None]]:
+def _mask_code(source: str, unclosed_fence_out: list[int] | None = None) -> str:
+    """コードスパン（`…`・``…``）とフェンス済みコードブロックを空白に潰す。
+    行数も桁も変えないので、潰した後の行番号はそのまま使える。
+    マーカーの書き方を説明しただけの文書が、そこから下の検査を止めてしまわないように。
+    閉じていないフェンスの開始行は `unclosed_fence_out` に積む（そこから末尾までが
+    コード扱いになり、下にあるマーカーが黙って読まれなくなるため）。"""
+    out: list[str] = []
+    fence: tuple[str, int] | None = None
+    opened_at = 0
+    for no, raw in enumerate(source.split("\n"), start=1):
+        m = RE_MASK_FENCE.match(raw)
+        mark = (m.group(1)[0], len(m.group(1))) if m else None
+        if fence is None:
+            if mark:
+                fence, opened_at = mark, no
+                out.append(" " * len(raw))
+                continue
+            out.append(RE_CODE_SPAN.sub(lambda x: " " * len(x.group(0)), raw))
+        else:
+            out.append(" " * len(raw))
+            if mark and mark[0] == fence[0] and mark[1] >= fence[1]:
+                fence = None
+    if fence is not None and unclosed_fence_out is not None:
+        unclosed_fence_out.append(opened_at)
+    return "\n".join(out)
+
+
+def suppressions(source: str, unclosed_out: list[int] | None = None,
+                 unclosed_fence_out: list[int] | None = None
+                 ) -> list[tuple[int, int, set[str] | None]]:
     """`<!-- textlint-disable rule, rule -->` … `<!-- textlint-enable -->` と
     `<!-- textlint-disable-line rule -->`、`<!-- textlint-disable-next-line rule -->`。
     textlint-filter-rule-comments と同じ書き方。rule を書かなければ全部。
-    (開始行, 終了行, ルール集合 or None=全部) の列を返す。"""
+    コードスパンとコードブロックの中は文書であって指示ではないので、数えない。
+    (開始行, 終了行, ルール集合 or None=全部) の列を返す。閉じていない disable の開始行は
+    `unclosed_out` に積む（本家と同じく末尾までは抑制するが、黙って効かせない）。"""
     out: list[tuple[int, int, set[str] | None]] = []
     open_blocks: list[tuple[int, set[str] | None]] = []
-    lines = source.split("\n")
+    lines = _mask_code(source, unclosed_fence_out).split("\n")
     for no, raw in enumerate(lines, start=1):
         for m in RE_DISABLE.finditer(raw):
             kind = m.group(1)
@@ -1425,6 +1464,8 @@ def suppressions(source: str) -> list[tuple[int, int, set[str] | None]]:
                     out.append((start, no, blocked))
     for start, blocked in open_blocks:
         out.append((start, len(lines), blocked))
+        if unclosed_out is not None:
+            unclosed_out.append(start)
     return out
 
 
@@ -1433,11 +1474,19 @@ def _suppressed(f: Finding, ranges: list[tuple[int, int, set[str] | None]]) -> b
 
 
 def lint_text(source: str, settings: Settings, name: str = STDIN_NAME,
-              suppressed_out: list | None = None) -> list[Finding]:
+              suppressed_out: list | None = None,
+              unclosed_out: list | None = None,
+              unclosed_fence_out: list | None = None) -> list[Finding]:
     ctx = Context(name, source, settings.options)
     for rule in settings.enabled:
         RULES[rule](ctx)
-    ranges = suppressions(source)
+    unclosed: list[int] = []
+    fences: list[int] = []
+    ranges = suppressions(source, unclosed, fences)
+    if unclosed_out is not None:
+        unclosed_out.extend({"file": name, "line": no} for no in unclosed)
+    if unclosed_fence_out is not None:
+        unclosed_fence_out.extend({"file": name, "line": no} for no in fences)
     out: list[Finding] = []
     for f in ctx.findings:
         f["severity"] = settings.enabled[f["rule"]]
@@ -1566,14 +1615,17 @@ def changed_prose(repo: str, base: str | None = None, staged: bool = False) -> d
 
 
 def lint_changed(repo: str, settings: "Settings", base: str | None = None,
-                 staged: bool = False) -> tuple[list[str], list[Finding]]:
+                 staged: bool = False,
+                 unclosed_out: list | None = None,
+                 unclosed_fence_out: list | None = None) -> tuple[list[str], list[Finding]]:
     """変更された日本語散文の file を lint し、追加行の所見だけを返す。(file 一覧, 所見)。"""
     targets = changed_prose(repo, base=base, staged=staged)
     findings: list[Finding] = []
     for rel in sorted(targets):
         nos = targets[rel]
         source = read_source(os.path.join(repo, rel))
-        for f in lint_text(source, settings, rel):
+        for f in lint_text(source, settings, rel, unclosed_out=unclosed_out,
+                           unclosed_fence_out=unclosed_fence_out):
             if nos is None or f["line"] in nos:
                 findings.append(f)
     return sorted(targets), findings
@@ -1662,7 +1714,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--json", action="store_true", help="機械可読な JSON で出力する")
     parser.add_argument("--report", metavar="PATH",
                         help="どの状態でも JSON 報告をこのパスに書く（orchestrate は stdout を捨てるため）")
-    parser.add_argument("--strict", action="store_true", help="warning も exit 1 に数える")
+    parser.add_argument("--strict", action="store_true",
+                        help="warning と、閉じていない textlint-disable も exit 1 に数える")
     parser.add_argument("--fix", action="store_true",
                         help="機械的に置き換えられる所見（半角カナ・全角英数字・NFD・ゼロ幅・用語・"
                              "ひらく規則・誤用・括弧やスラッシュの空白）を本文に当てて書き戻し、残りを報告する")
@@ -1691,6 +1744,8 @@ def main(argv: list[str] | None = None) -> int:
     skipped: list[dict] = []
     findings: list[Finding] = []
     suppressed: list[Finding] = []
+    unclosed: list[dict] = []
+    unclosed_fence: list[dict] = []
     fixed: dict[str, int] = {}
     settings: Settings | None = None
     try:
@@ -1708,7 +1763,9 @@ def main(argv: list[str] | None = None) -> int:
         if args.staged or args.changed:
             if args.artifacts:
                 raise Unchecked("--staged / --changed と成果物の引数は同時に指定できない")
-            files, findings = lint_changed(".", settings, base=args.changed, staged=args.staged)
+            files, findings = lint_changed(".", settings, base=args.changed, staged=args.staged,
+                                           unclosed_out=unclosed,
+                                           unclosed_fence_out=unclosed_fence)
             scope = {"mode": "staged" if args.staged else "changed", "base": args.changed}
             targets = None
         else:
@@ -1739,7 +1796,8 @@ def main(argv: list[str] | None = None) -> int:
                         fh.write(fixed_source)
                     source = fixed_source
                 fixed[path] = n
-            findings.extend(lint_text(source, settings, name, suppressed))
+            findings.extend(lint_text(source, settings, name, suppressed, unclosed,
+                                      unclosed_fence))
     except NotConfigured as exc:
         status, reason = "not-configured", str(exc)
     except Unchecked as exc:
@@ -1764,7 +1822,11 @@ def main(argv: list[str] | None = None) -> int:
         "artifacts": files,
         "skipped": skipped,
         "summary": {"errors": errors, "warnings": warnings, "files": len(files),
-                    "suppressed": len(suppressed), "fixed": sum(fixed.values())},
+                    "suppressed": len(suppressed), "unclosed_disable": len(unclosed),
+                    "unclosed_fence": len(unclosed_fence),
+                    "fixed": sum(fixed.values())},
+        "unclosed_disable": unclosed,
+        "unclosed_fence": unclosed_fence,
         "fixed": fixed,
         "findings": findings,
     }
@@ -1790,19 +1852,27 @@ def main(argv: list[str] | None = None) -> int:
         for f in findings:
             fix = f"  → {f['fix']}" if f.get("fix") else ""
             print(f"{f['file']}:{f['line']}:{f['column']}: {f['severity']} [{f['rule']}] {f['message']}{fix}")
+        notes = "".join(
+            f"注記: {u['file']}:{u['line']}: <!-- textlint-disable --> が閉じていない"
+            "（本家と同じく末尾まで抑制する。<!-- textlint-enable --> で閉じる）\n"
+            for u in unclosed)
+        notes += "".join(
+            f"注記: {u['file']}:{u['line']}: コードフェンスが閉じていない"
+            "（そこから末尾までコード扱いになり、下のマーカーを読まない）\n"
+            for u in unclosed_fence)
         extra = ""
         if fixed:
             extra += f" / 直した {sum(fixed.values())} 件"
         if suppressed:
             extra += f" / 抑制 {len(suppressed)} 件"
-        print(f"error {errors} 件 / warning {warnings} 件 / 検査した成果物 {len(files)} 件{extra}"
+        print(f"{notes}error {errors} 件 / warning {warnings} 件 / 検査した成果物 {len(files)} 件{extra}"
               f"（presets: {', '.join(report['presets'])}）")
 
     if status == "not-configured":
         return 0
     if status == "unchecked":
         return 2
-    return 1 if errors or (args.strict and strict_warnings) else 0
+    return 1 if errors or (args.strict and (strict_warnings or unclosed)) else 0
 
 
 if __name__ == "__main__":

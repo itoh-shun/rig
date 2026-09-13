@@ -28,6 +28,7 @@ from rig_workbench.packs.model import (ASSET_DIRS, PACK_TYPES, RECIPE_CHECKS_TYP
                                        TYPE_ASSETS, PackError)
 from rig_workbench.packs.validation import declares_recipe_checks, validate_pack
 from test_eval_cases import valid_case
+from rig_workbench.packs.resolver import core_reference_ids
 
 RECIPE = """---
 name: demo
@@ -104,7 +105,7 @@ def test_a_knowledge_pack_may_carry_knowledge(tmp_path):
     pack.mkdir()
     wiki = _write(pack, "facets/knowledge/domain.md", "# domain\n\nfacts.\n")
     assert validate_pack(_pack(tmp_path, "knowledge", {"wiki": wiki},
-                                surface="wiki:domain"))["type"] == "knowledge"
+                                surface="wiki:domain"), core_ids=core_reference_ids())["type"] == "knowledge"
 
 
 def test_a_knowledge_pack_may_not_carry_a_command(tmp_path):
@@ -114,7 +115,7 @@ def test_a_knowledge_pack_may_not_carry_a_command(tmp_path):
     pack.mkdir()
     command = _write(pack, "commands/do-it.md", "# do it\n")
     with pytest.raises(PackError, match="knowledge pack may not carry command assets"):
-        validate_pack(_pack(tmp_path, "knowledge", {"command": command}))
+        validate_pack(_pack(tmp_path, "knowledge", {"command": command}), core_ids=core_reference_ids())
 
 
 def test_dropping_the_asset_from_the_declaration_does_not_get_it_installed(tmp_path):
@@ -131,7 +132,7 @@ def test_dropping_the_asset_from_the_declaration_does_not_get_it_installed(tmp_p
     (pack / "pack.yaml").write_text(canonical(manifest), encoding="utf-8")
 
     with pytest.raises(PackError, match="asset declaration drift"):
-        validate_pack(pack)
+        validate_pack(pack, core_ids=core_reference_ids())
 
 
 def test_a_skill_pack_may_not_ship_a_recipe_that_runs_host_commands(tmp_path):
@@ -142,13 +143,13 @@ def test_a_skill_pack_may_not_ship_a_recipe_that_runs_host_commands(tmp_path):
     pack.mkdir()
     recipe = _write(pack, "recipes/demo.md", RECIPE_WITH_CHECKS)
     with pytest.raises(PackError, match="may not ship a recipe declaring `checks:`"):
-        validate_pack(_pack(tmp_path, "skill", {"recipe": recipe}, surface="recipe:demo"))
+        validate_pack(_pack(tmp_path, "skill", {"recipe": recipe}, surface="recipe:demo"), core_ids=core_reference_ids())
 
     # The same pack as a tool is allowed — the rule is about which type may run things, not
     # about forbidding checks outright.
     assert "tool" in RECIPE_CHECKS_TYPES
     assert validate_pack(_pack(tmp_path, "tool", {"recipe": recipe},
-                                surface="recipe:demo"))["type"] == "tool"
+                                surface="recipe:demo"), core_ids=core_reference_ids())["type"] == "tool"
 
 
 def test_a_skill_pack_may_ship_a_recipe_without_checks(tmp_path):
@@ -156,7 +157,7 @@ def test_a_skill_pack_may_ship_a_recipe_without_checks(tmp_path):
     pack = tmp_path / "demo-pack"
     pack.mkdir()
     recipe = _write(pack, "recipes/demo.md", RECIPE)
-    assert validate_pack(_pack(tmp_path, "skill", {"recipe": recipe}, surface="recipe:demo"))["type"] == "skill"
+    assert validate_pack(_pack(tmp_path, "skill", {"recipe": recipe}, surface="recipe:demo"), core_ids=core_reference_ids())["type"] == "skill"
 
 
 @pytest.mark.parametrize("frontmatter,expected", [
@@ -191,7 +192,7 @@ def test_a_manifest_without_a_type_is_refused_rather_than_defaulted(tmp_path):
     (pack / "pack.yaml").write_text(canonical(manifest), encoding="utf-8")
 
     with pytest.raises(PackError, match="schema fields/version are invalid"):
-        validate_pack(pack)
+        validate_pack(pack, core_ids=core_reference_ids())
 
 
 def test_init_requires_a_type_and_writes_the_current_schema(tmp_path):

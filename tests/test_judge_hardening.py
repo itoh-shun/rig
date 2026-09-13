@@ -21,12 +21,14 @@ from rig_workbench.orchestrate.providers import (
 )
 from rig_workbench.orchestrate.runstate import new_state
 
+from conftest import pin_runs_path
+
 
 @pytest.fixture
 def tmp_telemetry(tmp_path, monkeypatch):
-    monkeypatch.setattr(config, "RUNS_PATH", tmp_path / "runs.jsonl")
+    runs = pin_runs_path(monkeypatch, tmp_path / "runs.jsonl")
     monkeypatch.setattr(config, "GLOBAL_RUNS_PATH", tmp_path / "global-runs.jsonl")
-    return tmp_path / "runs.jsonl"
+    return runs
 
 
 # ── 1. evidence-first verdict parsing (last occurrence wins) ─────────────────

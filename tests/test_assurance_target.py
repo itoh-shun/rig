@@ -13,7 +13,7 @@ import sys
 
 import pytest
 
-from rig_workbench.workbench.assurance_target import (AXES, MET, SCHEMA, UNMET,
+from rig_workbench.assurance.assurance_target import (AXES, MET, SCHEMA, UNMET,
                                                       UNOBSERVABLE, evaluate, validate)
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -235,7 +235,7 @@ def test_no_declared_value_is_one_the_producer_never_emits():
     state, and an imported change is `declared-separate` — a weaker claim wearing its own
     weakness. Neither is `independent`, which is why a target cannot ask for it.
     """
-    from rig_workbench.workbench.assurance import _verifier
+    from rig_workbench.assurance.assurance import _verifier
 
     native = _verifier({"steps": [{"name": "review-diff"}]}, {"task_id": "t"})
     # `head_commit` is what `_import_block` keys on — an import record without one is not an
@@ -264,7 +264,7 @@ def test_a_verifier_block_that_did_not_observe_is_believed_over_its_leftover_ver
 def test_every_axis_names_a_block_the_receipt_writes():
     """If these drift apart, a target can ask for something the comparison silently reports
     as unobservable forever."""
-    from rig_workbench.workbench.assurance_target import BLOCKS
+    from rig_workbench.assurance.assurance_target import BLOCKS
 
     receipt_blocks = set(_receipt())
     for axis in AXES:
@@ -296,8 +296,8 @@ def test_an_unmet_target_exits_nonzero(tmp_path, monkeypatch):
     cannot find one kills no mutation, and what is under test here is the exit code, not
     `build_receipt`.
     """
-    import rig_workbench.workbench.assurance as assurance_module
-    from rig_workbench.workbench import assurance_target as module
+    import rig_workbench.assurance.assurance as assurance_module
+    from rig_workbench.assurance import assurance_target as module
 
     monkeypatch.setattr(assurance_module, "build_receipt",
                         lambda root, task_id: _receipt(gates={"observed": True,

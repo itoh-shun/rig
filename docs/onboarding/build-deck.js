@@ -1030,10 +1030,10 @@ card(s, { x: M + 6.4, y: 5.2, w: 6.0, h: 1.3, head: "文脈が圧縮されても
   const traps = [
     ["valid はできあがりではありません", "空の pack でも valid になります。doctor の empty_pack 警告を見てみてください"],
     ["pack.yaml は手で書きません", "「たまたま合っている」か「間違っている」かのどちらかにしかなりません"],
-    ["署名した pack は sync できません", "いったん署名を外して、sync してから、鍵で署名し直してください"],
+    ["署名した pack は sync できません", "いったん署名を外してから sync してください。rig は署名を読みますが、もう作りません"],
     ["install だけではコマンドになりません", "command アセットは、自分で登録できるホスト向けの資料です"],
     ["project pack は最初に同意が要ります", "RIG_ALLOW_PROJECT_PACKS=1 で同意します。同意は中身のハッシュに結びつきます"],
-    ["user / org では品質検証を飛ばせません", "--allow-unverified が使えるのは project スコープだけです"],
+    ["install は署名を要求しません", "検証はします。結果は lock に verification_status として残ります"],
     ["mock は品質の証拠になりません", "結果に non_quality_mock とはっきり書かれます"],
     ["private は署名の代わりになりません", "private リポジトリの pack も、同じ検証をぜんぶ通ります"],
   ];

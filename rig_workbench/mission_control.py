@@ -21,8 +21,8 @@ from .workbench.cockpit import _aggregate_token_usage
 from .workbench.confidence import aggregate_drill_confidence
 from .workbench.config import ACTIVE_STATUSES
 from .workbench.reporting import force_bypass_counter, gate_status_counts, read_all_tasks
-from .workbench.assurance import build_receipt
-from .workbench.assurance_wiring import ABSENT, INVALID, UNREADABLE_FILE
+from .assurance.assurance import build_receipt
+from .assurance.assurance_wiring import ABSENT, INVALID, UNREADABLE_FILE
 from .workbench.state import _load_audit, runs_dir
 
 

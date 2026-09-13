@@ -78,7 +78,7 @@ steps: 7（うち condition 付き=2 / gate=2 / acceptance retries 上限: 7）|
 
 - **`--orchestrate` 指定時かつ `needs:` 宣言 step が1件以上あるとき、`### DAG: step 並列実行トポロジー（--orchestrate）` ブロックを `### Checks:` ブロックの直後・`### Knowledge:` ブロックの前に出す（#153）**（`--orchestrate` 未指定、または `needs:` が全 step で未宣言のときはブロックごと省略）。`needs:` グラフをトポロジカルソート（BFS）し、同一 wave（並列実行可能）の step をグループ化して列挙する。`needs:` 宣言ありだが参照先 step-id が未定義の場合（`--validate` #152 が FAIL とするケース）は該当 step に `WARN: 未解決の needs` を付記し wave 計算を最善努力で続ける（`--plan` はドライラン＝FAIL でも出力を止めない）。
 
-  **Wave 計算ルール**（SKILL §3.5 `needs:` / `patterns/computational-orchestration` の実行モデルと同一）：
+  **Wave 計算ルール**（RECIPE-SCHEMA.md §3.5 `needs:` / `patterns/computational-orchestration` の実行モデルと同一）：
   - **Wave 1**：`needs:` なし / `needs: []` の step をすべて Wave 1 に割り当てる
   - **Wave N**：`needs:` に列挙された全 step-id が Wave 1〜(N-1) に含まれる step を Wave N に割り当てる
   - 同 wave 内の step は `orchestrate run` で**同時プロセス起動**される

@@ -2,19 +2,68 @@ from __future__ import annotations
 
 import pathlib
 import re
+from collections.abc import Collection
+from typing import Any, Protocol, runtime_checkable
 
-from rig_workbench import __version__
-from rig_workbench.eval.cases import validate_case
-from rig_workbench.eval.safety import unsafe_text_reason
-from rig_workbench.orchestrate.gates import validate_executable_recipe
-from rig_workbench.workbench.destructive import scan_file as destructive_scan_file
-from rig_workbench.workbench.injection import scan_file as injection_scan_file
-
-from .manifest import (canonical, digest, parse_frontmatter_subset, read_json_yaml, safe_relative,
+from .case_schema import CASE_SCHEMA
+from .manifest import (MANIFEST_TEXT_SAFETY, TextSafety, canonical, digest,
+                       parse_frontmatter_subset, read_json_yaml, safe_relative,
                        validate_compatibility, validate_manifest_shape)
-from .model import (ASSET_DIRS, PROMPT_KINDS, RECIPE_CHECKS_TYPES, CapabilityRefused,
-                    EngineIncompatible, PackError)
+from .model import (ASSET_DIRS, ENGINE_VERSION, PROMPT_KINDS, RECIPE_CHECKS_TYPES,
+                    CapabilityRefused, EngineIncompatible, PackError)
 from .resources import validate_resource
+from .scanners import DESTRUCTIVE_FILE_SCANNER, INJECTION_FILE_SCANNER, RECIPE_GATE
+
+
+class FileScanner(Protocol):
+    """A sensor that reads a whole file and reports what it found in it.
+
+    `manifest.LineScanner`'s sibling, and separate because a pack asset is scanned as a
+    file while a manifest value is scanned as one line. Validation keeps *two* of these
+    rather than one combined sensor, unlike `manifest.py`: the refusal it raises names
+    which sensor objected — "injection marker in asset" and "destructive content in asset"
+    are different things to tell an author — and a combined scanner could only report that
+    something did.
+    """
+
+    def __call__(self, path: pathlib.Path, rel: str | None = None) -> list[dict]:
+        ...
+
+
+class RecipeGate(Protocol):
+    """Whether a recipe's steps are ones the orchestrator would agree to run.
+
+    A pack's `checks:` entries are shell commands executed on the host, and this is the one
+    thing in a pack that runs rather than being read. What is executable is the
+    orchestrator's rule, not this pillar's, and a copy of it here would be a second answer
+    to "may this step run" that only the pack path consults — free to drift from the one
+    that actually runs the step, and wrong in the direction of permitting more.
+    """
+
+    def __call__(self, recipe: object) -> dict:
+        ...
+
+
+@runtime_checkable
+class CaseCheck(Protocol):
+    """Whether a document in a pack's `evals/cases/` is a well-formed evaluation case.
+
+    The narrowest of the four declarations this pillar makes about evaluation —
+    `evidence.EvalEvidence` asks five questions and `tester.CaseRunner` five more.
+    Validating a pack does not need to know what a *measurement* is; it needs to know that
+    the case the pack ships is a case, by the same definition the harness that runs it uses.
+
+    Satisfied by `packs/case_schema.py` rather than by the full `packs/eval_bridge.py`, and
+    that is not a stylistic preference: taking it from the wide bridge gave this module a
+    module-level path to `eval.gate`, and from there through `eval.affected`,
+    `eval.source_graph` and the orchestrator's graph back into `packs.resolver` — a new
+    ten-module import cycle, which `tests/test_architecture_inventory.py` refused. The
+    narrow module reaches only `eval.cases`, which comes back nowhere.
+    """
+
+    def validate_case(self, case: Any) -> dict:
+        """The case, checked; raises if it is not one."""
+        ...
 
 
 _CHECKS_KEY = re.compile(r"^(\s*)checks:(.*)$")
@@ -64,7 +113,7 @@ def _version(value: str) -> tuple[int, int, int]:
     return tuple(map(int, match.groups())) if match else (0, 0, 0)
 
 
-def _compatible(spec: str, version: str = __version__) -> bool:
+def _compatible(spec: str, version: str = ENGINE_VERSION) -> bool:
     if spec == "*":
         return True
     current = _version(version)
@@ -112,17 +161,45 @@ def _frontmatter_refs(path: pathlib.Path) -> list[tuple[str, str]]:
     return sorted(set(refs))
 
 
-def _core_reference_ids() -> set[tuple[str, str]]:
-    """Return only shipped core prompt IDs that extension packs may reuse."""
-    from .resolver import _core_assets
+# ── the shipped core, stated as what this module needs rather than imported ───
+#: Every `(kind, name)` an extension pack may reference as belonging to `rig-core`.
+#:
+#: This module *checks references against* the shipped core; it does not *enumerate* it.
+#: Enumerating it is `packs.resolver`'s — it walks the installed engine's skill directories
+#: and already owns that walk for `resolve_all` — and it is a fact about the installation,
+#: not about the pack being validated. So the set arrives already computed, and what is
+#: written down here is only the shape a reference check needs: a membership test over
+#: `(kind, name)` pairs.
+#:
+#: A plain collection and not a callable or a protocol, deliberately. `validate_pack`
+#: validates exactly one pack against one installation, so by the same split
+#: `govern/conformance.py` draws it is the `RunRecords` case, not the `RunRecordSource`
+#: case: data for the one, a reader only for the visitor that iterates many.
+#:
+#: Stated as a parameter rather than imported, because the import is the cycle
+#: (`tests/test_architecture_inventory.py`): `validation -> resolver -> validation` is the
+#: last of the three function-local imports that held a twelve-module component closed, and
+#: it is in every minimum feedback edge set for that component — no other single cut opens
+#: it. `resolver.core_reference_ids` produces this set without knowing this file exists.
+CoreReferenceIds = Collection[tuple[str, str]]
 
-    return {(asset.kind, asset.name) for asset in _core_assets()
-            if asset.kind in PROMPT_KINDS}
 
-
-def validate_pack(path: pathlib.Path | str, *, require_evaluation: bool = True) -> dict:
+def validate_pack(path: pathlib.Path | str, *, core_ids: CoreReferenceIds,
+                  require_evaluation: bool = True,
+                  safety: TextSafety = MANIFEST_TEXT_SAFETY,
+                  injection_scan: FileScanner = INJECTION_FILE_SCANNER,
+                  destructive_scan: FileScanner = DESTRUCTIVE_FILE_SCANNER,
+                  recipe_gate: RecipeGate = RECIPE_GATE,
+                  evaluation: CaseCheck = CASE_SCHEMA) -> dict:
     """Validate a pack. `require_evaluation=False` drops exactly one rule, for exactly one
     caller.
+
+    `core_ids` is required and has no default (`CoreReferenceIds`), which is the point
+    rather than an inconvenience: the only default that would read naturally is
+    `resolver.core_reference_ids`, and that import is the edge this signature exists to
+    remove. Most callers pass exactly that; `catalog` and `lock` take the set as an
+    argument of their own and pass it through, because importing `resolver` from either of
+    them would close the component again from the other side.
 
     A prompt-bearing pack must carry an approved evaluation case, and approving a case needs
     evidence, and evidence bound to *this pack's prompt* comes only from `pack test` — which
@@ -153,13 +230,11 @@ def validate_pack(path: pathlib.Path | str, *, require_evaluation: bool = True) 
     if compat_raw != canonical(compatibility):
         raise PackError("compatibility.yaml is not canonical")
     if not _compatible(manifest["engine"]):
-        raise EngineIncompatible(f"pack is incompatible with engine {__version__}")
+        raise EngineIncompatible(f"pack is incompatible with engine {ENGINE_VERSION}")
     declared = {item for paths in manifest["assets"].values() for item in paths}
     actual = {
         asset.relative_to(root).as_posix() for asset in root.rglob("*")
-        if asset.is_file() and asset.name not in {
-            "pack.yaml", "compatibility.yaml", "pack.sig.json",
-        }
+        if asset.is_file() and asset.name not in {"pack.yaml", "compatibility.yaml"}
     }
     if actual != declared:
         missing, extra = sorted(declared - actual), sorted(actual - declared)
@@ -205,16 +280,16 @@ def validate_pack(path: pathlib.Path | str, *, require_evaluation: bool = True) 
                 asset_text = asset.read_text(encoding="utf-8")
             except (OSError, UnicodeError) as exc:
                 raise PackError(f"asset is not readable UTF-8: {item}") from exc
-            if unsafe_text_reason(asset_text):
+            if safety.text_reason(asset_text):
                 raise PackError(f"unsafe text in asset: {item}")
-            if injection_scan_file(asset, item):
+            if injection_scan(asset, item):
                 raise PackError(f"injection marker in asset: {item}")
-            if destructive_scan_file(asset, item):
+            if destructive_scan(asset, item):
                 raise PackError(f"destructive content in asset: {item}")
     if prompt_ids and not manifest["assets"]["eval-case"]:
         if require_evaluation:
             raise PackError("prompt-bearing pack requires at least one evaluation case")
-    core_ids = _core_reference_ids()
+    core_ids = frozenset(core_ids)
     available = ids | core_ids
     parsed_references: set[tuple[str, str]] = set()
     for kind, paths in manifest["assets"].items():
@@ -223,7 +298,7 @@ def validate_pack(path: pathlib.Path | str, *, require_evaluation: bool = True) 
         for item in paths:
             if kind == "recipe":
                 parsed = parse_frontmatter_subset(root / item)
-                execution = validate_executable_recipe(parsed)
+                execution = recipe_gate(parsed)
                 if execution["errors"]:
                     raise PackError(execution["errors"][0])
             for ref in _frontmatter_refs(root / item):
@@ -252,7 +327,7 @@ def validate_pack(path: pathlib.Path | str, *, require_evaluation: bool = True) 
     eval_surfaces: set[str] = set()
     for item in manifest["assets"]["eval-case"]:
         _raw, case = read_json_yaml(root / item)
-        validate_case(case)
+        evaluation.validate_case(case)
         if case["status"] != "approved":
             raise PackError(f"pack evaluation case must be promoted/approved: {item}")
         bound = set(case.get("prompt_surfaces", []))
@@ -276,8 +351,10 @@ def validate_pack(path: pathlib.Path | str, *, require_evaluation: bool = True) 
     return manifest
 
 
-def validate_tiered_collection(entries: list[tuple[str, pathlib.Path]]) -> list[tuple[str, pathlib.Path, dict]]:
-    records = [(tier, path, validate_pack(path)) for tier, path in entries]
+def validate_tiered_collection(
+    entries: list[tuple[str, pathlib.Path]], *, core_ids: CoreReferenceIds,
+) -> list[tuple[str, pathlib.Path, dict]]:
+    records = [(tier, path, validate_pack(path, core_ids=core_ids)) for tier, path in entries]
     by_id: dict[str, dict] = {}
     owners: dict[tuple[str, str, str], str] = {}
     for tier, _path, manifest in records:
@@ -352,7 +429,8 @@ def validate_tiered_collection(entries: list[tuple[str, pathlib.Path]]) -> list[
     return [record_by_id[pack_id] for pack_id in order]
 
 
-def validate_collection(pack_dirs: list[pathlib.Path]) -> list[dict]:
+def validate_collection(pack_dirs: list[pathlib.Path], *,
+                        core_ids: CoreReferenceIds) -> list[dict]:
     return [manifest for _tier, _path, manifest in validate_tiered_collection(
-        [("global", path) for path in pack_dirs]
+        [("global", path) for path in pack_dirs], core_ids=core_ids,
     )]

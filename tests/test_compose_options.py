@@ -7,7 +7,7 @@ import pytest
 from rig_workbench.orchestrate.recipes import resolve_effective
 from rig_workbench.packs.resolver import resolve_asset
 from rig_workbench.workbench import cli
-from rig_workbench.workbench import compose_options as composition
+from rig_workbench.assurance import compose_options as composition
 from rig_workbench.workbench.capabilities import resolve_task_route
 
 

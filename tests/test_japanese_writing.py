@@ -1017,7 +1017,7 @@ def test_docs_show_install_use_and_cross_model_review():
     assert '--goal "' not in command
     assert '"schema_version": 1' in command
     assert "machine 固有の path や digest は同梱しません" in command
-    for relative in ("skills/engine/SKILL.md", "skills/engine/PACKS.md"):
+    for relative in ("skills/engine/BRICKS.md", "skills/engine/PACKS.md"):
         catalog = (REPO_ROOT / relative).read_text(encoding="utf-8")
         # Listed as core material, not as a pack somebody has to install first.
         assert "rig-wb pack install domain:japanese-writing" not in catalog

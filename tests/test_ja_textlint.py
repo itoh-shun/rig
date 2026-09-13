@@ -120,7 +120,8 @@ def test_approximate_rules_default_to_warning(rule):
 
 def test_a_warning_alone_leaves_exit_zero_unless_strict(tmp_path):
     code, report = _run(tmp_path, None, {"a.md": "映画を見れた。\n"})
-    assert report["summary"] == {"errors": 0, "warnings": 1, "files": 1, "suppressed": 0, "fixed": 0}
+    assert report["summary"] == {"errors": 0, "warnings": 1, "files": 1, "suppressed": 0,
+                                 "unclosed_disable": 0, "unclosed_fence": 0, "fixed": 0}
     assert code == 0
     code, _ = _run(tmp_path, None, {"a.md": "映画を見れた。\n"}, extra=("--strict",))
     assert code == 1
@@ -436,6 +437,173 @@ def test_suppressed_findings_are_counted_in_the_report(tmp_path):
     body = {"a.md": "<!-- textlint-disable -->\nできないことはない。\n"}
     code, report = _run(tmp_path, None, body)
     assert code == 0 and report["summary"]["suppressed"] == 1 and report["findings"] == []
+
+
+def test_a_marker_inside_a_code_span_is_documentation_not_a_directive():
+    """`<!-- textlint-disable -->` と書いただけの行が、そこから下の検査を止めない。"""
+    body = (
+        "| japanese-lint | `<!-- textlint-disable -->` あり。 |\n"
+        "本当ですか？\n"
+        "すごい！ ``<!-- textlint-disable -->`` と二重の backtick でも同じ。\n"
+        "本当ですか？\n"
+    )
+    assert jt.suppressions(body) == []
+    assert [f["line"] for f in _lint(body, rules=["no-exclamation-question-mark"])] == [2, 3, 4]
+
+
+def test_a_marker_inside_a_fenced_block_is_documentation_not_a_directive():
+    body = (
+        "```markdown\n<!-- textlint-disable -->\n```\n"
+        "本当ですか？\n"
+        "~~~\n<!-- textlint-disable -->\n~~~\n"
+        "すごい！\n"
+    )
+    assert jt.suppressions(body) == []
+    assert [f["line"] for f in _lint(body, rules=["no-exclamation-question-mark"])] == [4, 8]
+
+
+def test_a_real_marker_still_suppresses_from_outside_a_code_span():
+    body = (
+        "`--fix` の話。\n"
+        "<!-- textlint-disable no-exclamation-question-mark -->\n"
+        "すごい！\n"
+        "<!-- textlint-enable -->\n"
+        "すごい！\n"
+    )
+    assert jt.suppressions(body) == [(2, 4, {"no-exclamation-question-mark"})]
+    assert [f["line"] for f in _lint(body, rules=["no-exclamation-question-mark"])] == [5]
+
+
+def test_an_unclosed_disable_still_suppresses_but_says_so(tmp_path):
+    """本家と同じく末尾まで効かせる。ただし黙って効かせない——報告に1行出て、--strict では error。"""
+    unclosed: list[int] = []
+    assert jt.suppressions("<!-- textlint-disable -->\nすごい！\n", unclosed) == [(1, 3, None)]
+    assert unclosed == [1]
+
+    body = {"a.md": "# 見出し\n\n<!-- textlint-disable -->\nできないことはない。\n"}
+    code, report = _run(tmp_path, None, body)
+    assert code == 0
+    assert report["summary"]["unclosed_disable"] == 1
+    assert [u["line"] for u in report["unclosed_disable"]] == [3]
+    assert report["unclosed_disable"][0]["file"].endswith("a.md")
+    assert _run(tmp_path, None, body, extra=("--strict",))[0] == 1
+
+
+def test_a_closed_disable_is_not_reported_as_unclosed(tmp_path):
+    body = {"a.md": "<!-- textlint-disable -->\nできないことはない。\n<!-- textlint-enable -->\n"}
+    code, report = _run(tmp_path, None, body)
+    assert code == 0 and report["summary"]["unclosed_disable"] == 0
+    assert _run(tmp_path, None, body, extra=("--strict",))[0] == 0
+
+
+def test_the_shipped_engine_docs_document_the_marker_without_switching_the_linter_off():
+    """SKILL.md が §2 の表の1行から下を黙って検査しなくなっていた歴史を固定する。
+
+    `skills/engine/*.md` にはマーカーの書き方を説明する行がある（BRICKS.md の
+    japanese-lint 行など）。それはコードスパンの中なので、抑制を1件も生まない。
+    本物のマーカーを1つ足して閉じ忘れれば、そこから file の末尾まで同じことが起きる。
+    だから閉じていない disable が1つも無いことも、ここで押さえる。"""
+    engine = REPO_ROOT / "skills" / "engine"
+    documented: list[str] = []
+    for md in sorted(engine.glob("*.md")):
+        lines = md.read_text(encoding="utf-8").split("\n")
+        masked = jt._mask_code(md.read_text(encoding="utf-8")).split("\n")
+        unclosed: list[int] = []
+        starts = {a for a, _b, _n in jt.suppressions(md.read_text(encoding="utf-8"), unclosed)}
+        assert unclosed == [], (
+            f"{md.name}: 閉じていない <!-- textlint-disable --> が {unclosed} 行目にある。"
+            "そこから file の末尾まで検査が止まる——閉じるか、行単位の抑制にすること")
+        for no, raw in enumerate(lines, start=1):
+            if jt.RE_DISABLE.search(raw) and not jt.RE_DISABLE.search(masked[no - 1]):
+                documented.append(f"{md.name}:{no}")
+                assert no not in starts and no + 1 not in starts, (
+                    f"{md.name}:{no}: コードスパンの中のマーカーが抑制を作っている")
+    assert any(d.startswith("BRICKS.md:") for d in documented), (
+        "BRICKS.md が japanese-lint 行でマーカーの書き方を説明しているはず: " + repr(documented))
+
+
+def test_a_four_backtick_fence_still_closes_on_the_inner_three_backticks():
+    """段落分けの `RE_FENCE` は、マスク用の `RE_MASK_FENCE` とは別の規則のまま。
+
+    片方の名前をもう片方に付け直すと、この入力が丸ごとコードになり 3 行目の所見が消える。
+    `parse_document` は開いた印を ``` 3 文字に丸めるので、```` の中の ``` で閉じる。"""
+    body = "````\n```\nすごい！\n````\n"
+    f = _lint(body, rules=["no-exclamation-question-mark"])
+    assert [(x["line"], x["column"]) for x in f] == [(3, 4)]
+
+
+def test_the_report_says_on_stdout_which_disable_was_never_closed(tmp_path, capsys):
+    """閉じていない disable は報告に1行出る。数だけ JSON に入れて黙るのでは足りない。"""
+    body = {"a.md": "# 見出し\n\n<!-- textlint-disable -->\nできないことはない。\n"}
+    code, _ = _run(tmp_path, None, body)
+    out = capsys.readouterr().out
+    assert code == 0
+    note = [ln for ln in out.splitlines() if ln.startswith("注記:")]
+    assert len(note) == 1, out
+    assert "a.md:3:" in note[0] and "textlint-disable" in note[0]
+
+
+def test_masking_a_fence_keeps_later_line_numbers_put():
+    """`_mask_code` は行を落とさず空白に潰す。潰し方を変えると以降の行番号がずれる。"""
+    body = ("```\n<!-- textlint-disable X -->\n```\n"
+            "<!-- textlint-disable X -->\n本文。\n<!-- textlint-enable -->\n")
+    assert jt.suppressions(body) == [(4, 6, {"X"})]
+
+
+def test_an_indented_fence_is_masked_the_way_the_parser_reads_it():
+    """字下げしたフェンスもコード。`parse_document` がそう読む以上、マスクも同じに読む。
+
+    リストの中にフェンスを字下げして書く形は shipped の
+    `facets/instructions/persona-gen.md` にある。マスクだけ字下げを認めないと、そこに
+    書いたマーカーが指示として生き、下の全部を抑制した。"""
+    body = "- 項目\n\n    ```\n    <!-- textlint-disable -->\n    ```\n\nすごい！\n"
+    assert jt.suppressions(body) == []
+    assert [f["line"] for f in _lint(body, rules=["no-exclamation-question-mark"])] == [7]
+
+
+def test_a_nested_fence_does_not_close_on_the_shorter_inner_one():
+    """```` は ``` では閉じない（CommonMark と同じ：同じ文字で同じ長さ以上だけが閉じる）。
+
+    開いた印の長さを捨てていたので、外側が ```` のとき内側の ``` で閉じたことになり、
+    コードブロックの中のマーカーが指示として生き返っていた。この run が直した defect が
+    入れ子のフェンスでだけ残っていた形。`parse_document` 経由ではなくマスクを直接見る。"""
+    body = "````markdown\n```\n<!-- textlint-disable -->\n```\n````\n本当ですか？\n"
+    assert jt.suppressions(body) == []
+    assert [f["line"] for f in _lint(body, rules=["no-exclamation-question-mark"])] == [6]
+
+
+def test_a_marker_in_a_four_space_block_without_a_fence_is_still_read_as_a_directive():
+    """残る限界を名前で残す：フェンスの無い 4 スペース字下げは本文として読む。
+
+    字下げだけでコードと決めると、リストの継続行（同じ字下げ）に置いた本物のマーカーが
+    黙って効かなくなる。害の向きを選んでいる。囲むならフェンスを使うこと。"""
+    body = "段落。\n\n    <!-- textlint-disable -->\n\nすごい！\n"
+    unclosed: list[int] = []
+    assert jt.suppressions(body, unclosed) == [(3, 6, None)]
+    assert unclosed == [3]
+    assert _lint(body, rules=["no-exclamation-question-mark"]) == []
+
+
+def test_an_unclosed_fence_is_announced_because_it_swallows_the_markers_below(tmp_path, capsys):
+    """閉じていないフェンスは、そこから末尾までのマーカーを黙って読まなくする。
+
+    error にはしない（本文はコードとして読まれているだけで、誤りとは限らない）。
+    黙らせないために報告に1行出す。"""
+    body = "```\ncode\n\n<!-- ja-lint-disable-line X -->\nすごい！\n"
+    fences: list[int] = []
+    assert jt.suppressions(body, None, fences) == []
+    assert fences == [1]
+
+    code, report = _run(tmp_path, None, {"a.md": body})
+    out = capsys.readouterr().out
+    assert report["summary"]["unclosed_fence"] == 1
+    assert [u["line"] for u in report["unclosed_fence"]] == [1]
+    note = [ln for ln in out.splitlines() if ln.startswith("注記:") and "フェンス" in ln]
+    assert len(note) == 1 and "a.md:1:" in note[0], out
+    # 閉じていないフェンスの下は、段落分けもマスクもコードとして読む——だから ！ すら
+    # 報告されない。exit code は動かさず、注記だけが「読んでいない」と言う。
+    assert code == 0 and report["summary"]["errors"] == 0
+    assert _run(tmp_path, None, {"b.md": body}, extra=("--strict",))[0] == 0
 
 
 def test_fix_applies_only_mechanical_replacements_and_leaves_the_rest(tmp_path):

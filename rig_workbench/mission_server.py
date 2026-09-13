@@ -30,7 +30,8 @@ from typing import Any
 from . import exitcodes
 from .evidence import find_repo_root
 from .mission_control import build_snapshot
-from .workbench import assurance, graph as assurance_graph
+from .workbench import graph as assurance_graph
+from .assurance import assurance
 from .mission_jobs import (
     ALLOWED_PROVIDERS,
     assert_retryable,

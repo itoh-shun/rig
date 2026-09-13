@@ -200,7 +200,7 @@ A verdict that *is* recorded is read for what it says: `APPROVE` renders as a pa
 `REJECT` as a failure, `APPROVE_WITH_CONDITIONS` as a warning, and anything else as
 `pending`. The panel shows a glyph and a colour long before anyone reads the label, so a
 rejecting reviewer drawn in green would be the worst thing this graph could say. Values
-outside `VALID_VERDICT` — which `rig-wb review` refuses to write, so they can only reach
+outside `VALID_VERDICT` — which `rig-wb wb review` refuses to write, so they can only reach
 `review.json` by hand — read as `pending` rather than being normalised, because
 normalising would accept what rig itself rejects. Two verdicts recorded for one persona
 follow the writer's rule, last one wins, and the node says a duplicate was there.

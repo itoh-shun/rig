@@ -60,6 +60,10 @@ def _reset_validation_state():
     validation_state._pass = validation_state._warn = validation_state._fail = 0
 
 
+# Every fixture below that declares `acceptance:` also declares `acceptance_binding:`, and
+# not as decoration: a step's acceptance lines must each name the gate criterion that
+# observes them (or `unobserved`), so a fixture without it is an invalid recipe and the
+# whole-result-set pins in this file would be measuring that instead of what they name.
 def _recipe(tmp_path, name, **step_keys):
     body = "".join(f"    {key}: {value}\n" for key, value in step_keys.items())
     path = tmp_path / f"{name}.md"
@@ -87,7 +91,8 @@ def test_an_id_form_entry_naming_no_preset_criterion_fails(tmp_path):
     like an enforced rule and is not one."""
     path = _recipe(tmp_path, "synthetic-unknown-id",
                    gate="acceptance-gate",
-                   acceptance='["no_such_criterion — invented"]')
+                   acceptance='["no_such_criterion — invented"]',
+                   acceptance_binding="[unobserved]")
     check_recipe(path)
     fails = [r for r in _fails() if "no_such_criterion" in r]
     assert len(fails) == 1, validation_state.results
@@ -99,7 +104,8 @@ def test_a_real_criterion_id_is_not_objected_to(tmp_path):
     because it objects to everything."""
     path = _recipe(tmp_path, "synthetic-known-id",
                    gate="acceptance-gate",
-                   acceptance='["task_intent_satisfied — 依頼の意図が満たされている"]')
+                   acceptance='["task_intent_satisfied — 依頼の意図が満たされている"]',
+                   acceptance_binding="[task_intent_satisfied]")
     check_recipe(path)
     assert validation_state.results == ["[PASS] recipe synthetic-known-id: OK"]
 
@@ -110,7 +116,8 @@ def test_prose_form_entries_carry_no_vocabulary_constraint(tmp_path):
     everywhere would have rejected two thirds of it."""
     path = _recipe(tmp_path, "synthetic-prose",
                    gate="acceptance-gate",
-                   acceptance='["4-way review に REJECT が無い", "関連テスト green"]')
+                   acceptance='["4-way review に REJECT が無い", "関連テスト green"]',
+                   acceptance_binding="[unobserved, tests_pass_or_explained]")
     check_recipe(path)
     assert validation_state.results == ["[PASS] recipe synthetic-prose: OK"]
 
@@ -120,7 +127,8 @@ def test_a_mixed_form_list_fails(tmp_path):
     vocabulary check, and the id entries look like prose to a reader."""
     path = _recipe(tmp_path, "synthetic-mixed",
                    gate="acceptance-gate",
-                   acceptance='["task_intent_satisfied — ok", "4-way review に REJECT が無い"]')
+                   acceptance='["task_intent_satisfied — ok", "4-way review に REJECT が無い"]',
+                   acceptance_binding="[task_intent_satisfied, unobserved]")
     check_recipe(path)
     fails = [r for r in _fails() if "mixes id-form and prose-form" in r]
     assert len(fails) == 1, validation_state.results
@@ -134,7 +142,8 @@ def test_a_hyphen_is_not_the_id_form_separator(tmp_path):
     rejecting free text that happens to begin with a lowercase word."""
     path = _recipe(tmp_path, "synthetic-hyphen",
                    gate="acceptance-gate",
-                   acceptance='["no_such_criterion - invented"]')
+                   acceptance='["no_such_criterion - invented"]',
+                   acceptance_binding="[unobserved]")
     check_recipe(path)
     assert validation_state.results == ["[PASS] recipe synthetic-hyphen: OK"]
 

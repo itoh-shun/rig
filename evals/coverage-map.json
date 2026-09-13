@@ -269,16 +269,12 @@
         },
         {
           "kind": "pytest",
-          "path": "tests/test_pack_lifecycle.py"
-        },
-        {
-          "kind": "pytest",
-          "path": "tests/test_pack_publisher.py",
-          "proves": "発行者署名の検証"
+          "path": "tests/test_pack_lifecycle.py",
+          "proves": "install が pack 自身の evaluation evidence だけから verification_status を決めて lock に書くこと"
         }
       ],
       "id": "extension-quarantine",
-      "requirement": "外部拡張を無条件に信頼しない（検疫・同意・署名）",
+      "requirement": "外部拡張を無条件に信頼しない（検疫・同意・インストール時の品質測定）",
       "scope": "rig",
       "source": "02a §3-D"
     },

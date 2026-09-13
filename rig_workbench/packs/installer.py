@@ -9,16 +9,18 @@ import tarfile
 import tempfile
 import zipfile
 from dataclasses import dataclass
+from typing import Any, Protocol, runtime_checkable
 
-from rig_workbench.eval.gate import quality_result_failures
-from rig_workbench.eval.compare import validate_result
+from rig_workbench.ports import Clock
+from rig_workbench.ports.local import SYSTEM_CLOCK
 
+from .eval_bridge import EVALUATION
 from .lock import (lock_path, make_entry, read_lock, replace_entry, tree_hash,
                    make_source, resolve_dependencies, validate_lock_root, write_lock)
 from .manifest import read_json_yaml
-from .model import PROMPT_KINDS, PackError, UnverifiedSignature
+from .model import PROMPT_KINDS, PackError
 from .sources import fetch_revision, parse_spec, read_sources, resolve_revision
-from .resolver import pack_roots
+from .resolver import core_reference_ids, pack_roots
 from .validation import validate_pack, validate_tiered_collection
 
 MAX_ARCHIVE_BYTES = 64 * 1024 * 1024
@@ -37,7 +39,8 @@ def _resolve_source(source: pathlib.Path | str) -> tuple[pathlib.Path, str]:
     source_text = str(source)
     if source_text.startswith(("domain:", "official:")):
         from .catalog import resolve_builtin_alias
-        resolved, _manifest = resolve_builtin_alias(source_text)
+        resolved, _manifest = resolve_builtin_alias(source_text,
+                                                    core_ids=core_reference_ids())
         return resolved, source_text
     if source_text.casefold().startswith(("https://", "http://")):
         raise PackError("URL pack sources are unsupported; use a local directory, zip, or tar")
@@ -244,10 +247,48 @@ def _pack_root(content: pathlib.Path) -> pathlib.Path:
         f"{', '.join(item.name for item in candidates)}")
 
 
-def local_quality_status(
-    pack: pathlib.Path, manifest: dict, *, publisher_verified: bool = False,
-) -> str:
-    """Evaluate local promotion quality; this is not publisher/install trust."""
+@runtime_checkable
+class ResultGate(Protocol):
+    """The two questions an install asks of a pack's own evaluation results.
+
+    Whether the document is a valid, attested result at all, and — given that it is —
+    whether it clears release policy. `installer.py` decides what an install *records*
+    about a pack; it does not decide what makes a measurement trustworthy, and a second
+    answer to that here would be a second definition of "verified" one import away from
+    the first, free to drift while both claimed to be the rule.
+
+    Stated as a protocol rather than imported, because the import is the one the layering
+    rule forbids a judgement module (`tests/test_layering_contract.py`): the standard
+    library, its own pillar and the six ports, and `eval` is none of the three. Narrower
+    than `evidence.EvalEvidence` on purpose — an install needs two of those questions, not
+    five — and both are satisfied by the same `packs/eval_bridge.py` value, which is what
+    a structural protocol is for.
+    """
+
+    def validate_result(self, result: Any, *, verify_attestation: bool = True) -> dict:
+        """The result, checked as a document; raises if it is not one."""
+        ...
+
+    def result_failures(self, result: dict, case: dict, *, expected_commit: str | None = None,
+                        expected_base: str | None = None, expected_diff: str | None = None,
+                        verify_attestation: bool = True) -> list[str]:
+        """Why the result does not clear release policy, empty when it does."""
+        ...
+
+
+def local_quality_status(pack: pathlib.Path, manifest: dict, *,
+                         evaluation: ResultGate = EVALUATION) -> str:
+    """The verification status an install records: what this pack's own evidence supports.
+
+    This is the whole of it. There used to be a second, higher rung — a publisher signature
+    over the release — and `verification_status` sat on top deciding between the two. With
+    signing gone there is one question left, so there is one function left, and the answer
+    it returns is exactly what goes into the lock.
+
+    Attestation is always verified. The one caller that used to switch it off did so for
+    publisher-signed packs, on the argument that the signature already covered the bytes;
+    with no signature there is nothing to stand in for the attestation.
+    """
     if not any(manifest["assets"][kind] for kind in PROMPT_KINDS):
         return "verified-local"
     cases: dict[str, dict] = {}
@@ -258,7 +299,7 @@ def local_quality_status(
     for rel in manifest["assets"]["eval-result"]:
         _raw, result = read_json_yaml(pack / rel)
         try:
-            validate_result(result, verify_attestation=not publisher_verified)
+            evaluation.validate_result(result, verify_attestation=True)
         except Exception as exc:
             raise PackError(f"invalid attested pack evaluation result: {rel}: {exc}") from exc
         if result.get("case_id") not in evidence:
@@ -273,9 +314,8 @@ def local_quality_status(
         if len(current) != 1:
             return "unverified"
         try:
-            failures = quality_result_failures(
-                current[0], case, verify_attestation=not publisher_verified,
-            )
+            failures = evaluation.result_failures(
+                current[0], case, verify_attestation=True)
         except Exception as exc:
             raise PackError(
                 f"invalid attested pack evaluation result for {case_id}: {exc}"
@@ -283,21 +323,6 @@ def local_quality_status(
         if failures:
             return "unverified"
     return "verified-local"
-
-
-def verification_status(pack: pathlib.Path, manifest: dict) -> tuple[str, dict | None]:
-    """Return publisher trust independently from local structural/quality evidence."""
-    from .publisher import verify_publisher_signature
-
-    publisher = verify_publisher_signature(pack, manifest)
-    quality = local_quality_status(pack, manifest, publisher_verified=publisher is not None)
-    if publisher is not None:
-        if quality != "verified-local":
-            raise PackError(
-                "publisher-signed pack has invalid, mock, mismatched, or non-green evidence"
-            )
-        return "verified-publisher", publisher
-    return quality, None
 
 
 def _collection_entries(project: pathlib.Path, staging_pack: pathlib.Path,
@@ -330,7 +355,7 @@ def _collection_entries(project: pathlib.Path, staging_pack: pathlib.Path,
 
 def install_pack(
     source: pathlib.Path | str, *, scope: str, project: pathlib.Path | str,
-    root: pathlib.Path | str | None = None, allow_unverified: bool = False,
+    root: pathlib.Path | str | None = None, clock: Clock = SYSTEM_CLOCK,
 ) -> InstallResult:
     project_path = pathlib.Path(project).resolve()
     # A named-source spec (`product:northwind@1.4.0`) is resolved to a commit before anything is
@@ -354,14 +379,13 @@ def install_pack(
             "revision": resolve_revision(declared[source_id], pack_name, version),
         }
         source_label = f"{source_id}:{pack_name}@{version}"
-    if allow_unverified and scope != "project":
-        raise PackError("--allow-unverified is restricted to project scope")
     destination_root = scope_root(
         scope, project=project_path,
         root=pathlib.Path(root) if root is not None else None,
     )
     destination_root.mkdir(parents=True, exist_ok=True)
-    validate_lock_root(destination_root, expected_scope=scope)
+    validate_lock_root(destination_root, core_ids=core_reference_ids(),
+                       expected_scope=scope)
     unmanaged = [item.name for item in destination_root.iterdir() if item.is_dir()
                  and not item.name.startswith(".pack-")]
     if unmanaged and not lock_path(destination_root).exists():
@@ -383,20 +407,16 @@ def install_pack(
                 "git", source_label, tree_hash(content),
                 source_id=plan["source_id"], revision=plan["revision"])
         pack = _pack_root(content)
-        manifest = validate_pack(pack)
+        manifest = validate_pack(pack, core_ids=core_reference_ids())
         destination = destination_root / manifest["id"]
         if destination.exists():
             raise PackError(f"pack target already exists: {destination}")
         records = validate_tiered_collection(
             _collection_entries(project_path, pack, scope, destination_root,
-                                replacing=destination)
+                                replacing=destination),
+            core_ids=core_reference_ids(),
         )
-        status, publisher = verification_status(pack, manifest)
-        if status != "verified-publisher" and not allow_unverified:
-            raise UnverifiedSignature(
-                "unsigned packs require project --allow-unverified; local evaluation quality "
-                "does not establish publisher trust"
-            )
+        status = local_quality_status(pack, manifest)
         lock = read_lock(destination_root)
         if any(item["id"] == manifest["id"] for item in lock["packs"]):
             raise PackError(f"pack is already lock-owned: {manifest['id']}")
@@ -404,8 +424,7 @@ def install_pack(
             pack, manifest, scope=scope, source=source_block,
             verification_status=status,
             dependency_resolution=resolve_dependencies(manifest, records),
-            publisher_key_id=publisher["key_id"] if publisher else None,
-            signed_digest=publisher["signed_digest"] if publisher else None,
+            clock=clock,
         )
         os.replace(pack, destination)
         installed = destination
@@ -427,7 +446,7 @@ def install_pack(
 
 def update_pack(
     pack_id: str, *, to: str, scope: str, project: pathlib.Path | str,
-    root: pathlib.Path | str | None = None, allow_unverified: bool = False,
+    root: pathlib.Path | str | None = None, clock: Clock = SYSTEM_CLOCK,
 ) -> InstallResult:
     """Move a git-pinned pack to another version, in place.
 
@@ -474,7 +493,7 @@ def update_pack(
         content = staging / "content"
         fetch_revision(source, name, to, revision, content)
         pack = _pack_root(content)
-        manifest = validate_pack(pack)
+        manifest = validate_pack(pack, core_ids=core_reference_ids())
         if manifest["id"] != pack_id:
             raise PackError(
                 f"source served {manifest['id']} where {pack_id} was expected")
@@ -484,22 +503,17 @@ def update_pack(
                 f"manifest disagree")
         records = validate_tiered_collection(
             _collection_entries(project_path, pack, scope, destination_root,
-                                replacing=destination)
+                                replacing=destination),
+            core_ids=core_reference_ids(),
         )
-        status, publisher = verification_status(pack, manifest)
-        if status != "verified-publisher" and not allow_unverified:
-            raise UnverifiedSignature(
-                "unsigned packs require project --allow-unverified; local evaluation quality "
-                "does not establish publisher trust"
-            )
+        status = local_quality_status(pack, manifest)
         entry = make_entry(
             pack, manifest, scope=scope,
             source=make_source("git", f"{source_id}:{name}@{to}", tree_hash(pack),
                                source_id=source_id, revision=revision),
             verification_status=status,
             dependency_resolution=resolve_dependencies(manifest, records),
-            publisher_key_id=publisher["key_id"] if publisher else None,
-            signed_digest=publisher["signed_digest"] if publisher else None,
+            clock=clock,
         )
         os.replace(destination, retired)
         swapped = True

@@ -5,7 +5,7 @@ argument-hint: "[\"<GitHub URL | owner/repo | local path>\" | --discover \"<capa
 
 # rig/import — taking in an external skill 📥
 
-**Start the `rig:engine` skill with the Skill tool first and follow its SKILL.md** (PARSE → RESOLVE → COMPOSE → RUN, the §2 brick inventory, §8 native-first, context-minimal). This command is only the entry point; the procedure lives in `facets/instructions/skill-import` and is not repeated here.
+**Start the `rig:engine` skill with the Skill tool first and follow its SKILL.md** (PARSE → RESOLVE → COMPOSE → RUN, the `BRICKS.md` §2 brick inventory, §8 native-first, context-minimal). This command is only the entry point; the procedure lives in `facets/instructions/skill-import` and is not repeated here.
 
 Then follow `facets/instructions/skill-import` to take in the external skill:
 

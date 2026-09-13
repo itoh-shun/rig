@@ -3,6 +3,7 @@ import pathlib
 import shutil
 
 import pytest
+from rig_workbench.packs.resolver import core_reference_ids
 
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -34,7 +35,7 @@ def test_sales_is_absent_from_core_and_pack_owns_both_workflows(monkeypatch, tmp
     assert resolve_asset("recipe", "sales-enablement", project=tmp_path) is None
     assert resolve_asset("command", "sales", project=tmp_path) is None
 
-    manifest = validate_pack(SALES_PACK)
+    manifest = validate_pack(SALES_PACK, core_ids=core_reference_ids())
     assert manifest["assets"]["recipe"] == [
         "recipes/deal-review.md", "recipes/sales-enablement.md"
     ]
@@ -51,7 +52,8 @@ def test_sales_is_absent_from_core_and_pack_owns_both_workflows(monkeypatch, tmp
     assert "自動登録されるものではありません" in command
     assert "$rig --recipe deal-review" in command
     assert "RIG_ALLOW_PROJECT_PACKS=1" in command
-    for relative in ("skills/engine/SKILL.md", "skills/engine/PACKS.md", "README.md", "README.ja.md"):
+    # `BRICKS.md` holds §2's Extension Catalog since SKILL.md was cut to a first turn's worth.
+    for relative in ("skills/engine/BRICKS.md", "skills/engine/PACKS.md", "README.md", "README.ja.md"):
         guidance = (REPO_ROOT / relative).read_text(encoding="utf-8")
         assert "RIG_ALLOW_PROJECT_PACKS=1" in guidance
         assert "$rig --recipe <installed-name>" in guidance
@@ -78,8 +80,7 @@ def test_sales_project_install_resolves_every_owned_prompt_and_removes(monkeypat
 
     _isolated_resolution(monkeypatch, tmp_path)
     project = tmp_path / "project"
-    result = install_pack("domain:sales", scope="project", project=project,
-                          allow_unverified=True)
+    result = install_pack("domain:sales", scope="project", project=project)
     assert result.verification_status == "unverified"
     lock_entry = read_lock(project / ".rig/packs")["packs"][0]
     assert lock_entry["source"]["path"] == "domain:sales"
@@ -165,7 +166,7 @@ def test_builtin_domain_alias_rejects_traversal_and_unknown_ids(source, tmp_path
     from rig_workbench.packs.model import PackError
 
     with pytest.raises(PackError, match="built-in domain pack"):
-        install_pack(source, scope="project", project=tmp_path, allow_unverified=True)
+        install_pack(source, scope="project", project=tmp_path)
     assert not (tmp_path / ".rig/packs/sales").exists()
     assert not (tmp_path / ".rig/packs/video-storytelling").exists()
 
@@ -188,7 +189,7 @@ def test_pack_may_reference_real_core_assets_but_not_unknown_assets(tmp_path, mo
     (copied / "pack.yaml").write_text(canonical(manifest), encoding="utf-8")
 
     with pytest.raises(PackError, match="typed reference drift"):
-        validate_pack(copied)
+        validate_pack(copied, core_ids=core_reference_ids())
 
 
 def test_pack_gate_reference_is_validated_as_a_core_pattern(tmp_path, monkeypatch):
@@ -210,7 +211,7 @@ def test_pack_gate_reference_is_validated_as_a_core_pattern(tmp_path, monkeypatc
     (copied / "pack.yaml").write_text(canonical(manifest), encoding="utf-8")
 
     with pytest.raises(PackError, match="unsupported executable gate"):
-        validate_pack(copied)
+        validate_pack(copied, core_ids=core_reference_ids())
 
 
 def test_video_storytelling_is_absent_from_core_and_pack_is_self_contained(
@@ -232,7 +233,7 @@ def test_video_storytelling_is_absent_from_core_and_pack_is_self_contained(
     assert resolve_asset("recipe", "movie", project=tmp_path) is None
     assert resolve_asset("recipe", "scenario", project=tmp_path) is None
 
-    manifest = validate_pack(VIDEO_PACK)
+    manifest = validate_pack(VIDEO_PACK, core_ids=core_reference_ids())
     assert manifest["dependencies"] == []
     assert manifest["assets"]["recipe"] == [
         "recipes/movie.md", "recipes/release-movie.md", "recipes/scenario.md"
@@ -297,12 +298,16 @@ def test_video_storytelling_project_install_resolves_extends_and_removes(
 
     _isolated_resolution(monkeypatch, tmp_path)
     project = tmp_path / "project"
+    # Patch the root, not the derived: `PROJECT_RECIPES` is served lazily off `INVOCATION_CWD`
+    # through the module's PEP 562 `__getattr__`, so `monkeypatch.setattr` on it saves the value
+    # computed now and restores it as a *real* module attribute, freezing the overlay at this
+    # tmp_path for every later test in the worker. Same leak, same fix as
+    # `test_decision_humor_extension.py`; the root alone already resolves to `project/.rig/recipes`.
     monkeypatch.setattr(orchestrate_config, "INVOCATION_CWD", project)
-    monkeypatch.setattr(orchestrate_config, "PROJECT_RECIPES", project / ".rig/recipes")
     monkeypatch.setenv("RIG_ALLOW_PROJECT_PACKS", "1")
     monkeypatch.setenv("RIG_PACK_TRUST_STORE", str(tmp_path / "pack-trust.json"))
     result = install_pack("domain:video-storytelling", scope="project",
-                          project=project, allow_unverified=True)
+                          project=project)
     assert result.verification_status == "unverified"
     entry = read_lock(project / ".rig/packs")["packs"][0]
     assert entry["source"]["path"] == "domain:video-storytelling"

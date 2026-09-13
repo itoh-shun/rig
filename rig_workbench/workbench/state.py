@@ -12,6 +12,7 @@ import re
 import secrets
 import subprocess
 import sys
+import tempfile
 
 try:
     import fcntl  # POSIX: mutual exclusion for concurrent task operations (task_lock)
@@ -19,6 +20,19 @@ except ImportError:
     fcntl = None  # type: ignore[assignment]  # Windows fallback (locking disabled)
 
 from rig_workbench import gitroot
+from rig_workbench.exitcodes import ERROR, REJECTED
+# Module level, unlike every other `govern` import in this file, because a type alias is
+# resolved when the `def` below is executed and there is no function to hide it in.
+#
+# **What makes it safe is measured, and it is not "the ledger imports only the ports".**
+# It does not: importing the submodule executes `govern/__init__.py`, and the closure is
+# `gitroot`, `govern.{identity,policy,rbac}`, `orchestrate.secure_fs` and the two `ports`
+# modules — six more than the sentence that used to be here claimed. The reason it cannot
+# close a cycle is that none of them is `rig_workbench.workbench`, which is a fact about
+# the closure rather than about this line, so
+# `test_govern_ledger.py::test_both_readers_of_the_key_path_delegate_to_the_one_observation`
+# holds it in a fresh interpreter. Read that before adding the next one here.
+from rig_workbench.govern.ledger import KeyFileKind as _ledger_key_file_kind
 
 from .config import GATE_PRESETS, TASK_TYPES
 
@@ -27,9 +41,41 @@ def now_iso() -> str:
     return datetime.datetime.now().astimezone().isoformat(timespec="seconds")
 
 
+# `die` and `reject` are the two ways a workbench command stops early, and they are two
+# functions rather than one because the caller reading `$?` cannot ask a follow-up
+# question. `exitcodes.REJECTED` (1) is "rig judged this and the answer is no" — a verdict
+# to act on. `exitcodes.ERROR` (2) is "rig could not produce an answer" — bad usage, state
+# that is not there, a git command that failed. `die` used to end in a bare `sys.exit(1)`,
+# which reported every plumbing failure as a verdict, so a script branching on 1 could not
+# tell a failed gate from a task id with a typo in it.
+#
+# Neither takes a code, and there is no default to inherit: a call site chooses by which
+# function it calls, so "is this a judgement?" is answered where the answer is known.
+
+
 def die(msg: str) -> "NoReturn":  # noqa: F821
+    """rig could not produce an answer. Exits `exitcodes.ERROR` (2).
+
+    The overwhelming majority of stops: a task that is not there, an unreadable file, a
+    flag that does not parse, a git command that failed. Nothing was judged — and where
+    something was, it is not what this reports: `cmd_gate` ends here when a `--set`
+    contradicts the sensor backing that criterion, after the gate has been evaluated and
+    written. What is refused there is the operator's declaration, never the work, which
+    is exactly why it must not come back as `reject`'s 1.
+    """
     print(f"[ERROR] {msg}", file=sys.stderr)
-    sys.exit(1)
+    sys.exit(ERROR)
+
+
+def reject(msg: str) -> "NoReturn":  # noqa: F821
+    """rig judged the work and the answer is no. Exits `exitcodes.REJECTED` (1).
+
+    Only for a verdict rig actually reached — an unmet acceptance gate, a governance
+    policy that blocks, an actor who is not permitted to accept. A caller acts on this
+    and does not retry it, which is exactly what makes it wrong for a missing file.
+    """
+    print(f"[REJECTED] {msg}", file=sys.stderr)
+    sys.exit(REJECTED)
 
 
 def warn(msg: str) -> None:
@@ -152,25 +198,152 @@ def audit_append(root: pathlib.Path, event: dict) -> None:
     The file keeps its v1 shape — `workbench audit`, `digest` and every existing
     reader depend on it. Under a policy the same event is *also* chained into
     `.rig/ledger.jsonl`, where deleting it is detectable (govern.ledger).
+
+    **Repeats of one event are bounded, and each file bounds itself.** This file has no
+    chain to protect it and had no cap of its own, so a caller that can make the same event
+    happen repeatedly grew it a line at a time for as long as it liked. The rule
+    `govern.ledger` applies to the chain applies here — every field but the time of day
+    compared, plus the date, `REPEAT_CAP` lines written and one more carrying `collapsed`,
+    and the rest of that day not written.
+
+    **The cap decides this file's write and nothing else.** It used to return before the
+    ledger mirror, which handed an unsigned, hand-writable file authority over what the
+    chain records: four look-alike lines pasted into `.rig/audit.jsonl` suppressed a real
+    `accept_force` from the chain (measured, audit 4 → 4 and ledger 0 → 0), and the chain's
+    own run was judged against this file's tail rather than its own (measured, a
+    `policy.init` in between broke the ledger's run and the next repeat still wrote
+    nothing). The mirror is now unconditional and `ledger.append` applies its own cap
+    against its own tail — which is why the mirrored payload drops `ts` and `collapsed`:
+    those are this file's bookkeeping, and leaving them in made every mirror unique so the
+    chain could never recognise a repeat of its own.
+
+    Line shape is unchanged, which is why `cmd_audit` and the rest keep reading it; the two
+    readers that must not mistake a collapsed line for a single event say so themselves
+    (`govern.ledger.collapsed_note`, `audit_event_weights`).
     """
+    # INSIDE the swallow, and defaulting to "append anyway". The historic write was an
+    # append with no read; the cap gave this function a read, and a read can fail where an
+    # append cannot — a `.rig/audit.jsonl` holding a single 0xff byte raised
+    # `UnicodeDecodeError` out of `_load_audit`, straight through `audit_append` and out of
+    # `accept`, which by then has already squashed and written `status: accepted`. A forced
+    # bypass then applied with no record in either file. A corrupt or unreadable audit log
+    # must cost at most the cap, never the record.
     try:
-        p = audit_path(root)
-        p.parent.mkdir(parents=True, exist_ok=True)
-        with p.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n")
+        suppressed = _audit_repeat_suppressed(root, event)
     except Exception:
-        pass
+        suppressed = False
+    if not suppressed:
+        try:
+            p = audit_path(root)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            with p.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n")
+        except Exception:
+            pass
     try:
         from ..govern import ledger
         from ..govern.identity import current_actor, load_org_binding
 
         binding = load_org_binding(root)
         if binding.bound:
+            mirrored = {k: v for k, v in event.items() if k not in ("ts", "collapsed")}
             ledger.append(root, f"audit.{event.get('action', 'event')}",
                           actor=current_actor(root), subject=str(event.get("task_id") or ""),
-                          org=binding.org, team=binding.team, data=event)
+                          org=binding.org, team=binding.team, data=mirrored)
     except Exception:
         pass
+
+
+def _audit_repeat_suppressed(root: pathlib.Path, event: dict) -> bool:
+    """Whether this event repeats the tail of `.rig/audit.jsonl` often enough to stop.
+
+    Mutates `event` to carry `collapsed` — that day's line count for it — on the entry that
+    closes the cap; returns True for the repeats after it. Reading the file to write one
+    line is the cost of the bound, and it is the same cost `govern.ledger.append` has always
+    paid to find `prev`. Every failure here is "not suppressed": the caller swallows what
+    escapes anyway, and both layers answer the same way, because a log this cannot read is a
+    reason to write more rather than less.
+    """
+    from ..govern import ledger          # function-local, as the mirror below already is
+
+    try:
+        existing = _load_audit(root)
+    except Exception:
+        return False
+    on_record = _audit_event_total(existing, event)
+    if on_record > ledger.REPEAT_CAP:
+        return True
+    if on_record == ledger.REPEAT_CAP:
+        event["collapsed"] = on_record + 1
+    return False
+
+
+def _audit_event_total(existing: list[dict], event: dict) -> int:
+    """How many lines this event already has on today's record in `.rig/audit.jsonl`.
+
+    The same walk `govern.ledger._event_total` does over the chain, over this file's own
+    shape: every occurrence anywhere, not only a consecutive run, so that alternating two
+    events does not escape the cap; a `collapsed` entry sets the running count rather than
+    adding to it, because it already accounts for every line before it.
+    """
+    key = _audit_repeat_key(event)
+    total = 0
+    for previous in existing:
+        if _audit_repeat_key(previous) != key:
+            continue
+        carried = previous.get("collapsed")
+        total = carried if isinstance(carried, int) and carried > 0 else total + 1
+    return total
+
+
+def audit_event_weights(events: list[dict]) -> list[tuple[dict, int]]:
+    """Each audit event with the number of lines it accounts for.
+
+    One, except on an entry the cap closed: that one carries that day's line count for the
+    event, and what it adds is that count minus what is already counted for the same event.
+    Over a whole file this is 1 everywhere and the sum is the line count — the weighting is
+    for a *window*, a `--last 7d` that begins after the plain lines and holds only the capped
+    one, where counting it as a single event would report less than the file already shows.
+    It does not recover the run: how many there were is not recorded anywhere, and
+    `REPEAT_CAP` says why.
+
+    Counted per event and not per consecutive run, because that is how the cap counts
+    (`govern.ledger._event_total`); the key is `_audit_repeat_key`, the same one the write
+    uses, so the two can never disagree about what "the same event" means.
+
+    **And clamped, because `collapsed` arrives from an unsigned file.** `.rig/audit.jsonl`
+    is plain JSON anyone with the checkout can edit — the premise the whole reconciliation
+    rests on — so a single hand-written line saying `"collapsed": 1000000` would otherwise
+    report a million forced accepts to `stats`, `digest` and `cockpit`. The clamp is not
+    charity toward whoever wrote the line — the premise here is that they may be the forger
+    — it is the ceiling of what the code that writes this file could have produced: the cap
+    never writes more than `REPEAT_CAP + 1` for one event on one day, so a larger number is
+    not evidence of more events, only of an edit.
+    """
+    from ..govern import ledger
+
+    out: list[tuple[dict, int]] = []
+    counted: dict[str, int] = {}
+    for event in events:
+        key = _audit_repeat_key(event)
+        so_far = counted.get(key, 0)
+        carried = event.get("collapsed")
+        weight = (min(max(carried - so_far, 1), ledger.REPEAT_CAP + 1)
+                  if isinstance(carried, int) and carried > 0 else 1)
+        counted[key] = so_far + weight
+        out.append((event, weight))
+    return out
+
+
+def _audit_repeat_key(event: dict) -> str:
+    """What makes two audit events the same one: every field but the time of day, plus the
+    date, and never `collapsed` (the capping line has to read as one more of the event it
+    caps). The date is in it for the reason `govern.ledger.REPEAT_CAP` gives — the cap is per
+    event per day, so it never silences an event that recurs next week, and a campaign that
+    runs for days stays visible as days."""
+    body = {k: v for k, v in event.items() if k not in ("ts", "collapsed")}
+    body["_day"] = str(event.get("ts") or "")[:10]
+    return json.dumps(body, sort_keys=True, ensure_ascii=False, default=str)
 
 
 def _load_audit(root: pathlib.Path) -> list[dict]:
@@ -382,36 +555,357 @@ def _provenance_key_path(root: pathlib.Path) -> pathlib.Path:
     return root / ".rig" / "provenance.key"
 
 
-def load_or_create_provenance_key(root: pathlib.Path) -> bytes:
-    """The HMAC-SHA256 signing key (#299). Lives under `.rig/` (gitignored), so it never
-    enters the repo. Deliberately HMAC rather than asymmetric signing (Ed25519/SLSA) to
-    keep workbench.py stdlib-only. This gives same-machine tamper-evidence — proof a
-    provenance record hasn't been edited after the fact on a machine holding the key —
-    not third-party public verification the way SLSA/Ed25519 provide."""
-    p = _provenance_key_path(root)
-    if p.is_file():
-        return p.read_bytes()
-    key = secrets.token_bytes(32)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_bytes(key)
+def provenance_key(root: pathlib.Path) -> bytes | None:
+    """The signing key as it is, or `None`. **Reads. Never creates, never replaces.**
+
+    The half `verify_provenance` needs, and the reason there are two functions instead of a
+    flag: verification used to call the creating loader, so checking a record on a
+    repository whose key was unusable *replaced that key* — 32 fresh bytes over the file,
+    every existing record permanently unverifiable, and tamper and rotation left
+    indistinguishable. A read path that can destroy what it is reading is not a read path,
+    and `wb.verify-provenance` is declared `effect_class="read-only"` in the capability
+    registry, which that made false.
+
+    `None` means this repository has no key to check against — absent, or present and not a
+    key (`govern.ledger.usable_key` is the one rule, shared with the ledger). A caller that
+    cannot verify says so; it does not go and make one.
+
+    `_read_key_bytes` and not a read of its own: this was the third hand-written copy of
+    "`is_file`, then `read_bytes`, `OSError` to `None`", beside `ledger._key` and the
+    loader's. Three copies agreeing is not one reader, and the message this run repaired
+    is what two of them drifting looks like.
+    """
+    return _usable(_read_key_bytes(_provenance_key_path(root)))
+
+
+def _set_unusable_key_aside(p: pathlib.Path) -> pathlib.Path | None:
+    """Rename whatever is at the key path out of the way, and say where it went.
+
+    **Moved, not overwritten, and never followed.** The first shape of this wrote the new
+    key straight over the old file, which is a destructive answer to a diagnosis: an
+    8-byte key is a 64-bit secret nobody brute-forces, and replacing it in place made every
+    record it signed unverifiable with no copy left to restore. Worse, `Path.is_file()`
+    follows symlinks, so `.rig/provenance.key` pointing at a file outside the repository had
+    *that* file overwritten with 32 random bytes. `rename` acts on the link itself, so a
+    symlink is moved aside and its target is never touched — the same refusal
+    `eval/attestation.py` makes, taken here as "do not write through it" rather than as an
+    error, because this path has to leave the repository able to sign.
+
+    **This function does not decide that the file is unusable, and it says nothing about
+    it.** Its caller read the file and found it short; by the time the rename runs another
+    process may have replaced it with a perfectly good key, and the caller checks for that
+    after the fact rather than asserting anything here.
+    """
+    # The next number after the highest one present, not the first free one: reusing
+    # `.unusable` after an operator deletes it gives the newest file the oldest name, and
+    # then only mtime says which is which. `isdecimal` and not `isdigit`, which is True for
+    # a superscript and then raises out of `int()` — in a directory somebody else names.
+    used: set[int] = set()
+    for sibling in p.parent.glob(f"{p.name}.unusable*"):
+        suffix = sibling.name[len(p.name) + len(".unusable"):]
+        used.add(int(suffix[1:]) if suffix.startswith("-") and suffix[1:].isdecimal() else 1)
+    n = max(used, default=0) + 1
+    aside = p.with_name(f"{p.name}.unusable" if n == 1 else f"{p.name}.unusable-{n}")
+    # No "if it exists, try the next one" loop after this: every existing sibling is in
+    # `used`, so max-plus-one is free by construction and the loop that used to be here
+    # could not run. What it never protected against is the case it looked like it covered
+    # — two processes allocating the same name between the glob and the rename, where a
+    # check before the rename is the same race one line earlier. That collision is the
+    # unlocked-concurrency residual the changelog records, not something this loop closed.
     try:
-        p.chmod(0o600)
-    except Exception:
-        pass
-    return key
+        p.rename(aside)
+    except FileNotFoundError:
+        # It is already gone: a sibling process moved or replaced it between this process
+        # reading it and getting here. Nothing to set aside and nothing to report — the
+        # caller re-reads and takes whatever is there now.
+        return None
+    except OSError as e:
+        # The caller decides what to do; what this function will not do is fall through to
+        # overwriting the file it just refused to use. `accept` acquires the key *before*
+        # the squash precisely so this can be a refusal rather than a crash after the point
+        # of no return — see `cmd_accept`'s "(2)-c".
+        raise OSError(f"{p} could not be moved aside ({e}), and it will not be overwritten. "
+                      "Re-run; if it persists, move or delete the file yourself") from e
+    return aside
+
+
+def _create_key_if_absent(p: pathlib.Path, key: bytes) -> None:
+    """Put `key` at `p` if and only if nothing is there — atomically, for other processes.
+
+    **Why a temporary file and `os.link`, and not `write_bytes` or `O_EXCL` alone.** Two
+    accepts in one repository share no lock, and this path is what they collide on. Measured
+    on the previous shape, four concurrent creators per repository: with no key at all the
+    processes ended up holding different keys in 3 of 40 races, so a record signed by one
+    was verified against another's key; and with a short key on disk, 7 good keys were moved
+    aside across 60 races, because one process read "too short", a sibling wrote a real key,
+    and the first renamed *that* away. `O_EXCL` alone fixes only half of it: the file exists
+    from the moment it is created and is empty until the write lands, so a sibling reading in
+    that window sees zero bytes and — by this module's own rule — calls it unusable. The
+    bytes are therefore written into a temporary file first and linked into place complete,
+    which is exactly what `eval/attestation.py` does with its own key, and the loser of the
+    race takes the winner's key rather than clobbering it.
+    """
+    p.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(prefix=".provenance-key.", dir=p.parent)
+    temporary = pathlib.Path(temporary_name)
+    try:
+        os.fchmod(descriptor, 0o600)
+        os.write(descriptor, key)
+        os.fsync(descriptor)
+        os.close(descriptor)
+        descriptor = -1
+        os.link(temporary, p)
+    except FileExistsError:
+        pass                      # a sibling got there first; its key is the repository's
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        temporary.unlink(missing_ok=True)
+
+
+#: How many passes `load_or_create_provenance_key` makes before it refuses.
+#:
+#: A pass is a read plus at most one action, not a retry: each one either returns a key or
+#: changes the directory (a file set aside, a key linked in). **The ordinary cases are not
+#: free of them** — a repository that already has a key spends one, and a fresh one spends
+#: two (the first creates, the second reads back what is there) — so four leaves two spare
+#: for contention rather than four. The bound is here so that a pathological loop refuses
+#: rather than spins, and it refuses *before* the squash, where refusing is free.
+_KEY_SETTLE_PASSES = 4
+
+
+def load_or_create_provenance_key(root: pathlib.Path) -> bytes:
+    """The HMAC-SHA256 signing key (#299), created if this repository has none. Lives under
+    `.rig/` (gitignored), so it never enters the repo. Deliberately HMAC rather than
+    asymmetric signing (Ed25519/SLSA) to keep workbench.py stdlib-only. This gives
+    same-machine tamper-evidence — proof a provenance record hasn't been edited after the
+    fact on a machine holding the key — not third-party public verification the way
+    SLSA/Ed25519 provide.
+
+    **The creating half, and only callers that must sign may use it.** `sign_provenance`
+    does; `verify_provenance` must not, and `provenance_key` above is what it reads.
+
+    What counts as a key is `govern.ledger.usable_key`, the same rule the ledger applies to
+    the same file: `p.read_bytes()` used to be returned whatever it held, so a zero-byte
+    `.rig/provenance.key` signed provenance records with an empty secret — measured,
+    `sign_provenance` produced a signature, `verify_provenance` returned True, and a record
+    rewritten to a different `accepted_by` and re-signed under the same nothing verified as
+    well, so `workbench.py verify-provenance` printed valid and untampered over it.
+
+    A file that is present and not a key is **set aside, not replaced**: signing has to go
+    on working, the old bytes are kept where an operator can find them, and the warning says
+    which file is which. What it cannot do is repair records already signed with the old
+    file — those stay unverifiable, which is the cost of a key that was never a key.
+
+    **Everything here is written for a sibling process doing the same thing.** Two accepts in
+    one repository share no lock. So: the key is created atomically (`_create_key_if_absent`),
+    a file is only set aside when *this* process read it and found it short, and after the
+    rename the moved file is read back — if it turns out to be a usable key, a sibling wrote
+    it in the interval and it is put back into service rather than being called unusable.
+    That last check is what keeps the warning from stating something false about somebody
+    else's good key, which is the one thing this function must never do.
+    """
+    from ..govern.ledger import MIN_KEY_BYTES
+
+    p = _provenance_key_path(root)
+    for _ in range(_KEY_SETTLE_PASSES):
+        existing = provenance_key(root)
+        if existing is not None:
+            return existing
+        if _key_path_present(p):
+            observed, kind = _observe_key_file(p)
+            aside = _set_unusable_key_aside(p)
+            if aside is None:
+                continue
+            rescued = _usable(_read_key_bytes(aside))
+            if rescued is not None:
+                # We moved a key that WAS a key: between this process reading the file and
+                # renaming it, a sibling replaced it. Saying "not a usable signing key" over
+                # those bytes would be false, and this whole change is about records that
+                # claim more than they know. Put it back into service instead.
+                _create_key_if_absent(p, rescued)
+                # …and do not leave the copy behind. Until this line, the rescue left
+                # `provenance.key.unusable` byte-identical to the live key: a second copy of
+                # the active secret under a name asserting it is dead. Mode 0600 means
+                # nothing is newly exposed, but the name is false about the bytes, and a
+                # spare copy of a signing key is not something to keep by accident. Removed
+                # only once the live file holds those same bytes, so nothing is discarded
+                # that is not already in place.
+                kept = _read_key_bytes(p) == rescued
+                if kept:
+                    aside.unlink(missing_ok=True)
+                warn(f"{p} was replaced with a usable key while this process was setting the "
+                     "previous one aside; that key is what the repository now uses"
+                     + (". The copy this process had set aside has been removed"
+                        if kept else f". The copy is at {aside.name}")
+                     + ". No key has been discarded")
+                continue
+            # What this process saw. Three messages, because *what the operator should do
+            # next* differs and a line that blurs them gives one of them bad advice. Four
+            # observations map onto the three: `"unknown"` joins `"regular"`, because the
+            # two lines differ in whether they claim anything, and a claim needs a `stat`
+            # that answered.
+            #
+            # `held N byte(s)` is the only one that measured anything, and it is the only
+            # one that may end "anything signed with the moved file no longer verifies":
+            # the bytes were counted, they are under the floor, and every reader refuses
+            # that file forever, so nothing signed with it will ever verify again.
+            #
+            # A regular file this process could not open — a mode it may not read, an owner
+            # who is not us — was not measured at all. A genuine 32-byte key arrives here
+            # with its bytes whole, so the "no longer verifies" clause would be a claim
+            # about a file nobody looked at, told to the operator deciding whether to
+            # delete it. It is dropped rather than made conditional on the file being a
+            # key, because that condition is unanswerable from here: the read that would
+            # answer it is the read that just failed, and it failed again on the moved file
+            # a few lines up (`rescued`). Reading it is what the operator must do, and only
+            # they can.
+            #
+            # A path a `stat` came back on as not a regular file — a FIFO, a directory, a
+            # device, a symlink to nothing or to itself — is the third, and it used to
+            # share the second's wording and so its advice. Telling somebody to read a FIFO
+            # before deleting it is worse than saying nothing: `cat` on it blocks until
+            # something writes. Neither reader of this path has ever accepted a non-regular
+            # file (`state.provenance_key` and `ledger._key` both gate on `is_file`), so
+            # unlike the second shape this one is not withholding a key — which is what
+            # lets it say so, and what a failed `stat` must never be allowed to borrow.
+            if observed is not None:
+                seen = (f"held {len(observed)} byte(s) when this process read it, below the "
+                        f"{MIN_KEY_BYTES} a signing key must have")
+                consequence = "anything signed with the moved file no longer verifies"
+            elif kind == "other":
+                seen = ("could not be read as a key by this process (it is not a regular "
+                        "file, such as a FIFO, a directory, a device, or a symlink that "
+                        "resolves to nothing)")
+                consequence = ("a path of that kind is never read as a key, so nothing was "
+                               "signed with what was moved; identify it rather than opening "
+                               "it, because reading a FIFO blocks until something writes")
+            else:
+                # "regular" and "unknown" both land here, and that is the safe direction:
+                # this branch claims nothing about the contents, it asks the operator to go
+                # and look. The branch above does make a claim, so it needs a `stat` that
+                # actually answered.
+                seen = ("could not be read as a key by this process (the permissions may "
+                        "not allow it)")
+                consequence = ("its contents are unread, so whether anything signed with it "
+                               "still verifies is unknown — read it before deleting it")
+            warn(f"{p} {seen}. It has been moved to {aside.name} and a new key "
+                 f"generated; {consequence}")
+        _create_key_if_absent(p, secrets.token_bytes(32))
+    raise OSError(f"{p} could not be settled into a usable signing key after "
+                  f"{_KEY_SETTLE_PASSES} attempts (another process may be creating it). "
+                  "Re-run")
+
+
+#: `ledger.KeyFileKind` under a private name — the alias, not a second `str` beside it,
+#: so the one thing this change is about (there being one of each) holds for the type too.
+_KeyFileKind = _ledger_key_file_kind
+
+
+def _read_key_bytes(p: pathlib.Path) -> bytes | None:
+    """The bytes, or `None` for every way this process did not get them."""
+    return _observe_key_file(p)[0]
+
+
+def _observe_key_file(p: pathlib.Path) -> tuple[bytes | None, _KeyFileKind]:
+    """The bytes this process read, and what it could establish about the path's kind.
+
+    **The body of this is `govern.ledger.observe_key_file`, and there is one of it.** The
+    set-aside warning below and `ledger.verify` both have to tell the same three situations
+    apart — a file below the floor, a regular file this process may not open, a path that
+    is not a regular file — because each has a different remedy, and each of them says so
+    to an operator. They were written twice and split once: the warning here was split
+    first, and the ledger's problem went on collapsing two of the three for a commit, which
+    is what the shared observation is for. It sits in `govern` because that is where
+    `MIN_KEY_BYTES` and `usable_key` already are and because the layering contract lets
+    `workbench` reach there and not the other way round.
+
+    This wrapper stays because the call sites here pass no `FileStore` and read the local
+    filesystem — `LOCAL_FILES.is_file` and `.read_bytes` are `pathlib.Path.is_file` and
+    `.read_bytes`, so the observation is the same one either way.
+
+    **This narrows the sibling race; it does not close it.** The `stat` and the `read` are
+    two calls, and the `rename` at the call site is a third: a sibling that changes the
+    kind in between is reported under the kind seen first. The sharpest form, reproduced:
+    a sibling unlinks the path before the `stat` and writes a regular file before the
+    `rename`, and the warning prints the not-a-regular-file line — with its claim that
+    nothing was signed with what was moved — over a moved regular file. That is the
+    residual, and it is written down rather than claimed away; closing it wants the file
+    held open across the rename, which is a different change.
+    """
+    from ..govern.ledger import observe_key_file
+
+    return observe_key_file(p)
+
+
+def _key_path_present(p: pathlib.Path) -> bool:
+    """`govern.ledger.key_path_present`, for the reason `_observe_key_file` is that shape.
+
+    The loader used to ask `p.is_symlink() or p.exists()` here while `ledger.verify` asked
+    `is_file` or `is_dir` there, and on every shape that is neither a regular file nor a
+    directory the two answers differed: measured on a signed ledger with a FIFO at the key
+    path, this side set it aside as not a regular file and `govern audit verify` on the same
+    repository called the key removed. One question, asked through the port by one function,
+    is what keeps them from saying different things about the same path.
+
+    **It does not stop the loader raising; it changes what it raises and what that says.**
+    `Path.is_symlink()` re-raises `EACCES`, so with `.rig/` at mode `0o000` this line put a
+    bare `PermissionError: [Errno 13] Permission denied: .../.rig/provenance.key` out of
+    the loader — measured in a forked child that dropped to an unprivileged uid, over a
+    repository holding a real 32-byte key. The port answers `"unknown"` there, which counts
+    as present, so the loader now goes on to `_set_unusable_key_aside` and comes out of the
+    same shape with that function's own refusal: `OSError: .../.rig/provenance.key could
+    not be moved aside ([Errno 13] Permission denied: ... -> ....unusable), and it will not
+    be overwritten. Re-run; if it persists, move or delete the file yourself`. `cmd_accept`
+    catches `OSError` at "(2)-c" either way, so the exit path is the one it already had and
+    what moved is the sentence the operator is given — from an errno to the thing to do.
+
+    Present is the safe direction for this caller too: the other one creates a fresh key
+    over a path that may hold the real one.
+    """
+    from ..govern.ledger import key_path_present
+
+    return key_path_present(p)
+
+
+def _usable(raw: bytes | None) -> bytes | None:
+    from ..govern.ledger import usable_key
+
+    return usable_key(raw)
 
 
 def _provenance_payload(record: dict) -> bytes:
     return json.dumps(record, sort_keys=True, ensure_ascii=False).encode("utf-8")
 
 
-def sign_provenance(root: pathlib.Path, record: dict) -> str:
-    key = load_or_create_provenance_key(root)
+def sign_provenance(root: pathlib.Path, record: dict, *, key: bytes | None = None) -> str:
+    """Sign one record. `key` is the bytes the caller already holds, if it holds them.
+
+    **Why the parameter exists, and it is the whole point of it.** This is called from
+    `accept` *after* the squash has been applied and the ledger written, and resolving the
+    key there means touching the filesystem after the point of no return: measured, an
+    immutable `.rig/` raised `PermissionError` out of here, and four concurrent accepts
+    renaming an unusable key from under each other raised `FileNotFoundError` in one trial
+    of twenty-five — each one a landed accept with no provenance record and no explanation,
+    which is the shape `audit_append`'s swallow-all was written to stop. `accept` now
+    acquires the key before the squash, where a failure is a refusal that costs nothing,
+    and hands the bytes here; with them, this function does no I/O at all.
+    """
+    if key is None:
+        key = load_or_create_provenance_key(root)
     return hmac.new(key, _provenance_payload(record), hashlib.sha256).hexdigest()
 
 
 def verify_provenance(root: pathlib.Path, record: dict, signature: str) -> bool:
-    key = load_or_create_provenance_key(root)
+    """Whether this record still matches its signature. Reads the key; writes nothing.
+
+    No key — absent, or present and not a key — is `False`: unverifiable is not verified,
+    and the alternative this replaced was worse than wrong, because making a key here meant
+    the check destroyed the evidence it was called to check.
+    """
+    key = provenance_key(root)
+    if key is None:
+        return False
     expected = hmac.new(key, _provenance_payload(record), hashlib.sha256).hexdigest()
     return hmac.compare_digest(expected, signature)
 
@@ -485,8 +979,45 @@ def build_acceptance(task_id: str, task_type: str, root: pathlib.Path | None = N
             "status": "pending", "checks": checks, "checked_at": None}
 
 
+def record_sensor_status(check: dict, status: str, detail: str, writer: str) -> None:
+    """A sensor taking a criterion's status. It owns `status`, `detail` and `by`; it never
+    touches `note`, except to drop one the status it is replacing has taken with it.
+
+    The two fields exist because a sentence and a verdict are different things. `detail`
+    explains the status underneath it, so whoever writes the status writes the detail —
+    words that explain a different verdict explain this one wrongly, which is how a
+    refused `--set no_secret_leak=passed:"false positive"` came to sit over a failure.
+    `note` is the operator's own, written only by `cmd_gate` from the `:DETAIL` half of a
+    `--set`, and it is the durable half: an operator who records
+    `--set no_gate_tampering=warning:"the test moved to tests/test_new.py"` is saying why
+    about the very finding the sensor then grades `warning`, and that sentence has to
+    outlive any number of later evaluations. It does, for exactly as long as the status
+    it was attached to does: a sensor changing the status takes the note with it, because
+    a claim about a status that is gone is a claim about nothing.
+    """
+    # Only the status decides. A note survives a re-evaluation that finds MORE under the
+    # same status — two test-weakening patterns becoming four — on purpose: the operator
+    # wrote it about the status they declared, which still stands, and what changed is
+    # already in `detail` and in the findings list beside it. Dropping it there would
+    # delete a standing reason every time a sensor counted again.
+    if check.get("status") != status:
+        check.pop("note", None)
+    check["status"], check["detail"], check["by"] = status, detail, writer
+
+
 def gate_status(acc: dict) -> str:
-    """Evaluate with priority: failed > pending > (skipped if all skipped) > warning > passed."""
+    """Evaluate with priority: failed > pending > (skipped if all skipped) > warning-or-skip > passed.
+
+    A SKIPPED CRITERION NEVER REACHES `passed`. `skipped` means "not judged", and a gate
+    that reports `passed` with one of them in it says the whole set was judged and cleared,
+    which is the one thing it is not. `accept` refuses an all-skipped gate, but that only
+    ever covered the whole-gate case: one criterion declared `passed` and the other fourteen
+    `skipped` scored `passed` outright and bought an accept nothing recorded as unusual.
+    Declining to judge is now a warning-grade fact instead — `passed_with_warnings`, which
+    `accept` still lets through without `--force` (a warning has never blocked accept) but
+    which carries the skipped names into the gate's summary, into accept's own output and
+    into the signed provenance record, where a reader of the record sees them.
+    """
     statuses = [c["status"] for c in acc["checks"]]
     if not statuses:
         return "skipped"
@@ -496,12 +1027,47 @@ def gate_status(acc: dict) -> str:
         return "pending"
     if all(s == "skipped" for s in statuses):
         return "skipped"
-    if any(s == "warning" for s in statuses):
+    if any(s in ("warning", "skipped") for s in statuses):
         return "passed_with_warnings"
     return "passed"
 
 
 # ── worktree ─────────────────────────────────────────────────────────────────
+def task_head(root: pathlib.Path, task: dict) -> str | None:
+    """The commit this task's work currently sits on: the worktree's HEAD, or the main
+    tree's when the task has none (`--no-worktree`).
+
+    Two callers, and they are two halves of one fact. `cmd_gate` records the answer into
+    acceptance.json as `evaluated_head` — the commits the verdict was measured against —
+    and `accept` asks again before squashing, so a gate that judged an older tip cannot be
+    spent on a newer one. `None` (git could not answer) is not a head and never compares
+    equal to one: the caller treats it as unknown rather than as a match.
+    """
+    wt = task.get("worktree_path")
+    cwd = pathlib.Path(wt) if wt and pathlib.Path(wt).is_dir() else root
+    proc = git(["rev-parse", "HEAD"], cwd=cwd, check=False)
+    return proc.stdout.strip() or None if proc.returncode == 0 else None
+
+
+def task_branch_tip(root: pathlib.Path, task: dict) -> str | None:
+    """The commit `accept` will actually squash: the tip of the task's own branch.
+
+    Resolved in the MAIN tree, not in the worktree, because that is where
+    `git merge --squash <branch>` runs and what it resolves. The distinction is the whole
+    point of the function: a worktree can be detached at one commit while the branch it was
+    cut for points at another, and a check that asked the worktree what it was sitting on
+    would answer about a commit nothing is going to merge.
+
+    `None` when the task records no branch (a `--no-worktree` run has none) or when the
+    name no longer resolves — both "unknown", never a match.
+    """
+    branch = task.get("branch")
+    if not branch:
+        return None
+    proc = git(["rev-parse", "--verify", f"{branch}^{{commit}}"], cwd=root, check=False)
+    return proc.stdout.strip() or None if proc.returncode == 0 else None
+
+
 def default_worktree_path(root: pathlib.Path, task_id: str) -> pathlib.Path:
     import os
     wt_root = os.environ.get("RIG_WORKTREE_ROOT")

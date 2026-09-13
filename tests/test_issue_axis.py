@@ -22,6 +22,8 @@ import pytest
 from rig_workbench.workbench import run_index
 from rig_workbench.workbench.issue_link import FORMS, IssueRefError, declared, parse
 
+from conftest import pin_runs_path
+
 
 @pytest.mark.parametrize("value", ["#1", "#123", "#4294967295", "owner/repo#7",
                                    "Owner-1/repo.name_2#88", "  #12  "])
@@ -243,7 +245,7 @@ def test_the_gate_module_records_a_caller_only_when_handed_one(tmp_path, monkeyp
     local = tmp_path / "runs.jsonl"
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "s-should-not-appear")
     monkeypatch.setattr(config, "GLOBAL_RUNS_PATH", tmp_path / "global.jsonl")
-    monkeypatch.setattr(config, "RUNS_PATH", local)
+    pin_runs_path(monkeypatch, local)
     state = {"run_id": "orc-1", "recipe": "dev", "steps": [], "step_state": {},
              "token_usage": {}}
 

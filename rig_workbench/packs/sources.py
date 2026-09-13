@@ -21,12 +21,14 @@ the bytes are the same ones, never who put them there.
 from __future__ import annotations
 
 import json
-import os
 import pathlib
 import re
 import shutil
 import subprocess
 import tempfile
+
+from rig_workbench.ports import Env, ProcessRunner
+from rig_workbench.ports.local import OS_ENV, SUBPROCESS
 
 from .model import AuthFailed, PackError, RevisionNotFound, SourceUnreachable
 
@@ -104,21 +106,33 @@ def resolve_url(source: dict, pack: str) -> str:
     return source["url"].replace("{pack}", pack)
 
 
-def _git(args: list[str], *, cwd: pathlib.Path | None = None) -> subprocess.CompletedProcess:
+def _git(args: list[str], *, cwd: pathlib.Path | None = None,
+         proc: ProcessRunner = SUBPROCESS,
+         env: Env = OS_ENV) -> subprocess.CompletedProcess:
+    """The one place this pillar runs a program. `ProcessRunner`'s docstring names it.
+
+    The port always captures and returns the same `CompletedProcess` this read before, so
+    the `returncode` / `stdout` / `stderr` every caller below reads are unchanged. One
+    thing is not a literal swap and is worth saying: the adapter decodes
+    `encoding="utf-8", errors="replace"` where this spelled `text=True`. Bare `text=True`
+    decodes with the locale's encoding and *strict* errors, so a repository holding a path
+    or an author name in another encoding raised `UnicodeDecodeError` out of `ls-remote`
+    here; it now comes back with U+FFFD in it and `_classify` reads it as prose, which is
+    what it was already doing to every other line git writes.
+    """
     # The environment is inherited, not rebuilt. git finds credentials through SSH_AUTH_SOCK,
     # HOME/.gitconfig, and the helpers configured there; stripping the environment to look
     # careful would disable the very machinery this design delegates authentication to, and
-    # rig would end up needing credentials of its own.
-    env = dict(os.environ)
+    # rig would end up needing credentials of its own. `Env.snapshot` is that copy: it hands
+    # out a dict rather than the live mapping, so what is edited below is this call's
+    # environment and never the process's.
+    child = env.snapshot()
     # Never stop on a terminal prompt: a fetch blocked forever on a password is
     # indistinguishable from a hang, and the honest answer is that the credentials on this
     # machine do not open this source.
-    env["GIT_TERMINAL_PROMPT"] = "0"
+    child["GIT_TERMINAL_PROMPT"] = "0"
     try:
-        return subprocess.run(
-            ["git", *args], cwd=cwd, capture_output=True, text=True,
-            timeout=_GIT_TIMEOUT_SECONDS, env=env,
-        )
+        return proc.run(["git", *args], cwd=cwd, timeout=_GIT_TIMEOUT_SECONDS, env=child)
     except FileNotFoundError as exc:
         raise PackError("git is required to install from a named source") from exc
     except subprocess.TimeoutExpired as exc:

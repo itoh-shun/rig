@@ -32,9 +32,10 @@ warning-grade — often intentional, always worth a second look.
 
 Gate wiring mirrors secrets/injection: `cmd_gate` calls
 apply_destructive_sensor() on every evaluation; findings are recorded on the
-check under "destructive_findings"; explicit
-`--set no_destructive_operation=passed` is the escape hatch, recorded as
-destructive_override on the check, sticky across later evaluations.
+check under "destructive_findings". The scan is the verdict: a
+`--set no_destructive_operation=passed` that contradicts it is refused by
+`cmd_gate` (lifecycle.sensor_contradictions), and a reviewed finding is carried
+through `accept --force`, where the bypass is audited.
 
 CLI: `workbench.py scan-destructive [paths...]` scans files/trees;
 `scan-destructive --diff <task-id>` scans the task worktree's diff vs its
@@ -48,7 +49,7 @@ import sys
 
 from .secrets import (MAX_FILE_BYTES, WALK_SKIP_DIRS, iter_added_lines,
                       untracked_files, worktree_diff_text)
-from .state import die, effective_base, git, load_task, repo_root
+from .state import die, effective_base, git, load_task, record_sensor_status, repo_root
 
 SENSOR_CRITERION = "no_destructive_operation"
 MASS_DELETE_THRESHOLD = 20
@@ -161,10 +162,12 @@ def format_findings(findings: list[dict]) -> list[str]:
 
 # ── the sensor (called from cmd_gate) ─────────────────────────────────────────
 _SENSOR_DETAIL_PREFIX = "(destructive sensor)"
+#: config.WRITER_OPERATOR's counterpart: this sensor as the writer of a status.
+WRITER = "destructive-sensor"
 
 
-def apply_destructive_sensor(root: pathlib.Path, run_d: pathlib.Path, task: dict, acc: dict,
-                             explicit_set: set[str] | frozenset[str] = frozenset()) -> list[str]:
+def apply_destructive_sensor(root: pathlib.Path, run_d: pathlib.Path, task: dict,
+                             acc: dict) -> list[str]:
     """Machine-back `no_destructive_operation` with a diff-scoped command scan.
 
     Mutates `acc` in place (caller persists it) and returns printable notes.
@@ -172,9 +175,9 @@ def apply_destructive_sensor(root: pathlib.Path, run_d: pathlib.Path, task: dict
 
     Any fail-grade finding → the check is set to **failed**. Warning-only
     findings (including a mass deletion) → **warning** (never overrides an
-    explicit failed). Escape hatch: an explicit
-    `--set no_destructive_operation=passed` in the current invocation is
-    respected, recorded as destructive_override=True, sticky afterwards.
+    explicit failed). The scan is the verdict, and it is written over whatever
+    the gate's `--set` put there; `cmd_gate` refuses an invocation whose
+    hand-written status this contradicts rather than recording either one.
     """
     check = next((c for c in acc.get("checks", []) if c["name"] == SENSOR_CRITERION), None)
     if check is None:
@@ -194,11 +197,9 @@ def apply_destructive_sensor(root: pathlib.Path, run_d: pathlib.Path, task: dict
     if not findings and not mass_delete:
         # Danger gone from the diff: clear our state; un-flag only what WE flagged.
         if check.pop("destructive_findings", None) is not None:
-            check.pop("destructive_override", None)
             if check["status"] in ("failed", "warning") and \
                     str(check.get("detail", "")).startswith(_SENSOR_DETAIL_PREFIX):
-                check["status"] = "pending"
-                check["detail"] = ""
+                record_sensor_status(check, "pending", "", WRITER)
                 return [f"{_SENSOR_DETAIL_PREFIX} previously detected destructive patterns are no "
                         f"longer in the diff → {SENSOR_CRITERION} reset to pending"]
         return []
@@ -211,30 +212,21 @@ def apply_destructive_sensor(root: pathlib.Path, run_d: pathlib.Path, task: dict
     n = len(lines)
     n_fail = sum(1 for f in findings if f["grade"] == "fail")
     notes: list[str] = []
-    if SENSOR_CRITERION in explicit_set and check["status"] == "passed":
-        check["destructive_override"] = True
-        if str(check.get("detail", "")).startswith(_SENSOR_DETAIL_PREFIX):
-            check["detail"] = (f"{_SENSOR_DETAIL_PREFIX} {n} finding(s) manually overridden "
-                               "after review (destructive_override)")
-        notes.append(f"{_SENSOR_DETAIL_PREFIX} {n} destructive pattern(s) still present, but "
-                     f"{SENSOR_CRITERION} was explicitly set to passed — manual override recorded:")
-    elif check.get("destructive_override") and check["status"] == "passed":
-        notes.append(f"{_SENSOR_DETAIL_PREFIX} {n} destructive pattern(s) present — "
-                     "manual override previously recorded, keeping passed:")
-    elif n_fail:
-        check["status"] = "failed"
-        check["detail"] = (f"{_SENSOR_DETAIL_PREFIX} {n_fail} unambiguous destroyer(s) detected in "
-                           f"the diff — remove them, or after review override with "
-                           f"--set {SENSOR_CRITERION}=passed")
+    if n_fail:
+        record_sensor_status(
+            check, "failed",
+            f"{_SENSOR_DETAIL_PREFIX} {n_fail} unambiguous destroyer(s) detected in the diff — "
+            f"remove them; a reviewed finding is carried by `accept --force`, which records "
+            f"the bypass", WRITER)
         notes.append(f"{_SENSOR_DETAIL_PREFIX} {n} destructive pattern(s) detected "
                      f"({n_fail} fail-grade) → {SENSOR_CRITERION} failed:")
     else:
         if check["status"] in ("pending", "passed", "warning"):
-            check["status"] = "warning"
-            if not check.get("detail") or str(check["detail"]).startswith(_SENSOR_DETAIL_PREFIX):
-                check["detail"] = (f"{_SENSOR_DETAIL_PREFIX} {n} context-dependent destructive "
-                                   f"pattern(s) — review them (override with "
-                                   f"--set {SENSOR_CRITERION}=passed)")
+            # The detail goes with the status (see hardening.py): the sensor owns both.
+            record_sensor_status(
+                check, "warning",
+                f"{_SENSOR_DETAIL_PREFIX} {n} context-dependent destructive pattern(s) — "
+                f"review them (a warning never blocks accept)", WRITER)
         notes.append(f"{_SENSOR_DETAIL_PREFIX} {n} context-dependent destructive pattern(s) → "
                      f"{SENSOR_CRITERION} recorded as warning:")
     notes.extend(f"  {ln}" for ln in lines)

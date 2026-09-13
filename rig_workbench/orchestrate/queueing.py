@@ -4,7 +4,6 @@ import sys
 import os
 import json
 import contextlib
-import subprocess
 import threading
 import concurrent.futures as futures
 
@@ -13,9 +12,41 @@ try:
 except ImportError:  # pragma: no cover - Windows
     fcntl = None  # type: ignore[assignment]
 
+from typing import Protocol
+
+from ..ports import Presenter, ProcessRunner
+from ..ports.local import CONSOLE, SUBPROCESS
 from . import config
 from . import dependencies as deps
-from .providers import _build_prompt, run_provider
+from .batch_surface import WORKBENCH_BATCH
+from .composition import _build_prompt
+from .providers import run_provider
+
+
+class BatchSummary(Protocol):
+    """What this module needs of the workbench's batch bookkeeping.
+
+    A queue GO produces two facts the workbench owns: which task a provider's reply
+    registered, and what a person must still do about the tasks that ran. Neither is a
+    judgement this module makes — the task record, the acceptance state and the wording of
+    the reminder all live in `workbench.batch`, and answering them a second time here would
+    give the queue its own drifting copy of the board's vocabulary.
+
+    Stated as a protocol rather than imported, because the import is what
+    `tests/test_layering_contract.py` forbids: a judgement module may reach the standard
+    library, its own pillar and the six ports, and `workbench.batch` is none of those. It
+    was reached from inside two function bodies here, which hid the edge rather than
+    removing it. `batch_surface.WORKBENCH_BATCH` satisfies this shape and is what every
+    shipped caller passes.
+    """
+
+    def task_id(self, text: str) -> str:
+        """The workbench task id the reply registered, or empty when there is none."""
+        ...
+
+    def lines(self, results: list[dict]) -> list[str]:
+        """The "what you must do next" block for a finished batch, or nothing."""
+        ...
 
 # ── Task queue (stack up, then GO; tracker integration) ──────────────────────
 # Holds "stack tasks -> GO in one batch" in a local json file or an external tracker
@@ -57,10 +88,10 @@ def _gh_cli(backend: str) -> str:
     return {"github": "gh", "gitlab": "glab"}[backend]
 
 
-def _cli_run(argv: list[str]) -> tuple[int, str, str]:
+def _cli_run(argv: list[str], *, proc: ProcessRunner = SUBPROCESS) -> tuple[int, str, str]:
     """Run gh/glab as a subprocess. Returns (127, "", err) instead of crashing when the CLI is absent."""
     try:
-        r = subprocess.run(argv, capture_output=True, text=True)
+        r = proc.run(argv)
         return r.returncode, r.stdout or "", r.stderr or ""
     except FileNotFoundError:
         return 127, "", f"{argv[0]} not found (CLI not installed)"
@@ -448,22 +479,22 @@ def _build_queue_task_prompt(task: str, provider: str) -> str:
 
     The `rig`/`claude` providers run in parallel as **separate processes** of headless
     `claude -p` (`queue go --max-parallel N`). Multiple processes share the same working
-    directory, so without routing through the workbench's isolated worktree (`/rig:rig`)
+    directory, so without routing through the workbench's isolated worktree (`/rig:go`)
     there is a **risk of parallel tasks fighting over files**. Hence the rig/claude providers
-    are explicitly instructed to run `/rig:rig "<task>"`, which automatically isolates each
+    are explicitly instructed to run `/rig:go "<task>"`, which automatically isolates each
     task in its own worktree.
     Accepting is not the queue's job (the user applies results individually via
-    `/rig:rig board` -> `accept`).
+    `/rig:go board` -> `accept`).
     """
     if provider in ("rig", "claude"):
         return (
             "Invoke the `rig` skill via the Skill tool and execute the following task in an "
-            "isolated worktree per `facets/instructions/workbench` (the `/rig:rig` unified entry). "
+            "isolated worktree per `facets/instructions/workbench` (the `/rig:go` unified entry). "
             "It runs in parallel with other queue items, so **never write to the main working tree** "
             "(do not accept; do triage, implementation, and the acceptance-gate judgment inside the "
             "isolated worktree, and leave applying to the user, who will list results with "
-            "`/rig:rig board` after the queue finishes and `/rig:rig accept` them individually).\n"
-            f'Run: /rig:rig "{task}"\n'
+            "`/rig:go board` after the queue finishes and `/rig:go accept` them individually).\n"
+            f'Run: /rig:go "{task}"\n'
             "Once the gate is settled (one of passed/passed_with_warnings/failed), output "
             "'STATUS: done' at the end."
         )
@@ -479,10 +510,10 @@ def _build_queue_verify_prompt(task: str, product: str) -> str:
             f"'VERDICT: PASS' or 'VERDICT: FAIL'.\n--- product ---\n{product[:2000]}")
 
 
-def cmd_queue(args):
+def cmd_queue(args, *, out: Presenter = CONSOLE):
     if not args or args[0] not in ("add", "list", "go", "done", "retry", "cancel"):
-        print("[ERROR] usage: queue <add|list|go|done|retry|cancel> [...] "
-              "[--backend local|github|gitlab] [--repo owner/repo]")
+        out.out("[ERROR] usage: queue <add|list|go|done|retry|cancel> [...] "
+                "[--backend local|github|gitlab] [--repo owner/repo]")
         sys.exit(1)
     sub, rest = args[0], args[1:]
     backend, cfg = "local", {}
@@ -521,88 +552,89 @@ def cmd_queue(args):
     ver = ver or gen
 
     try:
-        return _cmd_queue_dispatch(sub, free, backend, cfg, gen, ver, max_parallel)
+        return _cmd_queue_dispatch(sub, free, backend, cfg, gen, ver, max_parallel, out=out)
     except deps.DependencyError as e:
         # A refusal, not a crash: the declaration was rejected and nothing was stored.
-        print(f"[ERROR] {e}")
+        out.out(f"[ERROR] {e}")
         sys.exit(1)
     except QueueCorrupt as e:
         # Never "recover" by rewriting an empty store — that is how a backlog disappears (#360).
-        print(f"[ERROR] {e}")
-        print("        rig refuses to touch an unreadable queue store (rewriting it empty would "
-              "lose the backlog). Repair or move the file, then retry.")
+        out.out(f"[ERROR] {e}")
+        out.out("        rig refuses to touch an unreadable queue store (rewriting it empty would "
+                "lose the backlog). Repair or move the file, then retry.")
         sys.exit(1)
 
 
-def _cmd_queue_dispatch(sub, free, backend, cfg, gen, ver, max_parallel):
+def _cmd_queue_dispatch(sub, free, backend, cfg, gen, ver, max_parallel, *,
+                        out: Presenter = CONSOLE):
     if sub == "add":
         if not free:
-            print("[ERROR] queue add \"<task>\"")
+            out.out("[ERROR] queue add \"<task>\"")
             sys.exit(1)
         it = queue_add(backend, " ".join(free), cfg, cfg.get("depends_on"),
                        cfg.get("dependency_policy"))
-        print(f"queued [{backend}]: #{it['id']} {it['task']}  ({it['status']})"
-              + (f" — {it.get('note','')}" if it.get("status") == "error" else ""))
+        out.out(f"queued [{backend}]: #{it['id']} {it['task']}  ({it['status']})"
+                + (f" — {it.get('note','')}" if it.get("status") == "error" else ""))
         if it.get("depends_on"):
-            print(f"  depends on #{', #'.join(it['depends_on'])} "
-                  f"(policy: {it['dependency_policy']} — each must be **accepted**, not "
-                  f"merely finished; accepting is a person's action)")
+            out.out(f"  depends on #{', #'.join(it['depends_on'])} "
+                    f"(policy: {it['dependency_policy']} — each must be **accepted**, not "
+                    f"merely finished; accepting is a person's action)")
         return
     if sub == "list":
         items = queue_list(backend, cfg)
-        print(f"## rig queue [{backend}]  ({len(items)} items)")
+        out.out(f"## rig queue [{backend}]  ({len(items)} items)")
         for it in items:
             line = f"  [{it.get('status','?'):<8}] #{it.get('id')}  {it.get('task')}"
             note = it.get("note")
             if note:
                 line += f" — {note}"
-            print(line)
+            out.out(line)
             if it.get("depends_on"):
-                print(f"      depends on #{', #'.join(str(d) for d in it['depends_on'])}"
-                      f"  (policy: {it.get('dependency_policy')})")
+                out.out(f"      depends on #{', #'.join(str(d) for d in it['depends_on'])}"
+                        f"  (policy: {it.get('dependency_policy')})")
             if it.get("dependency_note"):
-                print(f"      {it['dependency_note']}")
+                out.out(f"      {it['dependency_note']}")
         return
     if sub == "done":
         if not free:
-            print("[ERROR] queue done <id>")
+            out.out("[ERROR] queue done <id>")
             sys.exit(1)
         queue_set_status(backend, free[0], "done", "manually marked done", cfg)
-        print(f"done [{backend}]: #{free[0]}")
+        out.out(f"done [{backend}]: #{free[0]}")
         return
     if sub == "retry":
         if not free:
-            print("[ERROR] queue retry <id>")
+            out.out("[ERROR] queue retry <id>")
             sys.exit(1)
         queue_set_status(backend, free[0], "queued", "", cfg)
-        print(f"retry [{backend}]: #{free[0]} → queued")
+        out.out(f"retry [{backend}]: #{free[0]} → queued")
         return
     if sub == "cancel":
         if not free:
-            print("[ERROR] queue cancel <id>")
+            out.out("[ERROR] queue cancel <id>")
             sys.exit(1)
         if backend != "local":
-            print(f"[ERROR] queue cancel needs the local backend; {backend} tracks state in "
-                  f"issue labels and has no label for work that never ran. Close the issue "
-                  f"there instead, or move the item to the local queue")
+            out.out(f"[ERROR] queue cancel needs the local backend; {backend} tracks state in "
+                    f"issue labels and has no label for work that never ran. Close the issue "
+                    f"there instead, or move the item to the local queue")
             sys.exit(1)
         outcome, message = queue_cancel(backend, free[0], cfg)
         if outcome == "cancelled":
-            print(f"cancel [{backend}]: #{free[0]} → {message}")
-            print(f"  `queue retry {free[0]}` puts it back if you change your mind")
+            out.out(f"cancel [{backend}]: #{free[0]} → {message}")
+            out.out(f"  `queue retry {free[0]}` puts it back if you change your mind")
             return
         if outcome == "missing":
-            print(f"[ERROR] queue cancel <id>: no item #{free[0]} in the local queue")
+            out.out(f"[ERROR] queue cancel <id>: no item #{free[0]} in the local queue")
         elif outcome == "running":
-            print(f"[ERROR] queue cancel <id>: #{free[0]} is running — a live provider owns "
-                  f"it and will overwrite the status when it finishes. Wait for it, then "
-                  f"cancel or `queue done {free[0]}`")
+            out.out(f"[ERROR] queue cancel <id>: #{free[0]} is running — a live provider owns "
+                    f"it and will overwrite the status when it finishes. Wait for it, then "
+                    f"cancel or `queue done {free[0]}`")
         elif outcome == "done":
-            print(f"[ERROR] queue cancel <id>: #{free[0]} is done — it ran and finished, and "
-                  f"recording that as work that never ran would be false. Leave it as it is")
+            out.out(f"[ERROR] queue cancel <id>: #{free[0]} is done — it ran and finished, and "
+                    f"recording that as work that never ran would be false. Leave it as it is")
         else:
-            print(f"[ERROR] queue cancel <id>: #{free[0]} is {outcome!r} and cannot be "
-                  f"cancelled")
+            out.out(f"[ERROR] queue cancel <id>: #{free[0]} is {outcome!r} and cannot be "
+                    f"cancelled")
         sys.exit(1)
 
     # go: run the stacked tasks in one batch (independent tasks in parallel; each task gated)
@@ -615,15 +647,15 @@ def _cmd_queue_dispatch(sub, free, backend, cfg, gen, ver, max_parallel):
     items = [it for it in queue_list(backend, cfg) if it.get("status") == "queued"]
     if not items:
         if held:
-            print(f"## rig queue GO [{backend}]  nothing runnable — "
-                  f"{len(held)} item(s) held on dependencies\n")
+            out.out(f"## rig queue GO [{backend}]  nothing runnable — "
+                    f"{len(held)} item(s) held on dependencies\n")
             for line in _held_lines(held):
-                print(line)
+                out.out(line)
             return
-        print(f"Queue is empty [{backend}]. Stack tasks with `queue add`.")
+        out.out(f"Queue is empty [{backend}]. Stack tasks with `queue add`.")
         return
-    print(f"## rig queue GO [{backend}]  {len(items)} items / provider={gen} / parallel={max_parallel}"
-          + (f" / {len(held)} held on dependencies" if held else "") + "\n")
+    out.out(f"## rig queue GO [{backend}]  {len(items)} items / provider={gen} / parallel={max_parallel}"
+            + (f" / {len(held)} held on dependencies" if held else "") + "\n")
 
     def _set_status(item_id, status: str, note: str = "", task_id: str = "") -> None:
         """Record a transition, and say so when it did not land (never fail silently; #360).
@@ -632,9 +664,9 @@ def _cmd_queue_dispatch(sub, free, backend, cfg, gen, ver, max_parallel):
         invisible: GO printed DONE while the store still said running/queued.
         """
         if not queue_set_status(backend, item_id, status, note, cfg, task_id or None):
-            print(f"  [WARN] #{item_id}: could not record status '{status}' "
-                  f"(item not found in the {backend} queue) — reconcile with "
-                  f"`queue done {item_id}` or `queue retry {item_id}`")
+            out.out(f"  [WARN] #{item_id}: could not record status '{status}' "
+                    f"(item not found in the {backend} queue) — reconcile with "
+                    f"`queue done {item_id}` or `queue retry {item_id}`")
 
     def _run_one(it):
         task = it["task"]
@@ -644,16 +676,17 @@ def _cmd_queue_dispatch(sub, free, backend, cfg, gen, ver, max_parallel):
             return {"id": it["id"], "task": task, "ok": False, "task_id": "",
                     "skipped": True}
         try:
-            rc, out = run_provider(gen, "generator", _build_queue_task_prompt(task, gen), cfg)
+            rc, reply = run_provider(gen, "generator", _build_queue_task_prompt(task, gen), cfg)
             # The only trace linking this queue item to the workbench task it created:
             # registration happened inside the provider's own session (see
             # workbench.batch for why an unrecoverable id is reported, not guessed).
             # It is persisted onto the item, because a dependency edge asks whether this
             # item's *result* was accepted, and without the link there is nothing to ask.
-            task_id = _find_task_id(out)
-            rc2, vout = run_provider(ver, "verifier", _build_queue_verify_prompt(task, out), cfg, persona="queue")
+            task_id = _find_task_id(reply)
+            rc2, vout = run_provider(ver, "verifier", _build_queue_verify_prompt(task, reply), cfg,
+                                     persona="queue")
             ok = ("VERDICT: PASS" in vout) and ("VERDICT: FAIL" not in vout)
-            note = ("✅ rig: gate settled (needs /rig:rig board → accept)" if ok else "❌ rig: verification FAIL") + f" ({gen}→{ver})"
+            note = ("✅ rig: gate settled (needs /rig:go board → accept)" if ok else "❌ rig: verification FAIL") + f" ({gen}→{ver})"
         except Exception as e:  # noqa: BLE001 - one bad item must not abandon the batch
             # ex.map propagates the first exception and discards the other results, which
             # left every remaining item pinned at `running` with no way to tell why (#360).
@@ -668,18 +701,18 @@ def _cmd_queue_dispatch(sub, free, backend, cfg, gen, ver, max_parallel):
     skipped = [r for r in every if r.get("skipped")]
     results = [r for r in every if not r.get("skipped")]
     for r in skipped:
-        print(f"  [SKIP] #{r['id']}  {r['task']} — claimed by another `queue go`")
+        out.out(f"  [SKIP] #{r['id']}  {r['task']} — claimed by another `queue go`")
     done = sum(1 for r in results if r["ok"])
     for r in results:
-        print(f"  [{'DONE' if r['ok'] else 'FAIL'}] #{r['id']}  {r['task']}")
-    print(f"\n=== GO complete: {done}/{len(results)} done [{backend}] ==="
-          + (f"  ({len(skipped)} claimed elsewhere)" if skipped else ""))
+        out.out(f"  [{'DONE' if r['ok'] else 'FAIL'}] #{r['id']}  {r['task']}")
+    out.out(f"\n=== GO complete: {done}/{len(results)} done [{backend}] ==="
+            + (f"  ({len(skipped)} claimed elsewhere)" if skipped else ""))
     # `done` counts settled gates, not finished work: every one of those tasks is still
     # sitting in its own worktree waiting for a person to accept or discard it. Say so.
     for line in _batch_lines(results):
-        print(line)
+        out.out(line)
     for line in _held_lines(held):
-        print(line)
+        out.out(line)
     # The exit code has always meant "did this batch's items succeed", and held items are
     # not this batch's items — they are work that correctly has not started. Reporting them
     # as a failure would make every dependency-using queue look broken to CI.
@@ -705,29 +738,17 @@ def _held_lines(held: list[dict]) -> list[str]:
     return lines
 
 
-def _find_task_id(text: str) -> str:
+def _find_task_id(text: str, *, batch: BatchSummary = WORKBENCH_BATCH) -> str:
     """Best-effort, and never a reason for GO to fail."""
-    try:
-        from ..workbench.batch import find_task_id
-        return find_task_id(text)
-    except Exception:  # noqa: BLE001
-        return ""
+    return batch.task_id(text)
 
 
-def _batch_lines(results: list[dict]) -> list[str]:
+def _batch_lines(results: list[dict], *,
+                 batch: BatchSummary = WORKBENCH_BATCH) -> list[str]:
     """The regrouped "what you must do next" block, or nothing.
 
-    Imported lazily and wrapped: the batch already ran, and a rendering problem in the
-    summary must not turn a completed GO into a traceback.
+    Deferred and wrapped on the other side of `BatchSummary`: the batch already ran, and a
+    rendering problem in the summary must not turn a completed GO into a traceback.
     """
-    try:
-        from ..workbench.batch import group_batch, render_batch
-        from ..workbench.state import maybe_repo_root
-
-        root = maybe_repo_root()
-        if root is None:
-            return []
-        return render_batch(group_batch(root, results))
-    except Exception:  # noqa: BLE001
-        return []
+    return batch.lines(results)
 

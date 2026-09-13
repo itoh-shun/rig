@@ -9,6 +9,8 @@
 
 > 🇯🇵 日本語版は [README.ja.md](./README.ja.md) を参照。
 
+> ⬆️ **Coming from 2.x?** 3.0.0 removes publisher signing entirely. Three of the four upgrade situations fail loudly and one works silently — [Upgrading to 3.0.0](#upgrading-to-300) says which is which.
+
 ## 1. What is rig?
 
 You describe a task in plain language. rig figures out what kind of task it is (bugfix / feature / refactor / review / docs / …), composes the harness it needs (`facets/personas/instructions/patterns` — LEGO-style bricks), runs the work in a **git worktree isolated from your working tree**, checks it against explicit **acceptance criteria** (build/lint/tests, no unrelated diff, no secret leak, findings labeled with severity, …), and only touches your real branch when you explicitly `accept`. "It says it's done" is never the bar — the gate is.
@@ -19,7 +21,7 @@ Put precisely: **rig does not automatically produce quality — it makes the AI 
 
 Three properties keep the safety flow real (not just documented):
 
-- **Force-proof accept requirements.** `accept` blocks landing when structural prerequisites are missing (worktree, base branch, diff summary). `--force` overrides *soft* gate failures (recorded to `.rig/audit.jsonl`), but cannot bypass the *hard* prerequisites — the checkpoints live where a flag can't remove them.
+- **Force-proof accept requirements.** `accept` blocks landing when structural prerequisites are missing (worktree, base branch, diff summary). `--force` overrides *soft* gate failures (recorded to `.rig/audit.jsonl`, where repeats of one identical event are capped at four lines a day), but cannot bypass the *hard* prerequisites — the checkpoints live where a flag can't remove them.
 - **Cross-provider by design.** The generator and the verifier are separate roles run as separate processes, and each role can pick its own LLM: `claude` / `codex` / `ollama` / `lmstudio` / `cmd` / `mock` / a nested `rig` harness. The default flow can implement with Claude and verify with Codex (or vice versa) — one class of model does not review its own artifacts. `orchestrate.py probe` proves the read-only sandbox is actually applied per provider, not just wired in the config (§6 & §13).
 - **Runs as a Claude Code plugin, not an outside CLI.** `/rig:go` lives in the same session as your regular work; the isolation, the gate, and the accept step are all a keystroke away rather than a context switch to a separate tool.
 
@@ -42,21 +44,60 @@ Two ideas in rig are adopted knowingly, and both are [nrslib](https://zenn.dev/n
 
 What rig adds on top is the **acceptance decision**: deterministic sensors first, an `accept` that code can refuse, reviewer detection rates measured by `/rig:drill`, failures recorded as typed codes. In the words of `docs/landscape.md`: an orchestrator decides how work runs, rig decides whether the result is trustworthy enough to accept. It is designed to sit behind an orchestrator such as TAKT, not to compete with one.
 
-## 2. Install
+## 2. Start by saying what you want
 
-Two entry points, for two different jobs. Most people want the first one.
+rig's front door is a sentence. In Claude Code:
 
-**In Claude Code — the plugin.** This is what `/rig:go` and every other slash command come
-from.
+```bash
+/rig:go "fix the login bug"
+/rig:go "review this PR strictly"
+/rig:go "check my current changes are safe"
+```
+
+That is the whole of a first run — **zero configuration**: no manifest, no gates.json, no persona setup, no CLI install, and no approval asked of you before you see a result. Those are all later opt-ins; the safety flow works out of the box. The one thing rig ever asks about is your `.gitignore`: run state lives in `.rig/`, and rig would rather that entry were in the file than in your next commit — so on a terminal it asks once (y/N, default N), and anywhere without one (CI, `claude -p`, a subagent, `/rig:go` itself) it writes nothing and prints the line to add. `RIG_ALLOW_GITIGNORE=1` answers it in advance. Behind the scenes: rig classifies the task, picks the matching recipe, opens an isolated worktree (skipped for read-only tasks like reviews), implements + tests, runs the acceptance-gate, and hands you back a summary with next steps:
+
+```
+/rig:go diff       # see what changed, and why it's safe (or not)
+/rig:go accept     # bring the change into your working tree (blocked if the gate hasn't passed)
+/rig:go discard    # throw the attempt away — your working tree was never touched
+```
+
+**What a first run actually costs, measured.** `tests/test_first_run_cost.py` drives
+`python3 scripts/workbench.py new "<task>" --type bugfix` in a plain `git init` repository —
+no `.claude/rig.md`, no `rig-wb` anywhere on PATH, every `RIG_ALLOW_*` consent variable
+removed, stdin at `/dev/null` so a question meant for a human fails loudly instead of
+hanging — and requires that it exit 0, ask nothing, and leave a run on disk. Three companion
+tests pin why nothing is demanded: the default `bugfix` route resolves inside the shipped
+`core` tier, where there is no pack trust to approve; `rig-wb hostcheck` is advisory
+(exit 0 or 3), never a gate; and a `.claude/rig.md` you have never consented to degrades to
+one warning on stderr rather than stopping the run. What it measures is the command that
+creates a run, not every step that can follow one — a later step may still want something
+this does not cover.
+
+The prerequisites left are two: be a git repository, and have `python3`.
+
+What actually changes versus asking the model directly:
+
+| | asking directly | through rig |
+|---|---|---|
+| a failed attempt | litters your working tree | discarded with its worktree — your tree untouched |
+| "it's done" | you take the model's word | the acceptance-gate's verdict is the evidence |
+| review quality | unknown | measured — `/rig:drill` scores each reviewer's real detection rate |
+| what happened | a chat log | run log, audit trail, a provenance record you can re-verify |
+
+## 3. Install — the plugin now, the CLI when something outside Claude Code needs it
+
+`/rig:go` and every other slash command come from the Claude Code plugin. Two commands, once:
 
 ```bash
 /plugin marketplace add itoh-shun/sito-plugins
 /plugin install rig@sito-plugins
 ```
 
-**Everywhere else — the `rig-wb` CLI.** The same deterministic engine, driven from outside a
-Claude Code session: CI, a script, or another assistant (Codex, Cursor, Copilot). It is what
-`/rig:setup` installs for you, and what the plugin delegates to for the computational path.
+**The `rig-wb` CLI is the second entry point, and it is not the way in.** It is the same
+deterministic engine driven from outside a Claude Code session: CI, a script, or another
+assistant (Codex, Cursor, Copilot). Install it when something outside the session has to
+reach the same recipes and gates — not to get started.
 
 ```bash
 pipx install git+https://github.com/itoh-shun/rig.git     # or: uv tool install / pip install
@@ -69,36 +110,15 @@ rather than merely checking that something is there, and never swaps one for the
 silently. `/rig:setup --check` detects and reports without installing anything.
 
 You do not need both. The plugin alone runs the whole safety flow; the CLI alone drives it
-from CI. Install the second when something outside Claude Code has to reach the same recipes
-and gates.
+from CI.
+
+**The project manifest (`.claude/rig.md`) is also a later step.** `/rig:init` scaffolds it
+when you want project defaults, a knowledge layer, or the CLAUDE.md "Compact Instructions"
+section — and until then a repository without one, or with one you have never consented to,
+still runs (see the measurement above).
 
 Other install routes — installing directly from this repo's own marketplace, from a
 download, `--plugin-dir` for development, Codex, and the MCP adapters — are in §16.
-
-## 3. 30-second start
-
-```bash
-/rig:go "fix the login bug"
-/rig:go "review this PR strictly"
-/rig:go "check my current changes are safe"
-```
-
-That's the whole surface for a first run — **zero configuration**: no manifest, no gates.json, no persona setup. Those are all later opt-ins; the safety flow works out of the box. Behind the scenes: rig classifies the task, picks the matching recipe, opens an isolated worktree (skipped for read-only tasks like reviews), implements + tests, runs the acceptance-gate, and hands you back a summary with next steps:
-
-```
-/rig:go diff       # see what changed, and why it's safe (or not)
-/rig:go accept     # bring the change into your working tree (blocked if the gate hasn't passed)
-/rig:go discard    # throw the attempt away — your working tree was never touched
-```
-
-What actually changes versus asking the model directly:
-
-| | asking directly | through rig |
-|---|---|---|
-| a failed attempt | litters your working tree | discarded with its worktree — your tree untouched |
-| "it's done" | you take the model's word | the acceptance-gate's verdict is the evidence |
-| review quality | unknown | measured — `/rig:drill` scores each reviewer's real detection rate |
-| what happened | a chat log | run log, audit trail, signed provenance |
 
 ## 4. Main entrypoint
 
@@ -108,7 +128,7 @@ The main command is:
 /rig:go "fix the login bug"
 ```
 
-**`/rig:go` is the single main entrypoint**, the one worth memorizing before anything else in this doc. `/rig:rig` still works as a compatibility alias — same engine, same arguments — so existing habits and scripts don't break; only the name moved.
+**`/rig:go` is the single main entrypoint**, the one worth memorizing before anything else in this doc. The old `/rig:rig` name still works for the whole of 3.x as a deprecated shim — same engine, same arguments, so existing scripts don't break — and is removed in 4.0.0. Change it to `/rig:go` while you have the major to do it in.
 
 `/rig:talk` stays as the conversational front door onto the same engine — useful when you'd rather describe the situation and let rig ask follow-ups than state a single task up front:
 
@@ -168,7 +188,9 @@ Every task gets its own git worktree (`patterns/isolated-worktree`) and its own 
 <repo>/.rig/runs/rig-YYYYMMDD-HHMMSS-<slug>/                          ← run state (survives discard)
   task.json        task_id / input / task_type / recipe / base branch+commit / worktree path / status
   steps.json       per-step progress
-  acceptance.json  {task_id, task_type, presets, status, checks: [{name, status, detail}]}
+  acceptance.json  {task_id, task_type, presets, status, checks: [{name, status, detail, by, note?}]}
+                   `by` names who last wrote that status — `operator` for a `gate --set`, or the sensor that measured it; it appears once a status has been written (a freshly built gate carries none)
+                   `note` is the operator's own sentence from `--set <criterion>=<status>:<detail>`, which no sensor writes or rewrites; present only while that status stands
   review.json      per-reviewer-persona verdicts for review tasks (feeds /rig:go stats)
   reviews/<persona>.md   that reviewer's full text, recorded by `review --body` (optional)
   plan.md / diff.md / log.md / final.md   the model's prose (plan, diff summary, decisions, wrap-up)
@@ -211,9 +233,9 @@ Every task gets a criteria checklist drawn from `standard` (applies to every tas
 | `review` | review | `findings_are_concrete` · `severity_labeled` · `file_references_included` · `blocking_and_non_blocking_separated` · `false_positive_risk_considered` |
 | `security` | security_review (on top of `review`) | `authn_authz_impact_checked` · `user_input_flow_checked` · `secret_exposure_checked` · `unsafe_eval_or_shell_checked` · `dependency_risk_checked` |
 
-Projects can extend this list via **`.rig/gates.json`** — `extra_criteria` adds custom criteria per preset or task type (tagged `[project]` in displays), `descriptions` labels them. The config is **additive only**: removal/override keys are rejected outright, so a repo file can never weaken the built-in gate. Seven machine sensors back criteria rather than self-report, and five of them cover criteria in the presets above: `public_api_changes_documented` (and the refactor preset's `public_api_changes_documented_if_any` — one sensor, both names) runs an OpenAPI schema diff (auto-detects `openapi.json`/`swagger.json` etc., or takes explicit `openapi_paths`) and downgrades the check to `warning` when the API changed but the diff summary doesn't say so — warning-grade, it never fails the gate on its own; `no_secret_leak` runs a deterministic secret scan over the task diff (`workbench.py scan-secrets`) and sets the check to **failed** on any finding — excerpts are always masked, and a reviewed false positive is cleared explicitly with `--set no_secret_leak=passed`; `no_gate_tampering` scans the task diff for gate/CI tampering — edits to `.rig/gates.json`, `.rig/recipes/`, or CI workflows are fail-grade, while modifying existing tests, removing asserts, or adding skip markers on bugfix/feature tasks is warning-grade (a reviewed override via `--set no_gate_tampering=passed` is recorded on the check); `no_injection_markers` scans the diff plus the repo's prose surfaces (`workbench.py scan-injection`) for prompt-injection markers — invisible/bidi Unicode is fail-grade, instruction-override phrases are warning-grade, excerpts render invisible characters as `<U+XXXX>` escapes, and the recorded escape hatch is `--set no_injection_markers=passed`. `no_destructive_operation` scans the task diff for destructive command patterns (`workbench.py scan-destructive`) — unambiguous destroyers (`rm -rf /`, `mkfs`, `dd of=/dev/...`, `DROP DATABASE`) are fail-grade, context-dependent patterns (absolute-path/variable `rm -rf`, `git clean -f`, forced pushes without `--force-with-lease`, `DROP TABLE`/`TRUNCATE`) and mass deletions are warning-grade, with `--set no_destructive_operation=passed` as the recorded escape hatch; it detects commands written into the diff, not commands executed at run time (that is the host permission system's job).
+Projects can extend this list via **`.rig/gates.json`** — `extra_criteria` adds custom criteria per preset or task type (tagged `[project]` in displays), `descriptions` labels them. The config is **additive only**: removal/override keys are rejected outright, so a repo file can never weaken the built-in gate. Eight machine sensors back criteria rather than self-report, and five of them cover criteria in the presets above: `public_api_changes_documented` (and the refactor preset's `public_api_changes_documented_if_any` — one sensor, both names) runs an OpenAPI schema diff (auto-detects `openapi.json`/`swagger.json` etc., or takes explicit `openapi_paths`) and downgrades the check to `warning` when the API changed but the diff summary doesn't say so — warning-grade, it never fails the gate on its own; `no_secret_leak` runs a deterministic secret scan over the task diff (`workbench.py scan-secrets`) and sets the check to **failed** on any finding — excerpts are always masked, and a `--set no_secret_leak=passed` that contradicts the scan is refused (exit 2, the usage-error code, not the failed-gate 1) — remove the finding from the diff and re-run `gate`, and your `--set no_secret_leak=passed` is then accepted because it agrees with the measurement — what the sensor writes is the finding or its absence, never the pass; `no_gate_tampering` scans the task diff for gate/CI tampering — edits to `.rig/gates.json`, `.rig/recipes/`, or CI workflows are fail-grade, while modifying existing tests, removing asserts, or adding skip markers on bugfix/feature tasks is warning-grade (`--set no_gate_tampering=passed` over a finding is refused, as it is for every fail-grade sensor); `no_injection_markers` scans the diff plus the repo's prose surfaces (`workbench.py scan-injection`) for prompt-injection markers — invisible/bidi Unicode is fail-grade, instruction-override phrases are warning-grade, excerpts render invisible characters as `<U+XXXX>` escapes, and `--set no_injection_markers=passed` over a finding is refused. `no_destructive_operation` scans the task diff for destructive command patterns (`workbench.py scan-destructive`) — unambiguous destroyers — a recursive delete of the filesystem root, a filesystem format, a raw write to a device node, a database drop — are fail-grade, context-dependent patterns (a recursive delete of an absolute path or of an unexpanded variable, a forced git clean, a force push without the lease flag, a table drop or truncate) and mass deletions are warning-grade, with `--set no_destructive_operation=passed` over a finding refused like the rest; it detects commands written into the diff, not commands executed at run time (that is the host permission system's job). None of these five can be declared away: a `--set` the sensor contradicts is refused and the sensor's own verdict is what gets recorded, and the one way past a finding you have reviewed and accepted anyway is `accept --force`, which names the bypassed criteria in `.rig/audit.jsonl` and marks the task forced in the signed provenance record. A declaration *stricter* than the sensor stands, and a warning-grade sensor (the schema one) annotates rather than refuses.
 
-The remaining two sensors cover criteria that are outside the preset table above. `prompt_regression_passed` is added to the checklist only when the diff touches a prompt surface, and the machine eval gate decides it — it is the one criterion `--set` refuses outright. `evidence_anchors_resolve` is **opt-in and in no preset**: a project activates it through `.rig/gates.json` `extra_criteria`, and it then checks that the `file.py:42` evidence anchors in the reviewer bodies recorded by `review --body` point at lines that exist (`workbench.py scan-anchors`) — resolution runs worktree first, then the base commit, so an anchor into a file the diff deleted is not a false positive; an anchor whose referent was located but is still wrong (line past the end of the file, line 0, reversed range) is fail-grade, one whose file could not be located at all is warning-grade, and the recorded escape hatch is `--set evidence_anchors_resolve=passed`. On a default gate it is always a no-op. Because anchors resolve against the **task's worktree**, put it on a preset that worktree-bearing task types use — `{"extra_criteria": {"standard": ["evidence_anchors_resolve"]}}` is the intended form, `standard` being the base every implementation task composes. Putting it on the similarly-named `review` (or `security`) preset never fires: `review`/`security_review` tasks are routed *without* a worktree, and no worktree means nothing to resolve against. The bodies this sensor is for are the ones the review fan-out records against the implementation task (`review <task_id> --body`), not a standalone review task. Whenever it cannot evaluate — no worktree, no base commit, no recorded bodies — it says so in the gate output rather than leaving the criterion silently `pending`.
+The remaining three sensors cover criteria that are outside the preset table above. `prompt_regression_passed` is added to the checklist only when the diff touches a prompt surface, and the machine eval gate decides it — it is the one criterion `--set` refuses outright. `evidence_anchors_resolve` is **opt-in and in no preset**: a project activates it through `.rig/gates.json` `extra_criteria`, and it then checks that the `file.py:42` evidence anchors in the reviewer bodies recorded by `review --body` point at lines that exist (`workbench.py scan-anchors`) — resolution runs worktree first, then the base commit, so an anchor into a file the diff deleted is not a false positive; an anchor whose referent was located but is still wrong (line past the end of the file, line 0, reversed range) is fail-grade, one whose file could not be located at all is warning-grade, and a contradicting `--set evidence_anchors_resolve=passed` is refused. On a default gate it is always a no-op. Because anchors resolve against the **task's worktree**, put it on a preset that worktree-bearing task types use — `{"extra_criteria": {"standard": ["evidence_anchors_resolve"]}}` is the intended form, `standard` being the base every implementation task composes. Putting it on the similarly-named `review` (or `security`) preset never fires: `review`/`security_review` tasks are routed *without* a worktree, and no worktree means nothing to resolve against. The bodies this sensor is for are the ones the review fan-out records against the implementation task (`review <task_id> --body`), not a standalone review task. Whenever it cannot evaluate — no worktree, no base commit, no recorded bodies — it says so in the gate output rather than leaving the criterion silently `pending`. `ja_lint_clean` is the eighth: like `prompt_regression_passed` it joins the checklist only when the diff calls for it — here, when the diff adds Japanese prose — and the sensor judges the added lines with `rig-wb ja-lint`, failing the criterion on an error and leaving it at `warning` on a warning. A `--set ja_lint_clean=passed` it contradicts is overwritten on the next evaluation rather than refused, while a stricter `--set ja_lint_clean=failed` stands.
 
 Each criterion is recorded as `passed` / `failed` / `warning` / `skipped` with a detail:
 
@@ -239,7 +261,7 @@ Next:
 Review /rig:go diff, then choose accept or discard.
 ```
 
-`failed` or `pending` on any criterion blocks `accept` outright (exit 1). `warning` doesn't block, but it's surfaced every time — no silently-swept warnings.
+`gate` itself answers through `$?` as well: 0 when the gate is decided (`passed` or `passed_with_warnings`), 1 when it failed, 2 when a `--set` contradicts the sensor backing that criterion, and **3 when no verdict was reached — any criterion still `pending`, or every one of them `skipped`** — because "not yet judged" is not "green", and 3 is the code `wb contract` and the orchestrator already use for it. `failed` or `pending` on any criterion blocks `accept` outright (exit 1). A gate whose criteria are *every one* `skipped` blocks it too: the gate judged nothing, and `accept` does not read that as satisfaction — `--force` is the one way past, recorded like any other force. `warning` doesn't block, but it's surfaced every time — no silently-swept warnings.
 
 ### Read-only verifier
 
@@ -355,9 +377,10 @@ Recommended:
   ✓ diff_summary_generated
   ✓ acceptance_gate_not_failed
   ✓ no_unrelated_diff
+  ✓ gate_judged_this_head
 ```
 
-`worktree_exists`, `base_branch_recorded`, and `diff_summary_generated` are **structural** — no `diff.md`, no accept, full stop, `--force` included. `acceptance_gate_not_failed` and `no_unrelated_diff` are judgment calls the gate makes, and `--force` can override them (recorded as `forced: true` — it doesn't disappear). Once past the checklist, `accept` squash-merges the task branch into your working tree as a **staged** change — never an auto-commit.
+`worktree_exists`, `base_branch_recorded`, and `diff_summary_generated` are **structural** — no `diff.md`, no accept, full stop, `--force` included. `acceptance_gate_not_failed`, `no_unrelated_diff` and `gate_judged_this_head` are judgment calls the gate makes, and `--force` can override them (recorded as `forced: true` — it doesn't disappear). `gate_judged_this_head` compares `evaluated_head` — the commit the gate recorded — against **both** the tip of the branch `accept` squashes and the worktree's HEAD, and all three have to be one commit. The branch is the one that decides: `accept` squashes the branch, not the worktree's HEAD. A run whose acceptance.json holds no head at all is unknown rather than matching. The remedy is always to re-run `gate`; forcing past it names all three shas in the audit entry. Once past the checklist, `accept` squash-merges the task branch into your working tree as a **staged** change — never an auto-commit.
 
 **`/rig:go discard <id> --yes`** always shows the changed-files list first; without `--yes` it's a dry-run preview. It deletes the worktree/branch — the run log (`.rig/runs/<task-id>/`) stays.
 
@@ -442,7 +465,7 @@ The denominator is the recipe's own: `steps.json` is seeded from the resolved re
   → あなた: diff を見て accept  (2)
     #1  rig-20260705-090800-login-fix
         ログイン失敗を直す
-    → /rig:rig diff <task_id> · /rig:rig accept <task_id> · /rig:rig discard <task_id> --yes
+    → /rig:go diff <task_id> · /rig:go accept <task_id> · /rig:go discard <task_id> --yes
   ✗ キュー側で失敗（差分レビュー以前）  (1)
     #3  壊れているやつ
     → 原因を確認して `queue retry <id>`
@@ -882,7 +905,7 @@ It never invents its own execution logic — `scripts/rig-action-entrypoint.sh` 
 | **Knowledge** | `/rig:import`, `/rig:export`, `/rig:catalog`, `/rig:knowledge`, `/rig:persona`, `/rig:forge` (self-extension: author new bricks/packs from a description) |
 | **Planning** | `/rig:goal`, `/rig:design`, `/rig:brainstorm`, `/rig:tasks`, `/rig:loop` (recurring driver — polling/watch, the opposite of goal) |
 
-These are useful after you understand the core safety flow (§5–§7) — see [`skills/engine/SKILL.md`](./skills/engine/SKILL.md) §2 for the full brick catalog and opt-in Extension Catalog. (`/rig:queue` is covered in §6, `/rig:init` in the FAQ, and opt-in extensions in §15.)
+These are useful after you understand the core safety flow (§5–§7) — see [`skills/engine/BRICKS.md`](./skills/engine/BRICKS.md) §2 for the full brick catalog and opt-in Extension Catalog. (`/rig:queue` is covered in §6, `/rig:init` in the FAQ, and opt-in extensions in §15.)
 
 ### Install
 
@@ -953,7 +976,7 @@ cd /path/to/rig && claude --plugin-dir .   # reload after edits: /reload-plugins
 | `--verify-findings` | adversarially verify REJECT rationale via an independent `finding-verifier` |
 | `--global` | widen `--list` / `--validate` across tiers (shipped + global + project) |
 
-Full flag/brick reference lives in [`skills/engine/SKILL.md`](./skills/engine/SKILL.md) §2–§3 (not duplicated here — that's the drift-prevention rule `--validate` enforces).
+Full brick reference lives in [`skills/engine/BRICKS.md`](./skills/engine/BRICKS.md) §2 and the flag list in [`skills/engine/SKILL.md`](./skills/engine/SKILL.md) §3 (not duplicated here — that's the drift-prevention rule `--validate` enforces).
 
 ### Codex skill install
 
@@ -1022,7 +1045,7 @@ An experimental backend that delegates review-gate parallel fan-out to Anthropic
 
 ### VS Code extension — rig board (read-only, #286)
 
-`vscode-extension/` is a **read-only** sidebar Tree View of `.rig/runs/` task/gate state, so you don't have to leave the editor to run `/rig:rig board`. It parses the same `task.json`/`acceptance.json`/`steps.json` `scripts/workbench.py` already writes — no new state-management engine, and no accept/discard or any other write command is registered anywhere in the extension. See `vscode-extension/README.md` for install instructions (not yet published to the Marketplace) and honest verification scope (the parsing logic is unit-tested with plain Node; actually loading the extension in a live VS Code Extension Host is unverified in this environment).
+`vscode-extension/` is a **read-only** sidebar Tree View of `.rig/runs/` task/gate state, so you don't have to leave the editor to run `/rig:go board`. It parses the same `task.json`/`acceptance.json`/`steps.json` `scripts/workbench.py` already writes — no new state-management engine, and no accept/discard or any other write command is registered anywhere in the extension. See `vscode-extension/README.md` for install instructions (not yet published to the Marketplace) and honest verification scope (the parsing logic is unit-tested with plain Node; actually loading the extension in a live VS Code Extension Host is unverified in this environment).
 
 ### Prompt evaluation gate (`rig-wb eval`, v2.1.1)
 
@@ -1078,7 +1101,7 @@ Specialized workflows are distributed outside the default catalog. Install only 
 Packs are installed and inspected with `rig-wb pack`:
 
 ```bash
-rig-wb pack install domain:sales --scope project --allow-unverified
+rig-wb pack install domain:sales --scope project
 rig-wb pack list                             # what is installed, its origin, and whether it verified
 rig-wb pack verify-sources --scope project   # re-check packs locked against a declared git source
 ```
@@ -1107,7 +1130,7 @@ What backs the claims above, concretely — this table exists so "documented" an
 | Orchestrator unit behavior (recipe resolution & trust gate, queueing, run-state, graph, CLI surface) | `pytest -q -n auto` — the suite under `tests/`, run in parallel so that assertions which only fail under CPU contention can fail at all; CI (`validate.yml`) enforces it alongside `ruff` (0 findings), the validator, and both selftests |
 | Acceptance-gate criteria, accept/discard mechanics | `scripts/workbench.py` — exercised against scratch git repos each release (see `CHANGELOG.md` entries for the verification notes) |
 | Documented requirement vs. the evidence behind it | `rig-wb coverage` (source of truth: `evals/coverage-map.json`; default verifies the map against the tree and runs in CI, `--run` executes the deterministic evidence) |
-| Host-side prerequisites (container isolation, `permissions.deny`, ignored run state, `gh` auth + token scopes, the installed `rig-wb` importing from outside a checkout) | `rig-wb hostcheck` (detection and reporting only — enforcement is the host's job, not rig's. An axis it cannot verify reports MISS, never OK; a subject that does not exist here reports `applicable: false` on its own line) |
+| Host-side prerequisites (container isolation, `permissions.deny`, ignored run state, `gh` auth + token scopes, the installed `rig-wb` importing from outside a checkout) | `rig-wb hostcheck` (detection and reporting only — enforcement is the host's job, not rig's. An axis it cannot verify reports MISS, never OK; a subject that does not exist here reports `applicable: false` on its own line. It runs every time and prints the full report once: verdicts land in `.rig/hostcheck.jsonl`, and later runs in the same repository show only what moved — `--full` for all of it) |
 | Detection power of the test suite (mutation) | `rig-wb mutation` (finds the report and reads its format itself — `elements` from Stryker, `mutmut` from 3.x's `export-cicd-stats`, `junit` from 2.x's `junitxml`; `--run` runs the project's own tool first. A drop against the baseline becomes a warning-grade criterion — the tool itself is the project's choice) |
 | Prompt-surface change vs. the approved cases behind it | `rig-wb eval affected --ratchet` (source of truth: `evals/prompt-surfaces.json` + `evals/cases/`; CI-enforced on every PR — a surface with no case yet is reported as `coverage_debt`, removing existing coverage fails) |
 | ASVS chapters vs. the inspection surface rig has | `rig-wb asvs` (source of truth: `evals/asvs-map.json`; `--check` verifies every cited mechanism exists and runs in CI, and **blind chapters are stated, not omitted**) |
@@ -1154,7 +1177,7 @@ team C ─┘        (a downstream layer can only tighten it)
 |---|---|---|
 | `.rig/gates.json` is per-repo, so a criterion team A adds never reaches team B | **policy** (`.rig/policy/*.json`) | **monotonic tightening** — a team/project layer may add criteria, raise a quorum, shorten a waiver, narrow a role; it can never drop, lower, extend or widen one |
 | `.rig/access.json` is an allowlist for exactly one permission | **permissions** | roles over a fixed 11-permission vocabulary; a denial always names who *does* hold it |
-| "someone reviewed it" cannot be checked afterwards | **approvals** | quorum + qualifying roles + **separation of duties** (the author's own approval never counts) + **freshness** (bound to the approved commit; a force-push invalidates it) |
+| "someone reviewed it" cannot be checked afterwards | **approvals** | quorum + qualifying roles + **separation of duties** (the author's own approval never counts) + **freshness** (bound to the branch tip `accept` squashes, resolved in the main tree — not to the worktree's HEAD; move the branch and the approval stops counting) + **attestation** (`approvals.json` is an ordinary writable file, so a decision no `approval.grant` ledger entry attests is not counted; enforced where the repository holds `.rig/provenance.key` or the policy sets `audit.chain_required`, and without a key it buys visibility rather than resistance) |
 | a `--force` record cannot tell a sign-off from a bad evening | **waivers** | a named, reasoned, **expiring** exception; `non_waivable` criteria are beyond any waiver |
 | an append-only JSONL log can be edited with a text editor | **ledger** (`.rig/ledger.jsonl`) | hash-chained and HMAC-signed; edits, deletions, reordering and forged appends are all detected |
 | "we run a common policy" stays a claim | **conformance** | nine checks per repo, rolled up per team — including the **force rate**, the one number that separates a gate being met from a gate being routed around |
@@ -1255,6 +1278,92 @@ Three properties, because a hint that overstates itself is worse than none:
 
 **It is a hint.** It may inform runtime and reviewer selection; it never branches the quality rules. A gate that softens for one harness is not a gate, and it would soften exactly where nobody is watching — so the test suite checks structurally that no gate or acceptance path reads it.
 
+## Upgrading to 3.0.0
+
+**3.0.0 removes publisher signing entirely.** `pack sign`, `pack keygen`, signature
+verification, trust roots, key generation, revocation, the `cryptography` dependency, and
+the install-time signature requirement with its `--allow-unverified` escape hatch are all
+gone.
+
+### Does this upgrade touch you?
+
+Four situations, each one measured against this branch rather than reasoned about. The
+distinction that matters is **fails loudly** (you find out immediately) versus **works
+silently** (nothing breaks, and nothing tells you anything changed).
+
+| your situation | what 3.0.0 does | loud or silent |
+|---|---|---|
+| a signed pack is installed, and `pack.lock.json` says `verified-publisher` with both publisher columns filled in | resolves and installs exactly as before. The status is still read back and still reported by `pack list` / `pack info` — but nothing verifies it any more | **works silently** |
+| the lock says `verified-publisher` with `publisher_key_id` and `signed_digest` null | `PackError: pack lock drift: invalid publisher trust for <id>`, raised out of the resolve path, so the whole tier fails — not just `pack` verbs. **2.x never wrote this combination**: the status and the two columns were produced together or not at all, so a lock that has it was hand-edited | **fails loudly** |
+| `--allow-unverified` in a script or CI job | exit 2, `rig-wb pack: error: unrecognized arguments: --allow-unverified` | **fails loudly** |
+| `pack sign` or `pack keygen` in a pipeline | exit 2, `rig-wb pack: error: argument command: invalid choice: 'sign'` | **fails loudly** |
+
+Three of the four announce themselves. The one that does not is the one where nothing is
+broken — the pack still installs, still resolves, still reports the label it recorded —
+which is why it is stated here rather than left to be discovered.
+
+**What to do.** Delete `--allow-unverified` from scripts and CI (it was only ever a way of
+saying "install this anyway", which is now the only behaviour). Delete `pack sign` /
+`pack keygen` steps; there is nothing for them to produce. Leave `pack.lock.json` alone —
+it needs no migration.
+
+### What new installs record
+
+An install now writes `verification_status` as `verified-local` or `unverified`, computed
+from the pack's own evidence: a pack carrying no prompt assets is `verified-local` outright,
+and one that does carry them is `verified-local` only when every owned eval case has exactly
+one attested `current` result, from a real provider rather than `mock`/`command`, with no
+failures against the case. Anything else is `unverified`. No third rung remains, because the
+third rung was the signature.
+
+`verification_status`, its three accepted values — `verified-publisher` included — and both
+publisher columns stay in `pack.lock.json` on purpose. The resolve path is **fail-closed**:
+dropping `verified-publisher` from the accepted set refuses an older lock as
+`invalid metadata`, and dropping either column refuses *every* lock as `invalid entry`, and
+neither failure is confined to `pack` verbs — it comes out of the resolve path that persona,
+recipe and wiki lookup all go through. Keeping three dead fields costs nothing; removing
+them would break existing users on a run that has nothing to do with packs.
+
+### What you give up, stated plainly
+
+Nothing binds pack bytes to an author any more. That binding was the only protection that
+worked at **first acquisition** — the moment you have a pack you have never seen before and
+have to decide whether to run it. The hash chain does not replace it: it proves nothing
+changed *after* install, which is a different question, and it has nothing to say about what
+you installed in the first place. Revocation has no mechanism left at all — there is no key
+to revoke and nothing that would consult a revocation list.
+
+What is left, and it is worth naming exactly because it is less than what was there:
+
+- **Trust on first use.** A project- or user-tier asset is consented to before its
+  command/recipe body runs — per asset, per tier, recorded against the content hash
+  (`--allow-project-packs`, `RIG_ALLOW_PROJECT_PACKS=1`). Consent is a decision you make
+  about material you can read, not a signature you check.
+- **The hash chain.** Every asset's hash is recorded at install and re-checked on resolve, so
+  a pack edited after you accepted it is refused (`hash mismatch` / `lock drift`).
+- **Declaration-drift validation.** The lock's structure, the pack's identity, its manifest
+  digest and its declared asset hashes are all checked structurally on every resolve.
+
+### Smaller user-visible changes
+
+- **`rig-wb ja-lint` and `rig-wb wb scan-ja-prose` are new.** The first lints Japanese prose
+  with the stdlib-only textlint-ja-equivalent sensor; the second shows the findings the
+  acceptance gate sees on added lines.
+- **A workbench failure exits 2, not 1.** `exitcodes.py` has always promised
+  `1 = rig judged this and said no` and `2 = rig could not produce an answer`, but every
+  `wb …` failure took 1. Measured: `wb route --type <unknown>` and `wb gates` on a malformed
+  `.rig/gates.json` both moved 1 → 2. Exit 1 is now only a verdict — a failed acceptance
+  gate, a governance block, a scanner finding. **A CI job branching on exit 1 as "rig
+  refused" must now expect 2.** (`rig-wb pack validate` on a broken `pack.yaml` was exit 2
+  before this release and still is — that one did not move.)
+- **`govern policy show --json` gains a `schema` field**, carrying
+  `rig.effective-policy/v1`.
+- **A consent flag is honoured only where it is genuinely an option of the process.** The
+  check used to be `"--allow-project-packs" in sys.argv`, and argv carries task titles,
+  `--goal` bodies and arguments forwarded to a pack. A task title that happens to contain
+  `--allow-project-packs` — or the flag after a bare `--`, or as the value of a free-text
+  option — no longer grants trust to a project-tier asset.
+
 ## Docs
 
 - [`skills/engine/SKILL.md`](./skills/engine/SKILL.md) — the engine (full PARSE/RESOLVE/COMPOSE/RUN spec, rationalization table, red flags)
@@ -1270,6 +1379,8 @@ Three properties, because a hint that overstates itself is worse than none:
 - [`docs/evaluation-cases.md`](./docs/evaluation-cases.md) — the capture / execution / comparison / promotion boundary behind the prompt evaluation gate
 - [`docs/packs.md`](./docs/packs.md) — pack authoring (`pack.yaml` / `compatibility.yaml`) and the init / validate / doctor / install / test commands
 - [`docs/pack-migration.md`](./docs/pack-migration.md) — taking a pack out to its own repository and installing it back through a named source, from both sides
+- [`docs/v3-architecture-design-brief.ja.md`](./docs/v3-architecture-design-brief.ja.md) — the V3 architecture design brief: the agreed internal rearchitecture (capability registry, ports, provenance typing) and the order the migration runs in
+- [`docs/facet-order-measurement-plan.ja.md`](./docs/facet-order-measurement-plan.ja.md) — the plan for measuring whether the fixed facet placement order does anything: the `/rig:drill` arms, the sample size derived from the benchmark's own power method, the pre-declared null result, and what blocks a run
 - [README.ja.md](./README.ja.md) — Japanese version
 
 ## License

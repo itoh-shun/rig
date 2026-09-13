@@ -21,22 +21,24 @@ from rig_workbench.orchestrate.recipes import (load_steps, parse_frontmatter,
                                                resolve_recipe)
 from rig_workbench.orchestrate.runstate import new_state
 
+from conftest import pin_runs_path
+
 
 @pytest.fixture
 def runs_log(tmp_path, monkeypatch):
     """A per-test `.rig/runs.jsonl`.
 
-    Pinned with `setattr` rather than by setting `RIG_RUNS_PATH`, which is what the rest of the
-    suite does and is the only form that survives its neighbours. `config.RUNS_PATH` resolves
-    through PEP 562 `__getattr__`, so it reads the environment on every access — until some
-    other test does `monkeypatch.setattr(config, "RUNS_PATH", ...)`. That creates a real module
-    attribute, and undoing it puts the *computed* value back rather than removing it, leaving
-    the name frozen for the rest of that worker. Under `-n 4` these tests then read whichever
-    path the frozen value points at, which is how they passed alone and failed in the suite.
+    Pinned on the module rather than by setting `RIG_RUNS_PATH`, which is what the rest of the
+    suite does: `config.RUNS_PATH` resolves through PEP 562 `__getattr__`, so it re-reads the
+    environment on every access and whatever a neighbour exported would be read here too.
+
+    Through `pin_runs_path` rather than `monkeypatch.setattr`, because `setattr` on a name
+    served by `__getattr__` puts the *computed* value back on undo instead of removing it,
+    freezing the name for the rest of that xdist worker. These tests were once on the
+    receiving end of that — passing alone, failing in the suite, reading whichever path the
+    frozen value pointed at — and the fixture must not do it to anybody else.
     """
-    path = tmp_path / "runs.jsonl"
-    monkeypatch.setattr(config, "RUNS_PATH", path)
-    return path
+    return pin_runs_path(monkeypatch, tmp_path / "runs.jsonl")
 
 
 def _run(tmp_path, cfg=None, quiet=True):

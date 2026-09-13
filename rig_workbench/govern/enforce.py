@@ -22,7 +22,7 @@ import dataclasses
 import pathlib
 
 from . import ledger, waiver
-from .approval import evaluate, load_approvals
+from .approval import UNKNOWN_HEAD, evaluate, ledger_attestations, load_approvals
 from .identity import current_actor, load_org_binding
 from .policy import EffectivePolicy, PolicyError, effective_policy
 from .rbac import can, roles_of
@@ -58,8 +58,22 @@ def load(root: pathlib.Path) -> tuple[EffectivePolicy, str | None]:
 
 
 def check_accept(root: pathlib.Path, task: dict, *, bypassed: list[str],
-                 force: bool, head: str | None = None) -> Verdict:
-    """Decide whether this accept may proceed. Never writes; `record_accept` does that."""
+                 force: bool, head: str | object | None = None) -> Verdict:
+    """Decide whether this accept may proceed. Never writes; `record_accept` does that.
+
+    `head` is **the commit that is about to be applied**, and the caller owes this function
+    that commit rather than whichever one is convenient to read. `accept` squashes the task
+    branch, so it passes the branch tip resolved in the main tree; it used to pass the
+    worktree's HEAD, and since `govern approve grant` recorded the worktree's HEAD too, the
+    freshness rule compared one ref with itself and an approval could be spent on a tip the
+    approver never saw. The resolution stays with the caller because it is the caller that
+    has the ref — see `approval.evaluate` for why this pillar does not reach for it.
+
+    A caller whose task records a branch it could not resolve passes `approval.UNKNOWN_HEAD`
+    and not `None`: `None` means "no such commit exists" and holds nothing to one, which for
+    a deleted branch reads a missing ref as permission. This function only forwards the
+    value; the constant says what each of the three means.
+    """
     actor = current_actor(root)
     eff, error = load(root)
     if error:
@@ -80,7 +94,14 @@ def check_accept(root: pathlib.Path, task: dict, *, bypassed: list[str],
         verdict.blocked = f"not permitted to accept: {decision.reason}"
         return verdict
 
-    status = evaluate(eff, task, load_approvals(root, task.get("task_id", "")), head=head)
+    if head is UNKNOWN_HEAD:
+        verdict.lines.append("  the task's branch does not resolve, so no approval can be "
+                             "checked against the commit this would apply")
+    # The chain is read here and handed in, the way the branch tip is: a decision no
+    # `approval.grant` entry attests does not count toward the quorum.
+    status = evaluate(eff, task, load_approvals(root, task.get("task_id", "")), head=head,
+                      attested=ledger_attestations(
+                          root, chain_required=eff.audit_chain_required))
     verdict.approvals_counted = status.counted
     verdict.approvals_required = status.required
     if status.required or status.counting or status.denials:

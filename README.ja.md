@@ -9,6 +9,8 @@
 
 > 🇬🇧 English version: [README.md](./README.md)
 
+> ⬆️ **2.x から上げる方は。** 3.0.0 は publisher 署名をまるごと削除しました。移行4パターンのうち3つは大きく失敗し、1つは黙って動きます——どれがどれかは [3.0.0 への移行](#300-への移行) にあります。
+
 ## 1. rig とは何か
 
 自然文でタスクを頼むだけでいい。rig がタスクの種類（バグ修正/機能追加/リファクタ/レビュー/ドキュメント/…）を判定し、必要なブリック（persona / instruction / pattern — LEGO 式の部品）を組み合わせてハーネスを合成し、**現在の作業ツリーとは隔離された git worktree**で作業し、明示的な**受け入れ基準**（意図の充足・無関係な差分がないか・リスク要約・テスト・型エラー・secret 漏洩がないか等）で検証し、`accept` が呼ばれるまで本体には一切触れない。「できました」という自己申告は完了の根拠にならない——根拠は常にゲートの合否。
@@ -42,20 +44,62 @@ rig は二つの考え方を、知ったうえで採用している。どちら�
 
 rig がその上に足しているのは**受け入れの判定**だ。決定論センサーを一次に置くこと、`accept` をコードが拒否すること、レビュアーの検出率を `/rig:drill` で測ること、失敗を型で記録すること。`docs/landscape.md` の一文で言えば、オーケストレータが「どう回すか」を決め、rig は「回った結果を受け入れてよいか」を決める。TAKT のようなオーケストレータと競合するのではなく、その後ろに置く層として設計している。
 
-## 2. インストール
+## 2. まず、やりたいことを言う
 
-入口は2つあり、用途が違います。多くの場合は1つ目です。
+rig の入口は1文です。Claude Code の中で：
 
-**Claude Code の中では、プラグイン。** `/rig:go` をはじめとするスラッシュコマンドはここから来ます。
+```bash
+/rig:go "ログインバグを直して"
+/rig:go "このPRを厳しめにレビューして"
+/rig:go "今の変更が安全か確認して"
+```
+
+最初はこれだけでいい——**設定ゼロ**。manifest も gates.json も persona 設定も要らず、CLI のインストールも要らない。結果が出る前にあなたが承認を求められることもない（すべて後から足す opt-in）。rig が唯一たずねるのは `.gitignore` だ。実行状態は `.rig/` に置かれる。その 1 行は `.gitignore` に入れておく（次のコミットに紛れ込ませない）。端末があれば 1 回だけ聞く（y/N・既定は N）。端末が無いところ（CI、`claude -p`、subagent、`/rig:go` 自身）では何も書かず、足すべき行だけを出す。`RIG_ALLOW_GITIGNORE=1` で先に答えておける。安全フローは箱から出してすぐ動く。裏側では、タスクを分類し、対応する recipe を選び、隔離 worktree を作る（レビュー等の読み取り専用タスクは省略）。あとは実装・テスト → acceptance-gate 判定と進み、次アクションつきのサマリを返す:
+
+```
+/rig:go diff       # 何が変わったか、なぜ安全か（あるいは危ういか）を確認
+/rig:go accept     # 作業ツリーへ反映（gate が未達なら拒否される）
+/rig:go discard    # 試みを破棄（作業ツリーは最初から一切触れられていない）
+```
+
+**最初の1回のコストは、実測してあります。** `tests/test_first_run_cost.py` は
+`python3 scripts/workbench.py new "<task>" --type bugfix` を素の `git init` リポジトリで
+走らせます。条件は、`.claude/rig.md` なし、PATH のどこにも `rig-wb` なし、`RIG_ALLOW_*` の
+consent 変数はすべて除去、stdin は `/dev/null`。stdin を閉じるのは、人間への問いかけが
+待ちぼうけにならずその場で失敗するようにするためです。そのうえで exit 0 であること・
+何も聞かないこと・run がディスクに残ることを要求します。
+
+何も要求されない理由は、3本の随伴テストが固定しています。既定の `bugfix` ルートは同梱
+`core` tier の中で解決するので、承認すべき pack 信頼がそもそもありません。`rig-wb hostcheck`
+は助言的（exit 0 か 3）でゲートではありません。一度も承認していない `.claude/rig.md` は
+run を止めず、stderr の警告1行に縮退します。測っているのは **run を作るコマンド**であって、
+その後に続く全 step ではありません——後段の step がここで測っていないものを要求することは
+あり得ます。
+
+残っている前提は2つだけです：git リポジトリであること、`python3` があること。
+
+モデルに直接頼む場合と実際に何が変わるか：
+
+| | 直接頼む | rig 経由 |
+|---|---|---|
+| 失敗した変更 | 作業ツリーに残る | worktree ごと破棄——本体は無傷 |
+| 「できました」 | 信じるしかない | acceptance-gate の合否が根拠 |
+| レビューの質 | 不明 | `/rig:drill` が各 reviewer の検出率を実測 |
+| 何が起きたか | チャットログ | run log・監査証跡・再検証できる来歴 |
+
+## 3. インストール——プラグインは今、CLI は Claude Code の外が必要になったとき
+
+`/rig:go` をはじめとするスラッシュコマンドは Claude Code のプラグインから来ます。最初に2コマンドだけ：
 
 ```bash
 /plugin marketplace add itoh-shun/sito-plugins
 /plugin install rig@sito-plugins
 ```
 
-**それ以外の場所では、`rig-wb` CLI。** 同じ決定論エンジンを Claude Code のセッション外から
-動かすためのものです——CI、スクリプト、あるいは別のアシスタント（Codex / Cursor / Copilot）。
-`/rig:setup` が入れてくれるのもこれで、プラグインが計算的経路で委譲する先もこれです。
+**`rig-wb` CLI は2つ目の入口であって、入り方ではありません。** 同じ決定論エンジンを
+Claude Code のセッション外から動かすためのものです——CI、スクリプト、あるいは別の
+アシスタント（Codex / Cursor / Copilot）。入れるのは、セッションの外にあるものが同じ
+recipe とゲートに届く必要が出たときであって、始めるためではありません。
 
 ```bash
 pipx install git+https://github.com/itoh-shun/rig.git     # uv tool install / pip install でも可
@@ -67,35 +111,13 @@ rig-wb version
 比べ、黙って入れ替えることはしません。`/rig:setup --check` は何も入れずに検出だけします。
 
 両方は要りません。プラグインだけで安全フローは一通り動き、CLI だけで CI から回せます。
-2つ目が要るのは、Claude Code の外にあるものが同じ recipe とゲートに届く必要があるときです。
+
+**manifest（`.claude/rig.md`）も後の手順です。** プロジェクト既定値・知識層・CLAUDE.md の
+"Compact Instructions" が欲しくなったら `/rig:init` が scaffold します。それまでは manifest が
+無いリポジトリでも、一度も承認していない manifest があるリポジトリでも動きます（上の実測を参照）。
 
 その他の導入経路——このリポジトリ自身の marketplace から、ダウンロードから、開発用の
 `--plugin-dir`、Codex、MCP アダプタ——は §16 にあります。
-
-## 3. 30秒で使う
-
-```bash
-/rig:go "ログインバグを直して"
-/rig:go "このPRを厳しめにレビューして"
-/rig:go "今の変更が安全か確認して"
-```
-
-最初はこれだけでいい——**設定ゼロ**：manifest も gates.json も persona 設定も不要（すべて後から足す opt-in）。安全フローは箱から出してすぐ動く。裏側では、タスクを分類 → 対応する recipe を選択 → 隔離 worktree を作成（レビュー等の読み取り専用タスクは省略）→ 実装・テスト → acceptance-gate 判定 → 次アクションつきのサマリを返す:
-
-```
-/rig:go diff       # 何が変わったか、なぜ安全か（あるいは危ういか）を確認
-/rig:go accept     # 作業ツリーへ反映（gate が未達なら拒否される）
-/rig:go discard    # 試みを破棄（作業ツリーは最初から一切触れられていない）
-```
-
-モデルに直接頼む場合と実際に何が変わるか：
-
-| | 直接頼む | rig 経由 |
-|---|---|---|
-| 失敗した変更 | 作業ツリーに残る | worktree ごと破棄——本体は無傷 |
-| 「できました」 | 信じるしかない | acceptance-gate の合否が根拠 |
-| レビューの質 | 不明 | `/rig:drill` が各 reviewer の検出率を実測 |
-| 何が起きたか | チャットログ | run log・監査証跡・署名付き来歴 |
 
 ## 4. メイン入口
 
@@ -105,7 +127,7 @@ rig-wb version
 /rig:go "ログインバグを直して"
 ```
 
-**`/rig:go` は唯一のメイン入口**であり、このドキュメントの中で一番先に覚えるべきコマンドである。`/rig:rig` は互換エイリアスとして引き続き動く——同じエンジン・同じ引数なので、既存の習慣やスクリプトはそのまま壊れない。変わったのは名前だけ。
+**`/rig:go` は唯一のメイン入口**であり、このドキュメントの中で一番先に覚えるべきコマンドである。旧名の `/rig:rig` は 3.x のあいだ非推奨の互換 shim として残る。同じエンジン・同じ引数なので既存のスクリプトは壊れない。4.0.0 で削除するので、この major のうちに `/rig:go` へ書き換えてほしい。
 
 `/rig:talk` は同じエンジンへのより会話的な入口としてそのまま残る——状況を説明して rig に聞き返してもらいたいとき、1つのタスクを最初から言い切るより向いている：
 
@@ -165,7 +187,9 @@ gate: standard + bugfix
 <repo>/.rig/runs/rig-YYYYMMDD-HHMMSS-<slug>/                      ← run state（discard 後も残る）
   task.json        task_id / 入力 / task_type / recipe / base branch+commit / worktree path / status
   steps.json       step ごとの進行状態
-  acceptance.json  {task_id, task_type, presets, status, checks: [{name, status, detail}]}
+  acceptance.json  {task_id, task_type, presets, status, checks: [{name, status, detail, by, note?}]}
+                   `by` はその status を最後に書いた者（`gate --set` なら `operator`、測ったセンサーならその名前）。status が一度書かれてから現れる（作りたての gate には無い）
+                   `note` は `--set <criterion>=<status>:<detail>` で操作者が書いた一文。センサーは書きも書き換えもせず、その status が立っている間だけ残る
   review.json      review タスクの persona 別 verdict（/rig:go stats に反映）
   reviews/<persona>.md   その reviewer の本文全文（`review --body` で記録・任意）
   plan.md / diff.md / log.md / final.md   モデルが書く散文（計画・差分要約・決定・まとめ）
@@ -208,9 +232,65 @@ acceptance-gate は、run を反映候補として渡してよいかを判定す
 | `review` | review | `findings_are_concrete`・`severity_labeled`・`file_references_included`・`blocking_and_non_blocking_separated`・`false_positive_risk_considered` |
 | `security` | security_review（review に上乗せ） | `authn_authz_impact_checked`・`user_input_flow_checked`・`secret_exposure_checked`・`unsafe_eval_or_shell_checked`・`dependency_risk_checked` |
 
-この基準リストはプロジェクト側で **`.rig/gates.json`** から拡張できる——`extra_criteria` で preset / task_type 別に独自基準を追加（表示には `[project]` タグ）、`descriptions` で説明を付ける。設定は**加算のみ**：組み込み基準の削除・緩和キーは即座に拒否されるため、repo 内のファイルが gate を弱めることはできない。また基準は自己申告でなく機械センサー7本が裏付ける——うち5本は上記プリセットの基準を見る：`public_api_changes_documented`（refactor プリセットの `public_api_changes_documented_if_any` も同じセンサーが見る）は OpenAPI schema-diff（`openapi.json`/`swagger.json` 等を自動検出、`openapi_paths` で明示可）で、API が変わったのに diff サマリに記述が無ければ `warning` に落とす——warning-grade であり単独で gate を fail にはしない。`no_secret_leak` は task diff への決定論シークレットスキャン（`workbench.py scan-secrets`）で、検出があれば **failed** にする——抜粋は常にマスク済みで、人が確認した偽陽性は `--set no_secret_leak=passed` で明示的に解除する。`no_gate_tampering` は task diff への anti-tamper スキャン——`.rig/gates.json`・`.rig/recipes/`・CI workflow の編集は fail-grade、bugfix/feature task での既存テスト改変・assert 削除・skip マーカー追加は warning-grade（人がレビューした上での上書きは `--set no_gate_tampering=passed` で行い、check に記録される）。`no_injection_markers` は diff＋repo の prose 面へのプロンプトインジェクション・マーカースキャン（`workbench.py scan-injection`）——不可視/bidi Unicode は fail-grade・指示上書きフレーズは warning-grade で、抜粋中の不可視文字は `<U+XXXX>` エスケープで描画され、脱出口は `--set no_injection_markers=passed`（記録される）。`no_destructive_operation` は task diff への破壊的コマンドスキャン（`workbench.py scan-destructive`）——`rm -rf /`・`mkfs`・`dd of=/dev/…`・`DROP DATABASE` は fail-grade、絶対パス/変数展開への `rm -rf`・`git clean -f`・`--force-with-lease` なしの force push・`DROP TABLE`/`TRUNCATE`・大量削除は warning-grade で、脱出口は `--set no_destructive_operation=passed`（記録される）。検出対象は diff に書き込まれたコマンドであり、実行時コマンドの傍受ではない（それはホストのパーミッション機構の責務）。
+この基準リストはプロジェクト側の **`.rig/gates.json`** から拡張できる。
+`extra_criteria` は preset / task_type 別に独自基準を足し（表示には `[project]` タグ）、`descriptions` がその説明を付ける。
+設定は**加算のみ**：組み込み基準の削除・緩和キーは即座に拒否されるため、repo 内のファイルが gate を弱めることはできない。
+また基準は自己申告でなく機械センサー8本が裏付ける。
+うち5本は上記プリセットの基準を見る。
+`public_api_changes_documented` は OpenAPI schema-diff のセンサーが見る。
+refactor プリセットの `public_api_changes_documented_if_any` も同じセンサーが見る。
+`openapi.json`/`swagger.json` 等は自動検出し、`openapi_paths` で明示もできる。
+API が変わったのに diff サマリに記述が無ければ `warning` に落とす。
+warning-grade であり、単独で gate を fail にはしない。
+`no_secret_leak` は task diff への決定論シークレットスキャン（`workbench.py scan-secrets`）である。
+検出があれば **failed** にし、抜粋は常にマスク済みで出す。
+偽陽性でも測定と食い違う `--set no_secret_leak=passed` は拒否される（exit 2＝使い方の誤りで、gate 失敗の 1 とは別）。
+findings を diff から取り除いて評価し直せば、`--set no_secret_leak=passed` は測定と一致するので受け付けられる。
+センサーが自分で書くのは findings の有無までで、pass そのものは書かない。
+`no_gate_tampering` は task diff への anti-tamper スキャン。
+`.rig/gates.json`・`.rig/recipes/`・CI workflow の編集は fail-grade。
+bugfix/feature task での既存テスト改変・assert 削除・skip マーカー追加は warning-grade。
+`no_injection_markers` は diff＋repo の prose 面を走るプロンプトインジェクション・マーカースキャンである。
+実装は `workbench.py scan-injection` と同じ。
+不可視/bidi Unicode は fail-grade、指示上書きフレーズは warning-grade。
+抜粋中の不可視文字は `<U+XXXX>` エスケープで描画される。
+`no_destructive_operation` は task diff への破壊的コマンドスキャンである（`workbench.py scan-destructive`）。
+ルート直下の再帰削除・ファイルシステム初期化・デバイスノードへの直接書き込み・データベース削除は fail-grade。
+絶対パスや未展開の変数への再帰削除、強制つきの git clean は warning-grade。
+lease 指定なしの force push、テーブルの削除や切り詰め、大量削除も同じく warning-grade。
+検出対象は diff に書き込まれたコマンドであり、実行時コマンドの傍受ではない（それはホストのパーミッション機構の責務）。
+宣言で黙らせられないのは 4 本。
+`no_secret_leak`・`no_gate_tampering`・`no_injection_markers`・`no_destructive_operation` がそれである。
+センサーと食い違う `--set` は拒否され、記録に残るのはセンサーの判定のほうである。
+人がレビューした上でなお進めるなら `accept --force` だけが道になる。
+迂回した基準は `.rig/audit.jsonl` に名指しで残り、署名付き provenance にも forced として残る。
+センサーより**厳しい**宣言は生き残る。
+warning-grade の schema センサーは fail を出さないので、食い違っても gate は拒否せず注釈に留める。
 
-残る2本のセンサーが見る基準は、上記プリセット表の外にある。`prompt_regression_passed` は diff が prompt 面に触れたときだけチェックリストに自動追加され、合否は機械 eval ゲートが決める——`--set` による手動上書きを拒否する唯一の基準。`evidence_anchors_resolve` は **opt-in でどのプリセットにも入っていない**：プロジェクトが `.rig/gates.json` の `extra_criteria` で入れたときだけ有効になり、`review --body` で記録した reviewer 本文中の `file.py:42` 形式の証拠アンカーが実在する行を指すかを検査する（`workbench.py scan-anchors`）——解決は worktree→base commit の順なので、diff が削除したファイルへのアンカーは偽陽性にならない。参照先を特定できたのにアンカーが誤り（行数超過・行 0・範囲逆転）は fail-grade、ファイル自体を特定できなかったものは warning-grade で、脱出口は `--set evidence_anchors_resolve=passed`（記録される）。既定の gate では常に no-op のまま。アンカーは **task の worktree を基準に解決する**ので、入れる先は worktree を持つ task 種別が使うプリセット——`{"extra_criteria": {"standard": ["evidence_anchors_resolve"]}}` が想定形で、`standard` は実装系 task が必ず合成する土台。名前が紛らわしい `review`（や `security`）プリセットに入れても**永久に発火しない**：`review`/`security_review` の task は worktree **なし**で route されるため、解決の基準になるツリーが存在しない。このセンサーが見るのは、review fan-out が実装 task に対して記録した本文（`review <task_id> --body`）であって、単体の review task ではない。評価できないとき（worktree 無し・base commit 無し・記録された本文が無い）は、基準を黙って `pending` のまま残さず gate 出力で理由を述べる。
+残る3本のセンサーが見る基準は、上記プリセット表の外にある。
+`prompt_regression_passed` は diff が prompt 面に触れたときだけチェックリストに自動追加される。
+合否は機械 eval ゲートが決め、`--set` は status を問わず受け付けない。
+他 5 本が拒むのはセンサーと食い違う宣言だけで、ここはその区別すら無い。
+`evidence_anchors_resolve` は **opt-in でどのプリセットにも入っていない**。
+プロジェクトが `.rig/gates.json` の `extra_criteria` で入れたときだけ有効になる。
+有効時は、`review --body` で記録した reviewer 本文中の証拠アンカーを検査する。
+`file.py:42` 形式の引用が実在する行を指すかだけを見る（`workbench.py scan-anchors`）。
+解決は worktree→base commit の順なので、diff が削除したファイルへのアンカーは偽陽性にならない。
+参照先を特定できたのにアンカーが誤り（行数超過・行 0・範囲逆転）は fail-grade。
+ファイル自体を特定できなかったものは warning-grade。
+測定と食い違う `--set evidence_anchors_resolve=passed` は拒否される。
+既定の gate では常に no-op のまま。
+アンカーは **task の worktree を基準に解決する**ので、入れる先は worktree を持つ task 種別が使うプリセットになる。
+`{"extra_criteria": {"standard": ["evidence_anchors_resolve"]}}` が想定形になる。
+`standard` は実装系 task が必ず合成する土台である。
+名前が紛らわしい `review`（や `security`）プリセットに入れても**永久に発火しない**。
+`review`/`security_review` の task は worktree **なし**で route されるため、解決の基準になるツリーが存在しない。
+このセンサーが見るのは、review fan-out が実装 task に対して記録した本文（`review <task_id> --body`）であって、単体の review task ではない。
+評価できないとき（worktree 無し・base commit 無し・記録された本文が無い）は、基準を黙って `pending` のまま残さず gate 出力で理由を述べる。
+8本目は `ja_lint_clean` で、`prompt_regression_passed` と同じく diff が呼んだときだけ現れる。
+条件は diff が日本語の散文を足すことで、センサーは追加行を `rig-wb ja-lint` で判定する。
+error があれば failed、warning だけなら warning に置く。
+食い違う `--set ja_lint_clean=passed` は拒否ではなく次の評価で上書きされ、より厳しい `--set ja_lint_clean=failed` は残る。
 
 各基準は根拠つきで `passed` / `failed` / `warning` / `skipped` として記録する：
 
@@ -236,7 +316,7 @@ Next:
 Review /rig:go diff, then choose accept or discard.
 ```
 
-`failed` か `pending` が1件でも残っていれば `accept` は機械的に拒否される（exit 1）。`warning` は accept を止めないが、常に提示され黙って握りつぶされることはない。
+`gate` 自身も `$?` で答える。決着した gate（`passed` / `passed_with_warnings`）は 0、`failed` は 1 になる。センサーと食い違う `--set` は 2 である。判定に届かなかったとき（`pending` が1件でも残るか、全件が `skipped` のとき）は 3 になる。「まだ判定していない」を「通った」と読ませないためで、3 は `wb contract` と orchestrator が既に同じ意味で使っている。`failed` か `pending` が1件でも残っていれば `accept` は機械的に拒否される（exit 1）。全 criterion が `skipped` の gate も同じく止まる。何も判定していない gate を充足として読まないためで、通す道は `--force` だけ（他の force と同じく記録に残る）。`warning` は accept を止めないが、常に提示され黙って握りつぶされることはない。
 
 ### read-only verifier
 
@@ -350,9 +430,10 @@ Recommended:
   ✓ diff_summary_generated
   ✓ acceptance_gate_not_failed
   ✓ no_unrelated_diff
+  ✓ gate_judged_this_head
 ```
 
-`worktree_exists`/`base_branch_recorded`/`diff_summary_generated` は**構造的な前提**——`diff.md` が無ければ accept できない、`--force` でも例外なし。`acceptance_gate_not_failed`/`no_unrelated_diff` は判断が伴う項目で `--force` による上書きが可能（`forced: true` として記録される＝消えない）。チェックリストを通過したら、task branch を作業ツリーへ **squash merge（staged・コミットなし）**で反映する。
+最初の3件は**構造的な前提**である。`diff.md` が無ければ accept できず、`--force` でも例外はない。残る3件は判断が伴う項目で、`--force` による上書きが可能である（`forced: true` として記録される＝消えない）。`gate_judged_this_head` は 3 つの commit を突き合わせる。gate が記録した `evaluated_head`・accept が squash する branch の先端・worktree の HEAD である。3 つが同一 commit でなければ未達になる。決め手は branch のほうである。accept が squash するのは worktree の HEAD ではなく branch だからだ。head を記録していない acceptance.json は「一致」ではなく「不明」として扱う。どの場合も `gate` を評価し直せば解ける。`--force` で越えた場合は監査エントリに 3 つの sha が残る。チェックリストを通過したら、task branch を作業ツリーへ **squash merge（staged・コミットなし）**で反映する。
 
 **`/rig:go discard <id> --yes`** は常に変更ファイル一覧を先に表示する（`--yes` なしは削除しないプレビュー）。worktree/branch を削除するが run log（`.rig/runs/<task-id>/`）は残る。
 
@@ -750,7 +831,7 @@ Issue/PR の本文・コメントは**信頼できない外部入力**として�
 | **Knowledge** | `/rig:import`、`/rig:export`、`/rig:catalog`、`/rig:knowledge`、`/rig:persona`、`/rig:forge`（自己拡張：説明文からブリック/パックを自作） |
 | **Planning** | `/rig:goal`、`/rig:design`、`/rig:brainstorm`、`/rig:tasks`、`/rig:loop`（繰り返しドライバ——見張り/ポーリング。goal の対極） |
 
-いずれも安全な基本フロー（§5〜§7）を理解したあとに使う機能——全ブリック目録と opt-in Extension Catalog は [`skills/engine/SKILL.md`](./skills/engine/SKILL.md) §2 を参照。（`/rig:queue` は §6、`/rig:init` は FAQ、opt-in extension は §15 で扱っている。）
+いずれも安全な基本フロー（§5〜§7）を理解したあとに使う機能。全ブリック目録と opt-in Extension Catalog は [`skills/engine/BRICKS.md`](./skills/engine/BRICKS.md) §2 を参照。（`/rig:queue` は §6、`/rig:init` は FAQ、opt-in extension は §15 で扱っている。）
 
 ### install
 
@@ -806,7 +887,7 @@ cd /path/to/rig && claude --plugin-dir .   # 編集後の再読み込み: /reloa
 | `--verify-findings` | REJECT 根拠を独立した `finding-verifier` で敵対的検証 |
 | `--global` | `--list`/`--validate` を全 tier 横断に拡大 |
 
-flag・ブリックの完全な一覧は [`skills/engine/SKILL.md`](./skills/engine/SKILL.md) §2〜§3 が正本（README には複製しない＝`--validate` が守る目録ドリフト防止の原則）。
+ブリックの完全な一覧は [`skills/engine/BRICKS.md`](./skills/engine/BRICKS.md) §2 が正本。flag 一覧は [`skills/engine/SKILL.md`](./skills/engine/SKILL.md) §3 が正本。README には複製しない＝`--validate` が守る目録ドリフト防止の原則。
 
 ### Codex skill として使う
 
@@ -879,7 +960,7 @@ review-gateの並列レビューを、既存のsubprocess+ThreadPoolExecutorで�
 
 ### VS Code拡張 — rig board（読み取り専用・#286）
 
-`vscode-extension/`は`.rig/runs/`のtask/gate状態を**読み取り専用**でサイドバーのTree Viewに表示する（エディタを離れず`/rig:rig board`相当を見られる）。`scripts/workbench.py`が既に書いている`task.json`/`acceptance.json`/`steps.json`をそのままパースするだけ——新しい状態管理エンジンは無く、accept/discard等の書き込みコマンドは拡張全体を通して一切登録していない。インストール手順（未公開・ソースから）と正直な検証範囲（状態パースロジックはplain Nodeでユニットテスト済み／実際のVS Code Extension Hostでの動作確認はこの環境では未検証）は`vscode-extension/README.md`参照。
+`vscode-extension/`は`.rig/runs/`のtask/gate状態を**読み取り専用**でサイドバーのTree Viewに表示する。エディタを離れず`/rig:go board`相当を見られる。`scripts/workbench.py`が既に書いている`task.json`/`acceptance.json`/`steps.json`をそのままパースするだけだ。新しい状態管理エンジンは無く、accept/discard等の書き込みコマンドは拡張全体を通して一切登録していない。インストール手順（未公開・ソースから）と正直な検証範囲は`vscode-extension/README.md`参照。内訳はこうだ。状態パースロジックはplain Nodeでユニットテスト済み、実際のVS Code Extension Hostでの動作確認はこの環境では未検証。
 
 ### プロンプト評価ゲート（`rig-wb eval`・v2.1.1）
 
@@ -935,7 +1016,7 @@ rig-wb wb digest --period week                       # テレメトリの Markdo
 pack の導入と確認は `rig-wb pack` で行う。
 
 ```bash
-rig-wb pack install domain:sales --scope project --allow-unverified
+rig-wb pack install domain:sales --scope project
 rig-wb pack list                             # 何が入っているか、出所は、検証は通ったか
 rig-wb pack verify-sources --scope project   # 宣言済み git source に紐づく pack を突き合わせ直す
 ```
@@ -964,7 +1045,7 @@ rig-wb pack knowledge --topic backup --scope product
 | オーケストレータの単体挙動（recipe 解決と trust gate・queueing・run-state・graph・CLI 表面） | `pytest -q -n auto` — `tests/` 配下のスイート。CPU 競合下でしか落ちないアサーションが落ちられるよう並列で回す。CI（`validate.yml`）が `ruff`（指摘0件）・validator・両 selftest とあわせて強制する |
 | acceptance-gate の基準、accept/discard の機構 | `scripts/workbench.py` — リリースごとに scratch git repo で検証（詳細は `CHANGELOG.md` の各エントリ） |
 | 文書化した要求と、その裏づけの対応 | `rig-wb coverage`（正本は `evals/coverage-map.json`。既定は地図とリポジトリの整合検証で CI 強制・`--run` で決定論証拠を実行） |
-| ホスト側の前提（コンテナ隔離・`permissions.deny`・実行状態の除外・`gh` の認証とトークンスコープ・インストール版 `rig-wb` がチェックアウト外から import できるか） | `rig-wb hostcheck`（検出と報告のみ。rig は強制しない——強制はホストの責務。**検証できなかった軸は OK ではなく MISS**。この環境に対象が無い軸は `applicable: false` として「満たした」ではなく「検査していない」と明示する） |
+| ホスト側の前提（コンテナ隔離・`permissions.deny`・実行状態の除外・`gh` の認証とトークンスコープ・インストール版 `rig-wb` がチェックアウト外から import できるか） | `rig-wb hostcheck`（検出と報告のみ。rig は強制しない——強制はホストの責務。**検証できなかった軸は OK ではなく MISS**。この環境に対象が無い軸は `applicable: false` として「満たした」ではなく「検査していない」と明示する。毎回走る。全文が出るのは最初の 1 回で、判定は `.rig/hostcheck.jsonl` に残る。同じリポジトリの 2 回目以降は動いた分だけ出る。全部見るなら `--full`） |
 | テストスイート側の検知力（ミューテーション） | `rig-wb mutation`（レポートの場所と形式は自分で判定する。`elements`＝Stryker / `mutmut`＝3.x の `export-cicd-stats` / `junit`＝2.x の `junitxml`。`--run` はプロジェクト側のツール実行から行う。スコアの劣化を warning-grade の基準に。ツール本体はプロジェクトが選ぶ） |
 | プロンプト面の変更と、その裏づけの承認済み評価ケース | `rig-wb eval affected --ratchet`（正本は `evals/prompt-surfaces.json` ＋ `evals/cases/`。全 PR で CI 強制——ケース未整備の面は `coverage_debt` として報告、既存カバレッジを外す変更は fail） |
 | ASVS の章と rig の検査面の対応 | `rig-wb asvs`（正本は `evals/asvs-map.json`。`--check` で参照先の実在を検証・CI 強制。**空の章＝rig では気づけない章**を明示する） |
@@ -1011,7 +1092,7 @@ rig-wb pack knowledge --topic backup --scope product
 |---|---|---|
 | `.rig/gates.json` はリポジトリ単位なので、A が足した基準は B に届かない | **policy**（`.rig/policy/*.json`） | **単調強化**——team/project 層は基準の追加・quorum の引き上げ・期限の短縮・role の絞り込みだけができ、削除・引き下げ・延長・権限追加はできない |
 | `.rig/access.json` は権限1個の名簿でしかない | **permission** | 固定11種の権限語彙を role 単位で配る。拒否は必ず「**誰が持っているか**」まで出す |
-| 「誰かがレビューした」は事後に検証できない | **approval** | quorum＋資格ロール＋**職務分離**（著者本人の承認は数えない）＋**鮮度**（承認したコミットに束縛。force push で失効） |
+| 「誰かがレビューした」は事後に検証できない | **approval** | quorum＋資格ロール＋**職務分離**（著者本人の承認は数えない）＋**鮮度**（**accept が squash する branch の先端**——main tree で解決したもの——に束縛。worktree の HEAD ではない。branch が動けばその承認は数えない）＋**台帳との突き合わせ**（`approvals.json` はただの書き込み可能なファイルなので、`approval.grant` が attest しない決定は数えない。効くのは `.rig/provenance.key` を持つリポジトリか、policy が `audit.chain_required` を立てたとき。鍵が無ければ、得られるのは耐性ではなく可視性である） |
 | `--force` の記録だけでは、承認された判断と疲れた夜の区別がつかない | **waiver** | 名前・理由・**期限**つきの例外。`non_waivable` の基準はどんな例外でも覆せない |
 | 追記型 JSONL はエディタで書き換えられる | **ledger**（`.rig/ledger.jsonl`） | ハッシュ連鎖＋HMAC 署名。編集・削除・並べ替え・偽造追記のすべてを検出 |
 | 「共通ポリシーでやっています」が主張のまま | **conformance** | リポジトリごとに9検査、チーム単位でロールアップ。中でも **force 率**が、ゲートが満たされているのか回避されているのかを分ける |
@@ -1112,6 +1193,86 @@ rig は人よりも**別のハーネス**から起動されることが増えて
 
 **これは hint です。** runtime と reviewer の選択には使ってよく、**品質ルールを分岐させることは決してありません**。あるハーネスに対してだけ緩むゲートはゲートではなく、しかも誰も見ていない場所で緩みます。ゲートや acceptance の経路がこれを読んでいないことを、テストが構造的に検査します。
 
+## 3.0.0 への移行
+
+**3.0.0 は publisher 署名の仕組みをまるごと削除しました。** `pack sign`・`pack keygen`・署名検証・
+trust root・鍵生成・失効・`cryptography` 依存、そして install 時の署名必須とその逃げ道
+`--allow-unverified` は、すべて無くなっています。
+
+### この移行はあなたに影響するか
+
+4つの状況を、推論ではなくこのブランチで実測しました。効く区別は
+**大きく失敗する**（すぐ気づく）か、**黙って動く**（何も壊れず、何も知らされない）かです。
+
+| あなたの状況 | 3.0.0 の挙動 | 大きく失敗 / 黙って動く |
+|---|---|---|
+| 署名済み pack が install 済みで、`pack.lock.json` が `verified-publisher` と publisher 2列の両方を持つ | 従来どおり解決も install もできる。status は読み戻され `pack list` / `pack info` に出続けるが、それを検証するものはもう無い | **黙って動く** |
+| lock が `verified-publisher` なのに `publisher_key_id` と `signed_digest` が null | `PackError: pack lock drift: invalid publisher trust for <id>` が**解決経路から**上がり、`pack` 系コマンドに留まらず tier 全体が落ちる。ただし **2.x はこの組み合わせを書きません**——status と2列は一緒に作られるか、どちらも作られないかのどちらかなので、この状態の lock は手で編集されたもの | **大きく失敗する** |
+| スクリプトや CI ジョブの `--allow-unverified` | exit 2、`rig-wb pack: error: unrecognized arguments: --allow-unverified` | **大きく失敗する** |
+| パイプラインの `pack sign` / `pack keygen` | exit 2、`rig-wb pack: error: argument command: invalid choice: 'sign'` | **大きく失敗する** |
+
+4つのうち3つは自分から名乗ります。名乗らない1つは、何も壊れていない場合です——pack は
+install でき、解決でき、記録したラベルを報告し続ける。だからこそ「見つけてもらう」のではなく
+ここに書いてあります。
+
+**やること。** スクリプトと CI から `--allow-unverified` を消す（「それでも install する」という
+意味の指定であり、それが今では唯一の挙動です）。`pack sign` / `pack keygen` の step を消す
+（作るものがもうありません）。`pack.lock.json` は触らなくて構いません——移行は不要です。
+
+### 新規 install が記録するもの
+
+install が書く `verification_status` は `verified-local` か `unverified` の2値で、pack 自身の
+証拠から決まります。prompt 資産を持たない pack はそれだけで `verified-local`。持つ pack が
+`verified-local` になるのは、所有する全 eval case について attest 済みの `current` 結果が
+ちょうど1本あり、その provider が `mock` / `command` ではない実 provider で、case に対する
+failure が無いときだけです。それ以外は `unverified`。3段目が無いのは、3段目が署名だったからです。
+
+`verification_status` と、受け付ける3値（`verified-publisher` を含む）と、publisher 2列は、
+**意図して** `pack.lock.json` に残してあります。解決経路は **fail-closed** です：`verified-publisher`
+を受理集合から外すと古い lock が `invalid metadata` で拒否され、2列のどちらかを落とすと
+**すべての** lock が `invalid entry` で拒否される。しかもその失敗は `pack` 系コマンドに留まらず、
+persona・recipe・wiki の解決が通る経路から出ます。死んだフィールドを3つ抱えるコストはゼロで、
+消せば pack と無関係な run で既存ユーザーが壊れます。
+
+### 何を手放したのか
+
+pack のバイトを著者に結びつけるものは、もう何もありません。その結びつきは、**最初の入手時**——
+見たことのない pack を手にして、走らせてよいか決める瞬間——に効く唯一の保護でした。ハッシュ鎖は
+その代わりにはなりません。ハッシュ鎖が証明するのは install の**あと**に何も変わっていないことで、
+問いが別だからです。最初に何を install したかについては何も言いません。失効に至っては、
+仕組みそのものが残っていません——失効させる鍵も、失効リストを参照する経路もありません。
+
+残っているものは、あった頃より少ないからこそ正確に名指しておきます。
+
+- **trust-on-first-use（初回使用時の同意）** — project / user tier の資産は、その command / recipe
+  の本文が走る前に同意される。資産ごと・tier ごと・内容ハッシュに紐づけて記録される
+  （`--allow-project-packs`、`RIG_ALLOW_PROJECT_PACKS=1`）。検証する署名ではなく、読める素材に対して
+  あなたが下す判断です
+- **ハッシュ鎖** — 各資産のハッシュを install 時に記録し解決時に再検査するので、承認したあとに
+  編集された pack は拒否される（`hash mismatch` / `lock drift`）
+- **宣言ドリフトの検証** — lock の構造・pack の同一性・manifest digest・宣言された資産ハッシュを、
+  解決のたびに構造的に検査する
+
+### そのほかの利用者から見える変更
+
+- **`rig-wb ja-lint` と `rig-wb wb scan-ja-prose` が増えました。** 前者は stdlib のみの
+  textlint-ja 相当センサーで日本語の散文を検査し、後者は acceptance gate が追加行に対して
+  見ている所見を表示します
+- **workbench の失敗は exit 1 ではなく exit 2 になりました。** `exitcodes.py` は以前から
+  `1 = rig が判定して否と言った` / `2 = rig が答えを出せなかった` と約束していましたが、
+  `wb …` の失敗はすべて 1 を返していました。実測：`wb route --type <未知>` と、壊れた
+  `.rig/gates.json` に対する `wb gates` が、いずれも 1 → 2 へ動いています。exit 1 は
+  **判定**（acceptance gate 不合格・ガバナンスのブロック・スキャナの所見）だけになりました。
+  **exit 1 を「rig が拒否した」として分岐していた CI ジョブは 2 を期待し直す必要があります。**
+  （壊れた `pack.yaml` に対する `rig-wb pack validate` は本リリース以前から exit 2 で、
+  これは動いていません）
+- **`govern policy show --json` に `schema` フィールドが増えました**（値は `rig.effective-policy/v1`）
+- **consent フラグは、本当にそのプロセス自身のオプションである場所でしか効かなくなりました。**
+  以前の判定は `"--allow-project-packs" in sys.argv` で、argv にはタスク題名・`--goal` の本文・
+  pack へ転送される引数までが載ります。`--allow-project-packs` を含むタスク題名は——裸の `--` の
+  後ろに置かれた同じフラグや、自由記述オプションの値として現れた同じフラグも——project tier の
+  資産に信頼を与えなくなりました
+
 ## ドキュメント
 
 - [`skills/engine/SKILL.md`](./skills/engine/SKILL.md) — エンジン本体（PARSE/RESOLVE/COMPOSE/RUN の全仕様・rationalization 表・red flags）
@@ -1127,6 +1288,8 @@ rig は人よりも**別のハーネス**から起動されることが増えて
 - [`docs/evaluation-cases.md`](./docs/evaluation-cases.md) — プロンプト評価ゲートの土台となる評価ケースのcapture/実行/比較/昇格の境界
 - [`docs/packs.md`](./docs/packs.md) — packの作り方（`pack.yaml`/`compatibility.yaml`）とinit/validate/doctor/install/testコマンド
 - [`docs/pack-migration.md`](./docs/pack-migration.md) — 同梱packを独自リポジトリへ切り出し、named source 経由で installし直すまでの移行手順（送り手・受け手の両側）
+- [`docs/v3-architecture-design-brief.ja.md`](./docs/v3-architecture-design-brief.ja.md) — V3 アーキテクチャ設計ブリーフ。合意済みの内部再構成（能力レジストリ・ポート化・来歴の型付け）と移行順序
+- [`docs/facet-order-measurement-plan.ja.md`](./docs/facet-order-measurement-plan.ja.md) — facet 配置順が効くのかを `/rig:drill` で測る計画。アーム・ベンチ既存の検出力法から導いたサンプルサイズ・事前宣言した帰無結果・実行を塞いでいるもの
 - [README.md](./README.md) — English version
 
 ## License

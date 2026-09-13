@@ -55,7 +55,7 @@ import sys
 
 from .injection import bounded_excerpt
 from .secrets import MAX_FILE_BYTES
-from .state import die, effective_base, git, load_task, repo_root
+from .state import die, effective_base, git, load_task, record_sensor_status, repo_root
 
 # ── extraction ────────────────────────────────────────────────────────────────
 # A backticked span holding nothing but `path:line` or `path:start-end`. The
@@ -550,10 +550,12 @@ def format_skipped(skipped: list[dict]) -> list[str]:
 
 # ── the sensor (called from cmd_gate) ─────────────────────────────────────────
 _SENSOR_DETAIL_PREFIX = "(anchor sensor)"
+#: config.WRITER_OPERATOR's counterpart: this sensor as the writer of a status.
+WRITER = "anchor-sensor"
 
 
-def apply_anchor_sensor(root: pathlib.Path, run_d: pathlib.Path, task: dict, acc: dict,
-                        explicit_set: set[str] | frozenset[str] = frozenset()) -> list[str]:
+def apply_anchor_sensor(root: pathlib.Path, run_d: pathlib.Path, task: dict,
+                       acc: dict) -> list[str]:
     """Machine-back `evidence_anchors_resolve` with the task's own review bodies.
 
     Mutates `acc` in place (caller persists it) and returns printable notes.
@@ -569,11 +571,10 @@ def apply_anchor_sensor(root: pathlib.Path, run_d: pathlib.Path, task: dict, acc
     could not locate, and bodies with no anchor at all — → **warning**, matching
     `apply_injection_sensor`: a warning-grade-only result annotates the criterion
     and never fails it. Warning never overrides an explicit failed. Findings are
-    recorded on the check
-    under "anchor_findings". Escape hatch: an explicit
-    `--set evidence_anchors_resolve=passed` in the current invocation is
-    respected and recorded as anchor_override=True, sticky across later
-    evaluations.
+    recorded on the check under "anchor_findings". The scan is the verdict, and
+    it is written over whatever the gate's `--set` put there; `cmd_gate` refuses
+    an invocation whose hand-written status this contradicts rather than
+    recording either one (lifecycle.sensor_contradictions).
     """
     check = next((c for c in acc.get("checks", []) if c["name"] == SENSOR_CRITERION), None)
     # The one silence kept on purpose: without the criterion the project has not
@@ -613,11 +614,9 @@ def apply_anchor_sensor(root: pathlib.Path, run_d: pathlib.Path, task: dict, acc
         # state; un-flag only what WE flagged.
         notes = [f"{_SENSOR_DETAIL_PREFIX} {scan.summary()}"]
         if check.pop("anchor_findings", None) is not None:
-            check.pop("anchor_override", None)
             if check["status"] in ("failed", "warning") and \
                     str(check.get("detail", "")).startswith(_SENSOR_DETAIL_PREFIX):
-                check["status"] = "pending"
-                check["detail"] = ""
+                record_sensor_status(check, "pending", "", WRITER)
                 notes.append(f"{_SENSOR_DETAIL_PREFIX} previously reported evidence-anchor "
                              f"findings are no longer present → "
                              f"{SENSOR_CRITERION} reset to pending")
@@ -625,25 +624,15 @@ def apply_anchor_sensor(root: pathlib.Path, run_d: pathlib.Path, task: dict, acc
 
     lines = format_findings(scan.findings)
     check["anchor_findings"] = lines
-    n = len(scan.findings)
     n_fail = sum(1 for f in scan.findings if f["grade"] == "fail")
     what = _describe(scan.findings)
     notes: list[str] = []
-    if SENSOR_CRITERION in explicit_set and check["status"] == "passed":
-        check["anchor_override"] = True
-        if str(check.get("detail", "")).startswith(_SENSOR_DETAIL_PREFIX):
-            check["detail"] = (f"{_SENSOR_DETAIL_PREFIX} {n} finding(s) manually overridden "
-                               "after review (anchor_override)")
-        notes.append(f"{_SENSOR_DETAIL_PREFIX} {what} still present, but "
-                     f"{SENSOR_CRITERION} was explicitly set to passed — manual override recorded:")
-    elif check.get("anchor_override") and check["status"] == "passed":
-        notes.append(f"{_SENSOR_DETAIL_PREFIX} {what} present — "
-                     "manual override previously recorded, keeping passed:")
-    elif n_fail:
-        check["status"] = "failed"
-        check["detail"] = (f"{_SENSOR_DETAIL_PREFIX} {n_fail} evidence anchor(s) point at a line "
-                           f"that cannot exist — correct them, or after review override with "
-                           f"--set {SENSOR_CRITERION}=passed")
+    if n_fail:
+        record_sensor_status(
+            check, "failed",
+            f"{_SENSOR_DETAIL_PREFIX} {n_fail} evidence anchor(s) point at a line that cannot "
+            f"exist — correct them; a reviewed finding is carried by `accept --force`, which "
+            f"records the bypass", WRITER)
         notes.append(f"{_SENSOR_DETAIL_PREFIX} {what} "
                      f"({n_fail} fail-grade) → {SENSOR_CRITERION} failed:")
     else:
@@ -651,10 +640,11 @@ def apply_anchor_sensor(root: pathlib.Path, run_d: pathlib.Path, task: dict, acc
         # convention for its phrase findings (injection.py:281-288).
         soft = _describe(scan.findings, "evidence anchor(s) that could not be located")
         if check["status"] in ("pending", "passed", "warning"):
-            check["status"] = "warning"
-            if not check.get("detail") or str(check["detail"]).startswith(_SENSOR_DETAIL_PREFIX):
-                check["detail"] = (f"{_SENSOR_DETAIL_PREFIX} {soft} — review them "
-                                   f"(override with --set {SENSOR_CRITERION}=passed)")
+            # The detail goes with the status (see hardening.py): the sensor owns both.
+            record_sensor_status(
+                check, "warning",
+                f"{_SENSOR_DETAIL_PREFIX} {soft} — review them "
+                f"(a warning never blocks accept)", WRITER)
         notes.append(f"{_SENSOR_DETAIL_PREFIX} {soft} → "
                      f"{SENSOR_CRITERION} recorded as warning:")
     notes.extend(f"  {ln}" for ln in lines)

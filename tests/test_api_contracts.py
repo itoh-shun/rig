@@ -7,6 +7,8 @@ import sys
 
 from rig_workbench.orchestrate import config, queueing, runstate
 
+from conftest import pin_runs_path
+
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 
@@ -18,7 +20,7 @@ def test_queue_set_status_reports_unknown_id(tmp_queue):
 
 
 def test_telemetry_global_mirror_is_rebindable(tmp_path, monkeypatch):
-    monkeypatch.setattr(config, "RUNS_PATH", tmp_path / "local" / "runs.jsonl")
+    pin_runs_path(monkeypatch, tmp_path / "local" / "runs.jsonl")
     monkeypatch.setattr(config, "GLOBAL_RUNS_PATH", tmp_path / "global" / "runs.jsonl")
     state = {"recipe": "r", "steps": [], "step_state": {}}
     runstate.telemetry_append(state, "DONE")

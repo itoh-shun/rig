@@ -2,15 +2,21 @@
 
 import os
 import json
-import datetime
 import pathlib
 import hashlib
 import re
 import secrets
 import stat
 
+from typing import Protocol
+
+from ..ports import Clock, Env, FileStore
+from ..ports.local import LOCAL_FILES, OS_ENV, SYSTEM_CLOCK
 from . import config
+from .composition import japanese_material_metadata
 from .gates import is_runtime_gate, validate_executable_steps
+from .govern_surfaces import GOVERN_SURFACES
+from .pack_surfaces import PACK_SURFACES
 from .secure_runtime import JAPANESE_WRITING_RECIPES
 from .secure_fs import atomic_append_line, atomic_write_bytes, read_bytes as read_secure_bytes
 
@@ -36,9 +42,17 @@ from .secure_fs import atomic_append_line, atomic_write_bytes, read_bytes as rea
 RUN_ID_RE = re.compile(r"^orc-\d{8}-\d{6}-[a-z0-9-]{1,32}-[0-9a-f]{6}$")
 
 
-def make_run_id(recipe: str) -> str:
-    """A stable, sortable, collision-resistant id for one orchestrate run."""
-    stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+def make_run_id(recipe: str, *, clock: Clock = SYSTEM_CLOCK) -> str:
+    """A stable, sortable, collision-resistant id for one orchestrate run.
+
+    The clock is asked for the moment and the format is applied here. `Clock.stamp()` is
+    the other way round and is the right shape for a record; this is a filename-safe,
+    fixed-width prefix whose only job is to sort, so a `strftime` wrapper on the port
+    would be a second formatting decision living where the first one already is. What
+    makes the id collision-resistant is `secrets.token_hex(3)`, not the clock — which is
+    why a substituted clock can be frozen here without two runs colliding.
+    """
+    stamp = clock.now().strftime("%Y%m%d-%H%M%S")
     words = re.findall(r"[A-Za-z0-9]+", recipe or "")
     slug = "-".join(word.lower() for word in words)[:32].strip("-") or "run"
     return f"orc-{stamp}-{slug}-{secrets.token_hex(3)}"
@@ -122,12 +136,67 @@ def enforce_executable_state(state: dict) -> dict:
     }
     return execution
 
-# ── run-state ────────────────────────────────────────────────────────────────
-def _recipe_owner_provenance(source: str) -> dict | None:
-    """Resolve an installed recipe source to its validated owner identity."""
-    from rig_workbench.packs.catalog import discover_builtin_packs
-    from rig_workbench.packs.resolver import resolved_collection
+class PackProvenance(Protocol):
+    """What this module needs of the pack machinery: which packs are installed.
 
+    A resumed run checks that the recipe it is resuming still belongs to the pack that
+    owned it when it started, and "which pack owns this path" is answered by the one
+    validated, dependency-ordered collection `packs.resolver` builds plus the bundled packs
+    `packs.catalog` discovers. Walking the tiers here instead would give the integrity check
+    its own view of what is installed — a check that disagrees with the resolver it is
+    meant to protect.
+
+    Stated as a protocol rather than imported, because the import is what
+    `tests/test_layering_contract.py` forbids: a judgement module may reach the standard
+    library, its own pillar and the six ports, and `packs.resolver` and `packs.catalog` are
+    neither. They were reached from inside a function body here, which hid the edges rather
+    than removing them. `pack_surfaces.PACK_SURFACES` satisfies this shape and is what every
+    shipped caller passes.
+    """
+
+    def installed(self, *, project=..., shared=...) -> list:
+        """The one validated, dependency-ordered collection of installed packs."""
+        ...
+
+    def builtin(self) -> dict:
+        """The bundled packs, keyed `(namespace, pack_id)`, with the core ids applied."""
+        ...
+
+
+class StepGovernance(Protocol):
+    """What this module needs of the governance layer, step by step.
+
+    Two questions. Has the human gate on this step been satisfied, and who is running it.
+    Neither is the runner's arithmetic: quorum, qualifying roles, separation of duties and
+    freshness are `govern.approval`'s, the org→team→project tightening is `govern.policy`'s,
+    and what counts as an identity is `govern.identity`'s. The runner decides *when* to ask
+    and what to do with the answer, which is the part that stays here.
+
+    Stated as a protocol rather than imported, because the import is what
+    `tests/test_layering_contract.py` forbids: a judgement module may reach the standard
+    library, its own pillar and the six ports, and `govern.policy`, `govern.stage` and
+    `govern.identity` are none of those. They were reached from inside two function bodies
+    here, which hid the edges rather than removing them. `govern_surfaces.GOVERN_SURFACES`
+    satisfies this shape and is what every shipped caller passes.
+
+    The status object crosses opaquely: `compute_next` reads `satisfied`, `denials` and
+    `lines()` off it, and never builds one.
+    """
+
+    def stage_status(self, root: pathlib.Path, step: dict, decisions: list[dict], *,
+                     author: str = ...):
+        """This step's human-gate status, or None when nothing gates it."""
+        ...
+
+    def actor_for(self, root: pathlib.Path, step: dict) -> tuple[str, str | None] | None:
+        """`(actor, advisory note)` for a step that needs an identity, or None."""
+        ...
+
+
+# ── run-state ────────────────────────────────────────────────────────────────
+def _recipe_owner_provenance(source: str, *,
+                             assets: PackProvenance = PACK_SURFACES) -> dict | None:
+    """Resolve an installed recipe source to its validated owner identity."""
     try:
         source_path = pathlib.Path(source).resolve(strict=True)
     except OSError:
@@ -139,12 +208,12 @@ def _recipe_owner_provenance(source: str) -> dict | None:
         # no provenance — and the resume-time integrity check has nothing to compare
         # against. It worked from the main checkout and would have stopped working the
         # moment a run started anywhere else.
-        for record in resolved_collection(project=config.INVOCATION_CWD,
-                                          shared=config.STATE_ROOT)
+        for record in assets.installed(project=config.INVOCATION_CWD,
+                                       shared=config.STATE_ROOT)
     ]
     candidates.extend(
         (pack_id, root, manifest)
-        for (_namespace, pack_id), (root, manifest) in discover_builtin_packs().items()
+        for (_namespace, pack_id), (root, manifest) in assets.builtin().items()
     )
     for owner, root, manifest in candidates:
         root = root.resolve()
@@ -327,7 +396,8 @@ def classify_failure(state: dict) -> str | None:
     return "unclassified"
 
 
-def telemetry_append(state: dict, final: str, *, caller_record: dict | None = None) -> None:
+def telemetry_append(state: dict, final: str, *, caller_record: dict | None = None,
+                     env: Env = OS_ENV, clock: Clock = SYSTEM_CLOCK) -> None:
     """Append a one-line JSON summary of a single RUN to .rig/runs.jsonl (run telemetry).
 
     An execution log on par with run-state.json, not the knowledge layer (no approval needed;
@@ -357,14 +427,14 @@ def telemetry_append(state: dict, final: str, *, caller_record: dict | None = No
                     {k: v for k, v in h.items() if k not in ("action", "step")} |
                     {"kind": "refusal" if h["action"] == "FABLE_REFUSAL" else "fallback"})  # #297
         rec = {
-            "ts": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+            "ts": clock.stamp(),
             # Absent, not null, for a state written before run ids existed: this log is read
             # by aggregation that treats a present key as a measured fact, and `None` would
             # claim the run was identified as nothing.
             **({"run_id": state["run_id"]} if state.get("run_id") else {}),
             "recipe": state["recipe"],
             "backend": "orchestrate",
-            "invoker": os.environ.get("RIG_INVOKER") or "direct",
+            "invoker": env.get("RIG_INVOKER") or "direct",
             # Who invoked rig, alongside `invoker`, which is what launched the process — the
             # two answer different questions once another agent is the one typing. Absent
             # when nothing identifies a caller, same rule as `run_id` and `perf` above. The
@@ -413,7 +483,8 @@ def telemetry_append(state: dict, final: str, *, caller_record: dict | None = No
 def append_run_record(rec: dict, *, secure: bool = False,
                       secure_history_path: str | None = None,
                       runs_path: pathlib.Path | None = None,
-                      project: pathlib.Path | None = None) -> None:
+                      project: pathlib.Path | None = None,
+                      files: FileStore = LOCAL_FILES) -> None:
     """Append one finished telemetry record to `.rig/runs.jsonl`, then mirror it into the
     global index (`~/.rig/runs.jsonl`) with `project` attached for cross-project rollups.
 
@@ -430,15 +501,20 @@ def append_run_record(rec: dict, *, secure: bool = False,
     """
     target = runs_path or config.RUNS_PATH
     try:
-        encoded = (json.dumps(rec, ensure_ascii=False) + "\n").encode("utf-8")
+        line = json.dumps(rec, ensure_ascii=False)
         if secure:
             if not isinstance(secure_history_path, str):
                 raise OSError("secure runtime history path is missing")
-            atomic_append_line(pathlib.Path(secure_history_path), encoded)
+            # Still `secure_fs`, not the port's plain append: a secure run's history is
+            # 0600 in a 0700 directory and `FileStore.append_line` promises neither. The
+            # port's `append_secret_line` is that contract, and this call is what it wraps;
+            # reaching it through the port here would add a hop and no guarantee.
+            atomic_append_line(pathlib.Path(secure_history_path),
+                               (line + "\n").encode("utf-8"))
         else:
-            target.parent.mkdir(parents=True, exist_ok=True)
-            with target.open("a", encoding="utf-8") as f:
-                f.write(encoded.decode("utf-8"))
+            # `mkdir(parents=True, exist_ok=True)` then append then newline is exactly what
+            # `FileStore.append_line` is, down to the order.
+            files.append_line(target, line)
     except Exception:
         pass
 
@@ -449,12 +525,10 @@ def append_run_record(rec: dict, *, secure: bool = False,
     # how much rig-wb is used overall. The `project` field preserves provenance.
     # Write failures are swallowed (best-effort; the cwd-side record is primary).
     try:
-        global_path = config.GLOBAL_RUNS_PATH
-        global_path.parent.mkdir(parents=True, exist_ok=True)
         global_rec = dict(rec)
         global_rec["project"] = str(project or config.INVOCATION_CWD)
-        with global_path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(global_rec, ensure_ascii=False) + "\n")
+        files.append_line(config.GLOBAL_RUNS_PATH,
+                          json.dumps(global_rec, ensure_ascii=False))
     except Exception:
         pass
 
@@ -548,7 +622,6 @@ def _validate_secure_material_profile_binding(state: dict) -> None:
     if write is None:
         raise OSError("secure Japanese material profile binding has no write step")
     try:
-        from .providers import japanese_material_metadata
         expected = japanese_material_metadata(write, profile)
     except Exception as error:
         raise OSError(
@@ -720,7 +793,8 @@ def govern_root() -> pathlib.Path:
     return cwd
 
 
-def stage_gate_status(step: dict, st: dict):
+def stage_gate_status(step: dict, st: dict, *,
+                      governance: StepGovernance = GOVERN_SURFACES):
     """This step's human-gate status, or None when it has no human gate (v2.1).
 
     Resolved live against the effective policy rather than baked into the
@@ -729,44 +803,35 @@ def stage_gate_status(step: dict, st: dict):
 
     A policy that fails to load is *not* treated as "no gate" — that would let a
     broken document silently open a stage. It raises, and the caller surfaces it.
+    The packaging guard that used to sit here — an install without the governance
+    pillar answers "no gate" — moved into the adapter with the import it guarded.
     """
-    try:
-        from ..govern.policy import effective_policy
-        from ..govern.stage import evaluate_stage
-    except ImportError:                                    # pragma: no cover - packaging guard
-        return None
-    eff = effective_policy(govern_root())
-    return evaluate_stage(eff, step, st.get("approvals") or [],
-                          author=st.get("ran_as") or "")
+    return governance.stage_status(govern_root(), step, st.get("approvals") or [],
+                                   author=st.get("ran_as") or "")
 
 
-def _record_actor(step: dict, st: dict) -> tuple[str | None, str | None]:
+def _record_actor(step: dict, st: dict, *,
+                  governance: StepGovernance = GOVERN_SURFACES,
+                  ) -> tuple[str | None, str | None]:
     """Stamp the running identity onto the step. Returns (blocking reason, advisory note).
 
     `ran_as` is what separation of duties compares an approver against, so it has
     to be recorded when the work happens, not when the approval arrives. A broken
     policy blocks (the same fail-closed rule as accept); an execution that does not
     hold the step's owning role only warns — see govern.stage.actor_mismatch.
+
+    Both the cheap exit and the packaging guard live behind `actor_for`, which answers
+    None for either: this step asks for no identity, or the governance pillar is not
+    installed. The order those two are checked in is a cost decision (resolving an identity
+    shells out to `git config`) and it is stated where the calls are.
     """
     try:
-        from ..govern.identity import current_actor, org_binding_path
-        from ..govern.policy import effective_policy
-        from ..govern.stage import actor_mismatch
-    except ImportError:                                    # pragma: no cover - packaging guard
-        return None, None
-    root = govern_root()
-    # Cheap exit for the overwhelmingly common case. Resolving an identity shells
-    # out to `git config`, and doing that at every step START of every run — in
-    # repositories with no policy and no step that declares an owner — would be a
-    # subprocess per step to record a value nothing reads.
-    if not (step.get("actor") or step.get("human_gate") or org_binding_path(root).is_file()):
-        return None, None
-    try:
-        actor = current_actor(root)
-        eff = effective_policy(root)
-        note = actor_mismatch(eff, step, actor)
+        answer = governance.actor_for(govern_root(), step)
     except Exception as e:
         return f"step `{step.get('id')}`: governance cannot be evaluated: {e}", None
+    if answer is None:
+        return None, None
+    actor, note = answer
     st["ran_as"] = actor
     return None, note
 

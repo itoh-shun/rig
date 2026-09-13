@@ -11,6 +11,10 @@ steps:
       - "security / design / test / behavioral-correctness の4観点すべてが判定済み"
       - "各 REJECT / 条件付き承認に「どのファイルの何を、なぜ、どう直すか」が分かる粒度"
       - "総合 verdict（APPROVE / APPROVE_WITH_CONDITIONS / REJECT）が出ている"
+    acceptance_binding:
+      - unobserved
+      - findings_are_concrete
+      - unobserved
     personas: [security-reviewer, design-reviewer, test-reviewer, behavioral-correctness-reviewer]
     policies: [pre-push-review]
     output_contract: review-verdict

@@ -32,6 +32,9 @@ import subprocess
 import threading
 import uuid
 
+from ..ports import ProcessRunner
+from ..ports.local import SUBPROCESS
+
 #: provider -> the flags it would use, if its own `--help` confirms them. Only providers whose
 #: session flags are documented somewhere this repository can point at: `claude` (verified
 #: against the shipped CLI) and `grok` (docs.x.ai/build/cli/headless-scripting, recorded on
@@ -50,7 +53,8 @@ PROBE_TIMEOUT = 10.0
 _LOCK = threading.Lock()
 
 
-def supports(provider: str, cfg: dict | None = None) -> tuple[bool, str]:
+def supports(provider: str, cfg: dict | None = None, *,
+             proc: ProcessRunner = SUBPROCESS) -> tuple[bool, str]:
     """Does this provider's CLI advertise the flags reuse needs? (supported, reason).
 
     Asks the tool. `--help` is read once per process and cached, because a run makes many
@@ -68,8 +72,7 @@ def supports(provider: str, cfg: dict | None = None) -> tuple[bool, str]:
         if provider in cache:
             return cache[provider]
     try:
-        completed = subprocess.run([provider, "--help"], capture_output=True, text=True,
-                                   timeout=PROBE_TIMEOUT)
+        completed = proc.run([provider, "--help"], timeout=PROBE_TIMEOUT)
     except FileNotFoundError:
         answer = (False, f"{provider} not found on PATH")
     except (subprocess.SubprocessError, OSError) as error:

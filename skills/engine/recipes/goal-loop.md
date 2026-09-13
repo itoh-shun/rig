@@ -11,6 +11,10 @@ steps:
       - "ゴールから導出した受け入れ基準（goal-loop ①）をすべて満たす"
       - "各周回で gap が縮む（進捗が観測できる）"
       - "未達かつ進捗ゼロの周回が2回続いたら停止しユーザーへエスカレーション（無限ループ禁止）"
+    acceptance_binding:
+      - unobserved
+      - unobserved
+      - unobserved
     personas: [goal-driver, orchestrator]
     policies: [branch-strategy, pr-hygiene, independent-verification]
 autonomy: interactive

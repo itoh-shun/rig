@@ -27,6 +27,7 @@ from rig_workbench.packs.cli import init_pack
 from rig_workbench.packs.model import PackError
 from rig_workbench.packs.sync import sync_manifest
 from rig_workbench.packs.validation import validate_pack
+from rig_workbench.packs.resolver import core_reference_ids
 
 PERSONA = ("---\nname: demo-reviewer\ndescription: A demonstration reviewer.\n---\n\n"
            "# persona: demo-reviewer\n\nYou review a scenario and say whether it is correct.\n")
@@ -69,7 +70,7 @@ def test_a_prompt_bearing_pack_without_a_case_is_still_refused_by_default(tmp_pa
     """The rule is not weakened. Every caller that reaches a user — install, publish, invoke,
     plain `validate` — keeps requiring the approved case."""
     with pytest.raises(PackError, match="requires at least one evaluation case"):
-        validate_pack(_prompt_pack(tmp_path))
+        validate_pack(_prompt_pack(tmp_path), core_ids=core_reference_ids())
 
 
 def test_the_bootstrap_drops_that_rule_and_keeps_every_other(tmp_path):
@@ -78,11 +79,11 @@ def test_the_bootstrap_drops_that_rule_and_keeps_every_other(tmp_path):
     measure something that could never ship."""
     pack = _prompt_pack(tmp_path)
 
-    assert validate_pack(pack, require_evaluation=False)["id"] == "demo-pack"
+    assert validate_pack(pack, require_evaluation=False, core_ids=core_reference_ids())["id"] == "demo-pack"
 
     (pack / "facets/personas/undeclared.md").write_text(PERSONA, encoding="utf-8")
     with pytest.raises(PackError, match="drift"):
-        validate_pack(pack, require_evaluation=False)
+        validate_pack(pack, require_evaluation=False, core_ids=core_reference_ids())
 
 
 def test_entrypoint_coverage_is_relaxed_by_the_same_flag_and_only_it(tmp_path):
@@ -105,8 +106,8 @@ def test_entrypoint_coverage_is_relaxed_by_the_same_flag_and_only_it(tmp_path):
     (pack / "pack.yaml").write_text(canonical(manifest), encoding="utf-8")
 
     with pytest.raises(PackError, match="evaluation case|evaluation coverage"):
-        validate_pack(pack)
-    assert validate_pack(pack, require_evaluation=False)["id"] == "entry-pack"
+        validate_pack(pack, core_ids=core_reference_ids())
+    assert validate_pack(pack, require_evaluation=False, core_ids=core_reference_ids())["id"] == "entry-pack"
 
 
 def test_a_draft_must_be_bound_to_surfaces_the_pack_owns(tmp_path):
@@ -115,7 +116,7 @@ def test_a_draft_must_be_bound_to_surfaces_the_pack_owns(tmp_path):
     from rig_workbench.packs.tester import _cases_to_run
 
     pack = _prompt_pack(tmp_path)
-    manifest = validate_pack(pack, require_evaluation=False)
+    manifest = validate_pack(pack, require_evaluation=False, core_ids=core_reference_ids())
     project = tmp_path / "project"
     _write_draft(project, "foreign", surfaces=["persona:somebody-elses-reviewer"])
 
@@ -130,7 +131,7 @@ def test_an_approved_case_is_not_a_draft(tmp_path):
     from rig_workbench.packs.tester import _cases_to_run
 
     pack = _prompt_pack(tmp_path)
-    manifest = validate_pack(pack, require_evaluation=False)
+    manifest = validate_pack(pack, require_evaluation=False, core_ids=core_reference_ids())
     project = tmp_path / "project"
     _write_draft(project, "already", status="approved",
                  surfaces=["persona:demo-reviewer"])

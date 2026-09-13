@@ -24,7 +24,7 @@
    rig-wb govern policy lint              # 層が上位を緩めていないか（exit 3 = 緩めている）
    rig-wb govern conformance --json       # 1リポジトリの適合性（exit 3 = FAIL あり）
    rig-wb govern rollup --scan <dir> --json   # チーム横断（team A/B/C → 共通ポリシー の表）
-   rig-wb govern audit verify             # 台帳の連鎖検証（exit 3 = 改竄検出）
+   rig-wb govern audit verify             # 台帳の連鎖検証（`--verify` も同じ。exit 3 = 改竄検出）
    ```
 4. **乖離出し** — 数字を一次資料に、重い順で（`ポリシー未到達 > 台帳破損 > force 率 > 承認の形骸化 > 例外の恒久化 > 権限の集中/空 > 二重管理`）。**印象で採点しない**。
 5. **手を出す** — 各乖離に「ポリシー改定 / 権限再配分 / 基準の現実化 / 例外の昇格」のいずれか。**quorum を上げる提案はしない**（効くのは職務分離と鮮度）。
@@ -70,5 +70,5 @@ steps:
 ガバナンスは開発フローの外側ではなく、**accept の内側**にある。`/rig:go` の accept は、ポリシーがあれば①accept 権限 ②承認 quorum（職務分離・鮮度つき）③force 権限 ④例外の有効性 を通ってから squash merge に入る。したがって：
 
 - 「accept できない」と言われたら、まず `rig-wb govern whoami` と `rig-wb govern approve status <task-id>` を読む（権限か承認かで手が違う）。
-- 承認は `rig-wb govern approve grant <task-id>`（**著者本人の承認は数えない**・ブランチが動くと失効）。
+- 承認は `rig-wb govern approve grant <task-id>`（**著者本人の承認は数えない**）。束縛先は **accept が squash する branch の先端**であり、worktree の HEAD ではない。worktree を承認済みコミットに detach したまま branch を動かしても、その承認は数えない。
 - `--force` が要るときは、例外を先に取る（`rig-wb govern waiver grant`）。**理由と期限が必須**＝恒久例外はポリシー改定として扱う。

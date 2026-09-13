@@ -261,7 +261,7 @@ def test_official_install_route_remove_lifecycle(tmp_path, monkeypatch):
 
     assert resolve_task_route("design", {}, project)["status"] == "degraded"
     installed = install_pack(
-        "official:design", scope="project", project=project, allow_unverified=True,
+        "official:design", scope="project", project=project,
     )
     assert installed.path.is_dir()
     route = resolve_task_route("design", {}, project)
@@ -291,12 +291,17 @@ def test_malformed_local_manifest_is_deterministic_json_error_without_task_write
         )
         with pytest.raises(SystemExit) as stopped:
             cli.main()
-        assert stopped.value.code == 1
+        # 2: a manifest that will not parse is rig unable to route, not rig routing and
+        # refusing. 1 is reserved for a verdict (`rig_workbench.exitcodes`).
+        assert stopped.value.code == 2
         outputs.append(capsys.readouterr().out)
     assert outputs[0] == outputs[1]
     assert json.loads(outputs[0])["status"] == "error"
     assert not (project / ".rig/runs").exists()
-    assert not (project / ".gitignore").exists()
+    # `route` is read-only, so it never reaches the `.gitignore` consent step at all. The
+    # file's absence would say the same thing about a `route` that had been deleted; the
+    # silence is what distinguishes them.
+    assert ".gitignore" not in outputs[0], outputs[0]
 
     args = argparse.Namespace(
         input="feature", type="feature", slug=None, base=None, recipe=None,
@@ -306,4 +311,6 @@ def test_malformed_local_manifest_is_deterministic_json_error_without_task_write
     with pytest.raises(SystemExit):
         lifecycle.cmd_new(args)
     assert not (project / ".rig/runs").exists()
-    assert not (project / ".gitignore").exists()
+    # Same reasoning as above: a malformed manifest stops `new` in `resolve_task_route`,
+    # which is before the consent step, so nothing has been said about `.gitignore` either.
+    assert ".gitignore" not in capsys.readouterr().out

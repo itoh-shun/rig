@@ -627,10 +627,10 @@ rig-wb pack outdated       # 各ソースに publish 状況を問い合わせる
     <ul class="list">
       <li><span class="list__term">valid は「完成」ではありません</span>空の pack も valid になります。<code>doctor</code> の <code>empty_pack</code> 警告を見てください。<code>doctor</code> は警告では exit 0 を返します。failed だけがエラーです。</li>
       <li><span class="list__term">pack.yaml は手で書きません</span>正準形とバイト単位で比較されるので、手書きは「たまたま一致する」か「間違っている」かのどちらかにしかなりません。<code>pack sync</code> に書かせてください。</li>
-      <li><span class="list__term">署名した pack は sync できません</span>マニフェストを書き換えると署名が無効になります。署名を外し、sync してから、鍵で署名し直してください。</li>
+      <li><span class="list__term">署名した pack は sync できません</span>マニフェストを書き換えると署名が無効になります。署名を外してから sync してください。rig は署名を読みますが、もう作りません。</li>
       <li><span class="list__term">install しただけではコマンドになりません</span>command アセットは、明示登録を扱えるホスト向けの資料です。install が自動でスラッシュコマンドを生やすことはありません。</li>
       <li><span class="list__term">project pack は初回に同意が要ります</span>内容を確認し、<code>RIG_ALLOW_PROJECT_PACKS=1</code> で asset trust を記録してから使います。同意は内容ハッシュに紐づくので、アセットが変われば再同意になります。</li>
-      <li><span class="list__term">user / org スコープは品質検証を回避できません</span><code>--allow-unverified</code> が使えるのは project スコープだけです。その場合も lock に <code>verification_status: unverified</code> が残ります。</li>
+      <li><span class="list__term">install は署名を要求しません</span>どのスコープでも要求しませんが、検証はします。結果は lock に <code>verification_status</code>（<code>verified-publisher</code> / <code>verified-local</code> / <code>unverified</code>）として残ります。</li>
       <li><span class="list__term">mock は品質の証拠になりません</span><code>--provider mock</code> の結果は <code>non_quality_mock</code> と明示的に報告されます。配線の確認にはなりますが、品質の裏づけにはなりません。</li>
       <li><span class="list__term">digest は「誰が」を答えません</span>ハッシュが保証するのは、同じバイト列であることだけです。出所を答えるのは署名と trust root であって、private リポジトリであることは、どちらの代わりにもなりません。</li>
     </ul>

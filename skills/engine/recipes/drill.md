@@ -9,6 +9,9 @@ steps:
     acceptance:
       - "答案キー（種の file:line・class）と全 reviewer の verdict を突き合わせたスコアボードが出力される"
       - "一時 worktree/scratch が破棄され、本物のコードベース・履歴が汚れていない"
+    acceptance_binding:
+      - unobserved
+      - unobserved
     gate: acceptance-gate
 autonomy: interactive
 ---

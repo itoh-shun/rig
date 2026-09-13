@@ -10,6 +10,8 @@ import pathlib
 import re
 import tempfile
 
+from ..ports import Clock
+from ..ports.local import SYSTEM_CLOCK
 from .cases import EvalCaseError, canonical_json, validate_case
 from .safety import unsafe_text_reason
 
@@ -39,10 +41,16 @@ def _safe_summary(value: object, fallback: str) -> str:
     return text
 
 
-def _now_iso(now: str | None) -> str:
+def _now_iso(now: str | None, *, clock: Clock = SYSTEM_CLOCK) -> str:
+    """The moment a draft was captured, in UTC, as every eval record spells a time.
+
+    `Clock.now()` carries the local offset, so it is converted rather than re-read:
+    `astimezone` on an aware moment changes the rendering and not the instant, which is
+    what keeps this stamp comparable with the ones already written into results.
+    """
     if now is not None:
         return now
-    return dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
+    return clock.now().astimezone(dt.timezone.utc).isoformat(timespec="seconds")
 
 
 def capture_case(
@@ -51,6 +59,7 @@ def capture_case(
     *,
     now: str | None = None,
     allow_nonincident: bool = False,
+    clock: Clock = SYSTEM_CLOCK,
 ) -> tuple[pathlib.Path, dict]:
     try:
         root = pathlib.Path(repo).resolve()
@@ -140,7 +149,7 @@ def capture_case(
     else:
         summary = fallback
 
-    captured_at = _now_iso(now)
+    captured_at = _now_iso(now, clock=clock)
     case = {
         "case_schema_version": 1,
         "id": task_id,

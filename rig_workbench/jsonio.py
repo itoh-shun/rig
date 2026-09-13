@@ -57,6 +57,16 @@ ENVELOPED = frozenset({"wb gates"})
 #: Commands whose `--json` predates the envelope and still emits its own shape.
 #: These have consumers; each comes off this list when its consumers move, not
 #: before. The list is inventory, not permission — the suite caps its size.
+#:
+#: Being listed here says the output is not wrapped in `{schema, status, data}`. It
+#: does not say the output is anonymous: a legacy shape may still carry a top-level
+#: `schema` naming itself, and several do (`mission-control`, and `govern policy
+#: show --json`, which stamps `govern.policy.EFFECTIVE_SCHEMA`). That is the cheap
+#: half of the contract — a consumer can refuse a version it does not know — and it
+#: is available without moving a single existing key, so an entry can take it long
+#: before its consumers are ready for the envelope. An entry leaves this list only
+#: when its keys actually move under `data`; a command group is one entry, so
+#: `govern` stays until every `govern --json` moves together.
 LEGACY = frozenset({
     "wb log", "wb board", "wb route", "wb status", "coverage", "asvs",
     "eval affected", "mission-control", "govern", "evidence", "orchestrate plan",

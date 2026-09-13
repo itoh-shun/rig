@@ -8,6 +8,7 @@ steps:
     pattern: parallel-fanout
     gate: acceptance-gate
     acceptance: ["AI-slop（自明コメント / 過剰防御 / 汎用命名 / 過抽象 / dead code）の指摘が無い", "人間可読性に REJECT が無い"]
+    acceptance_binding: [unobserved, unobserved]
     personas: [lazy-senior, cognitive-economist]
     output_contract: review-verdict
 autonomy: interactive

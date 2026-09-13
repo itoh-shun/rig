@@ -8,6 +8,7 @@ that the evidence describes *this* tree. These tests pin what that check refuses
 """
 
 import copy
+import datetime as dt
 import hashlib
 import json
 import os
@@ -17,8 +18,39 @@ import subprocess
 
 import pytest
 
+from rig_workbench.eval.compare import MAX_RESULT_AGE
+
 from test_eval_cases import valid_case
 
+
+#: The clock every `started_at` below is measured from, read at import rather than written
+#: down. `validate_result` compares a result's `started_at` against the real current time
+#: and refuses anything older than `MAX_RESULT_AGE`, so a literal date does not describe a
+#: scenario — it sets an expiry. The `2026-08-11` literals these replace reached theirs on
+#: 2026-09-10, half an hour apart, and took two of the tests below down with them; the same
+#: rot cost `test_eval_runner` three tests a week earlier (#584).
+NOW = dt.datetime.now(dt.timezone.utc)
+
+#: Five stamps, oldest first, derived from `MAX_RESULT_AGE` so that moving the production
+#: constant moves them with it instead of re-arming the fuse at a later date. What the
+#: tests below ask of them is their *order*: the ratchet refuses a branch whose evidence
+#: for a case is older than the newest the base branch holds for it, so "behind" and
+#: "ahead" are relative to `BASE_MEASUREMENT` and are what carries the meaning. The window
+#: only has to hold all five at once, and it holds them centred: the oldest sits half a
+#: window inside the staleness limit, the newest a sixth of a window before now, so no
+#: stamp can drift across either edge on a slow machine or a clock a few hours out.
+_RUNG = MAX_RESULT_AGE / 12
+
+
+def _stamp(rungs: int) -> str:
+    return (NOW - MAX_RESULT_AGE / 2 + _RUNG * rungs).isoformat()
+
+
+WELL_BEHIND_BASE = _stamp(0)
+JUST_BEHIND_BASE = _stamp(1)
+BASE_MEASUREMENT = _stamp(2)
+AHEAD_OF_BASE = _stamp(3)
+AHEAD_OF_EVERYTHING = _stamp(4)
 
 KEY = "281e19ca85e66d28f2ca844cd986dcd1fa74b2ff0c1a9b3b360e6aa6bd7470a5"
 COMMAND = 'python3 -c "import os; print(os.environ[\'RIG_EVAL_INPUT\'])"'
@@ -1155,7 +1187,7 @@ def test_evidence_older_than_the_base_branchs_is_told_to_measure_again(tmp_path)
 
     # The base branch takes a newer measurement of this case.
     _git(repo, "checkout", "-q", "-b", "master")
-    _resign(evidence, started_at="2026-08-11T09:00:00+00:00")
+    _resign(evidence, started_at=BASE_MEASUREMENT)
     _git(repo, "add", "-A")
     _git(repo, "commit", "-q", "-m", "a neighbouring PR re-measures the same case")
     newer = _git(repo, "rev-parse", "HEAD")
@@ -1169,7 +1201,7 @@ def test_evidence_older_than_the_base_branchs_is_told_to_measure_again(tmp_path)
     _git(repo, "add", "-A")
     _git(repo, "commit", "-q", "-m", "this branch's prompt change")
     measured = _git(repo, "rev-parse", "HEAD")
-    _resign(evidence, started_at="2026-08-11T08:00:00+00:00",
+    _resign(evidence, started_at=WELL_BEHIND_BASE,
             prompt_surface_digests=prompt_surface_digests(repo, measured),
             execution_commit=measured,
             execution_diff_sha256=execution_diff_sha256(
@@ -1186,7 +1218,7 @@ def test_evidence_older_than_the_base_branchs_is_told_to_measure_again(tmp_path)
     assert report["failures"] == [f"evidence_regression:{CASE_ID}"], report
 
     # Measuring again clears it — same content, a measurement that is not behind.
-    _resign(evidence, started_at="2026-08-11T10:00:00+00:00")
+    _resign(evidence, started_at=AHEAD_OF_BASE)
     _git(repo, "add", "-A")
     _git(repo, "commit", "-q", "-m", "measure again")
     cleared, cleared_code = _gate(repo, newer)
@@ -1218,7 +1250,7 @@ def test_a_base_branch_the_ratchet_cannot_read_is_refused_rather_than_waved_thro
     # missing below. It exists nowhere in this branch's history, so nothing else
     # the gate recomputes needs to read it.
     _git(repo, "checkout", "-q", "-b", "master")
-    _resign(evidence, started_at="2026-08-11T09:00:00+00:00")
+    _resign(evidence, started_at=BASE_MEASUREMENT)
     _git(repo, "add", "-A")
     _git(repo, "commit", "-q", "-m", "the base branch re-measures the same case")
     newer = _git(repo, "rev-parse", "HEAD")
@@ -1230,7 +1262,7 @@ def test_a_base_branch_the_ratchet_cannot_read_is_refused_rather_than_waved_thro
     _git(repo, "add", "-A")
     _git(repo, "commit", "-q", "-m", "this branch's prompt change")
     measured = _git(repo, "rev-parse", "HEAD")
-    _resign(evidence, started_at="2026-08-11T10:00:00+00:00",
+    _resign(evidence, started_at=AHEAD_OF_BASE,
             prompt_surface_digests=prompt_surface_digests(repo, measured),
             execution_commit=measured,
             execution_diff_sha256=execution_diff_sha256(
@@ -1286,14 +1318,14 @@ def test_the_bound_is_the_newest_evidence_on_the_base_branch_for_that_case(tmp_p
     signed = json.loads(evidence.read_text(encoding="utf-8"))
 
     _git(repo, "checkout", "-q", "-b", "master")
-    _resign(evidence, started_at="2026-08-11T09:00:00+00:00")
+    _resign(evidence, started_at=BASE_MEASUREMENT)
     stale = evidence.parent / "previous.json"
     stale.write_text(evidence.read_text(encoding="utf-8"), encoding="utf-8")
-    _resign(stale, started_at="2026-08-11T08:00:00+00:00")
+    _resign(stale, started_at=WELL_BEHIND_BASE)
     misfiled = repo / "evals" / "evidence" / "some-other-case" / "current.json"
     misfiled.parent.mkdir(parents=True)
     misfiled.write_text(evidence.read_text(encoding="utf-8"), encoding="utf-8")
-    _resign(misfiled, started_at="2026-08-11T11:00:00+00:00")
+    _resign(misfiled, started_at=AHEAD_OF_EVERYTHING)
     _git(repo, "add", "-A")
     _git(repo, "commit", "-q", "-m", "the base branch, with the debris a branch collects")
     newer = _git(repo, "rev-parse", "HEAD")
@@ -1316,14 +1348,14 @@ def test_the_bound_is_the_newest_evidence_on_the_base_branch_for_that_case(tmp_p
         _git(repo, "commit", "-q", "-m", f"measured at {started_at}")
         return _gate(repo, newer)
 
-    # Newer than the base branch's measurement of *this* case. The 11:00 result
-    # filed under another case's directory is not a measurement of this one.
-    report, code = measure_at("2026-08-11T10:00:00+00:00")
+    # Newer than the base branch's measurement of *this* case. The newest result of
+    # all, filed under another case's directory, is not a measurement of this one.
+    report, code = measure_at(AHEAD_OF_BASE)
     assert code == 0 and report["status"] == "pass", report
 
     # Behind it, though ahead of the leftover the rename left in the same
     # directory: the bound is the newest of them, not the oldest.
-    behind, behind_code = measure_at("2026-08-11T08:30:00+00:00")
+    behind, behind_code = measure_at(JUST_BEHIND_BASE)
     assert behind_code == 1
     assert behind["failures"] == [f"evidence_regression:{CASE_ID}"], behind
 
@@ -1348,12 +1380,12 @@ def test_two_branches_measuring_one_case_cannot_merge_without_a_human(tmp_path):
     fork = _git(repo, "rev-parse", "HEAD")
 
     _git(repo, "checkout", "-q", "-b", "neighbour")
-    _resign(evidence, started_at="2026-08-11T09:00:00+00:00")
+    _resign(evidence, started_at=BASE_MEASUREMENT)
     _git(repo, "add", "-A")
     _git(repo, "commit", "-q", "-m", "a neighbouring PR measures the same case")
 
     _git(repo, "checkout", "-q", "-b", "mine", fork)
-    _resign(evidence, started_at="2026-08-11T08:00:00+00:00")
+    _resign(evidence, started_at=WELL_BEHIND_BASE)
     _git(repo, "add", "-A")
     _git(repo, "commit", "-q", "-m", "this PR measures the same case")
 

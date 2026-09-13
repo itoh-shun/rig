@@ -7,10 +7,10 @@ green. Nothing in the log said the signing path had gone unexercised, because a 
 one result nobody scans for — a failure count of zero reads as success even when the passing
 count quietly dropped by eleven.
 
-Those guards are gone now, so each of those tests fails on its own. This file is the rule
-behind that edit, stated once where it cannot be forgotten: the guards were removed by hand
-in two files, and the next dependency added to `pyproject.toml` would not be covered by
-either. Here it is covered the moment it is declared.
+Both the guards and the publisher signing they guarded are gone now, and `cryptography` is
+no longer declared at all. This file is the rule that outlived them, stated once where it
+cannot be forgotten: the next dependency added to `pyproject.toml` is covered the moment it
+is declared.
 
 The distinction the suite has to keep is between a dependency and an extra. `mcp` is an
 extra: absent by design in a plain install, and `importorskip` is exactly right for it. What
@@ -81,8 +81,13 @@ def _declared() -> list[str]:
 def test_the_dependency_list_is_readable_and_not_empty():
     """A positive control. If the parse above ever returned `[]` — a renamed table, a moved
     file — every check below would pass by having nothing to check, which is the failure mode
-    this whole file exists to refuse."""
-    assert len(_declared()) >= 3
+    this whole file exists to refuse.
+
+    The floor is the number actually declared, so it moves when the list does: it was 3 until
+    `cryptography` came out with the publisher signing it existed for. What it may never be
+    is 0, which is the only value that makes the checks below vacuous.
+    """
+    assert len(_declared()) >= 2
 
 
 @pytest.mark.parametrize("distribution", _declared())
@@ -92,19 +97,6 @@ def test_every_declared_dependency_imports(distribution):
     the exact silence that made the original failure cost an hour."""
     module = IMPORT_NAMES.get(distribution, distribution.replace("-", "_"))
     importlib.import_module(module)
-
-
-def test_cryptography_can_actually_do_the_work_and_not_merely_import():
-    """The failure that motivated this file passed a plain `import cryptography`. What was
-    missing was `_cffi_backend`, which only surfaces when something reaches the backend — so
-    an import check alone would have reported the broken install as healthy. Ed25519 is what
-    the publisher signs with, so this is the smallest operation that proves the dependency is
-    usable rather than merely present."""
-    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-
-    private = Ed25519PrivateKey.generate()
-    signature = private.sign(b"rig")
-    private.public_key().verify(signature, b"rig")
 
 
 def test_no_declared_dependency_is_guarded_by_importorskip_anywhere_in_the_suite():

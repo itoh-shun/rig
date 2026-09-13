@@ -5,7 +5,7 @@ argument-hint: "[--persona <name> | --recipe <name> | --pack <name>] [--to <dir>
 
 # rig/export — write a brick out as a skill 📤
 
-**Start the `rig:engine` skill with the Skill tool first and follow its SKILL.md** (PARSE → RESOLVE → COMPOSE → RUN, the §2 brick inventory, context-minimal). This command is only the entry point; the procedure itself lives in `facets/instructions/skill-export` and is not repeated here.
+**Start the `rig:engine` skill with the Skill tool first and follow its SKILL.md** (PARSE → RESOLVE → COMPOSE → RUN, the `BRICKS.md` §2 brick inventory, context-minimal). This command is only the entry point; the procedure itself lives in `facets/instructions/skill-export` and is not repeated here.
 
 Then follow `facets/instructions/skill-export` to write the brick out:
 

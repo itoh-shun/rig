@@ -5,14 +5,49 @@ import hashlib
 import json
 import pathlib
 import re
-from typing import Any
-
-from rig_workbench.eval.safety import unsafe_key_reason, unsafe_text_reason
-from rig_workbench.workbench.destructive import scan_line as destructive_scan_line
-from rig_workbench.workbench.injection import scan_line as injection_scan_line
+from typing import Any, Protocol, runtime_checkable
 
 from .model import (ASSET_DIRS, PACK_TYPES, PROMPT_KINDS, TYPE_ASSETS, CapabilityRefused,
                     PackError)
+from .scanners import MANIFEST_TEXT_SAFETY, PROSE_LINE_SCANNER
+
+
+class LineScanner(Protocol):
+    """A sensor that reads one line and reports what it found there.
+
+    The shape `workbench`'s three scanners already have — injection, destructive and
+    secrets — stated here as what this pillar needs rather than imported from there,
+    because the import is what `tests/test_layering_contract.py` forbids a judgement
+    module: the standard library, its own pillar and the six ports, and a sensor in
+    another pillar is none of the three. `packs/scanners.py` satisfies it, the shell
+    hands it in, and `lock.py` asks for the same shape with the credential sensor
+    behind it — one protocol for two sensors, because the two callers want the same
+    thing of them: a line in, findings out, empty meaning nothing to say.
+    """
+
+    def __call__(self, line: str, rel: str, lineno: int) -> list[dict]:
+        ...
+
+
+@runtime_checkable
+class TextSafety(Protocol):
+    """Why a string may not be recorded, or `None` — the policy, not a scan.
+
+    Distinct from `LineScanner` because it answers a different question. A scanner reads
+    a line as prose and reports markers; this reads a value as a *value* and says whether
+    recording it would be unsafe — a path that escapes the tree, a `file:` URI, a
+    credential-shaped field name. `packs` does not own that policy: it is the one
+    evaluation cases are held to, and a second copy of it here would be free to drift
+    from the first while both claimed to be the rule.
+    """
+
+    def key_reason(self, key: object) -> str | None:
+        """Why a mapping key may not appear, or `None`."""
+        ...
+
+    def text_reason(self, value: str) -> str | None:
+        """Why a string value may not appear, or `None`."""
+        ...
 
 PACK_BASE_FIELDS = {
     "pack_schema_version", "id", "type", "version", "kind", "engine", "dependencies",
@@ -100,21 +135,21 @@ def safe_relative(value: object) -> pathlib.PurePosixPath:
     return path
 
 
-def _reject_unsafe(value: object, where: str) -> None:
+def _reject_unsafe(value: object, where: str, *,
+                   safety: TextSafety = MANIFEST_TEXT_SAFETY,
+                   scan_line: LineScanner = PROSE_LINE_SCANNER) -> None:
     if isinstance(value, dict):
         for key, item in value.items():
-            if unsafe_key_reason(key):
+            if safety.key_reason(key):
                 raise PackError(f"secret-like manifest field: {where}.{key}")
-            _reject_unsafe(item, f"{where}.{key}")
+            _reject_unsafe(item, f"{where}.{key}", safety=safety, scan_line=scan_line)
     elif isinstance(value, list):
         for index, item in enumerate(value):
-            _reject_unsafe(item, f"{where}[{index}]")
+            _reject_unsafe(item, f"{where}[{index}]", safety=safety, scan_line=scan_line)
     elif isinstance(value, str):
-        if unsafe_text_reason(value):
+        if safety.text_reason(value):
             raise PackError(f"unsafe manifest text: {where}")
-        injection = injection_scan_line(value, where, 1)
-        destructive = destructive_scan_line(value, where, 1)
-        if injection or destructive or _BARE_RM_RECURSIVE_FORCE.search(value):
+        if scan_line(value, where, 1) or _BARE_RM_RECURSIVE_FORCE.search(value):
             raise PackError(f"unsafe manifest instruction: {where}")
 
 
@@ -263,7 +298,9 @@ def _parse_frontmatter_yaml(block: str, path: pathlib.Path) -> dict[str, Any]:
     return value
 
 
-def parse_frontmatter_subset(path: pathlib.Path) -> dict:
+def parse_frontmatter_subset(path: pathlib.Path, *,
+                             safety: TextSafety = MANIFEST_TEXT_SAFETY,
+                             scan_line: LineScanner = PROSE_LINE_SCANNER) -> dict:
     """Parse the safe frontmatter subset needed for Rig reference validation.
 
     Supports scalar mappings, inline lists, and indented multiline lists. YAML
@@ -286,7 +323,8 @@ def parse_frontmatter_subset(path: pathlib.Path) -> dict:
             raise PackError(f"invalid JSON frontmatter: {path.name}") from exc
         if not isinstance(value, dict):
             raise PackError(f"frontmatter must be an object: {path.name}")
-        _reject_unsafe(value, f"frontmatter.{path.name}")
+        _reject_unsafe(value, f"frontmatter.{path.name}",
+                       safety=safety, scan_line=scan_line)
         return value
     if "\t" in block or re.search(r"(?:^|\s)[!&*][A-Za-z]", block):
         raise PackError(f"unsafe frontmatter syntax: {path.name}")
@@ -343,8 +381,9 @@ def _validate_knowledge(value: dict) -> None:
         raise PackError("pack knowledge reviewed_at requires timezone")
 
 
-def validate_manifest_shape(value: dict) -> None:
-    _reject_unsafe(value, "pack")
+def validate_manifest_shape(value: dict, *, safety: TextSafety = MANIFEST_TEXT_SAFETY,
+                            scan_line: LineScanner = PROSE_LINE_SCANNER) -> None:
+    _reject_unsafe(value, "pack", safety=safety, scan_line=scan_line)
     fields = set(value)
     if (frozenset(fields) not in PACK_SHAPES
             or value.get("pack_schema_version") != PACK_SCHEMA_VERSION):
@@ -461,7 +500,7 @@ def validate_manifest_shape(value: dict) -> None:
         # a consumer reaches for, and `TYPE_ASSETS` forbids `knowledge`, `policy` and
         # `reviewer` from owning a command or a recipe — so restricting this to those two
         # left them unable to declare an entrypoint at all, and every rule downstream that
-        # anchors on one (evaluation coverage, `compose_case_prompt`, publisher signing) was
+        # anchors on one (evaluation coverage, `compose_case_prompt`) was
         # therefore unreachable for them: a reviewer pack could be required to carry an
         # approved evaluation case and never be able to run it. Nothing here grants reach:
         # `validate_pack` still requires the target be an asset this pack owns, `TYPE_ASSETS`
@@ -488,8 +527,10 @@ def validate_manifest_shape(value: dict) -> None:
             raise PackError("pack resource metadata is invalid")
 
 
-def validate_compatibility(value: dict, manifest: dict) -> None:
-    _reject_unsafe(value, "compatibility")
+def validate_compatibility(value: dict, manifest: dict, *,
+                           safety: TextSafety = MANIFEST_TEXT_SAFETY,
+                           scan_line: LineScanner = PROSE_LINE_SCANNER) -> None:
+    _reject_unsafe(value, "compatibility", safety=safety, scan_line=scan_line)
     if set(value) != COMPAT_FIELDS or value.get("compatibility_schema_version") != 1:
         raise PackError("compatibility schema fields/version are invalid")
     if value.get("pack_id") != manifest["id"] or value.get("pack_version") != manifest["version"]:

@@ -60,6 +60,20 @@ The model does each step's "work", but this runner decides "what happens next":
                                      Bound into run-state; missing, unknown, or changed values fail before providers.
   run ... --material-profile P       Optional style material for secure Japanese writing: none (default), technical,
                                      or conversation. Bound into run-state; never inferred from goal text.
+  queue <add|list|go|done|retry|cancel> [--backend local|github|gitlab] [--repo owner/repo]
+        [--provider P] [--verifier-provider P] [--provider-cmd C] [--max-parallel N]
+        [--depends-on ID] [--dependency-policy accepted]
+                                     Line several tasks up and work through them without babysitting each
+                                     one. add / list / done / retry / cancel are bookkeeping; `go` runs each
+                                     task for real — its own worktree, a provider, and the gate
+  models [--save] [--base-url URL] [--json]
+                                     Which providers and models this machine can actually drive right now.
+                                     Asks localhost unless --base-url names somewhere else; --save writes
+                                     the cache that `run --auto-model` reads next time
+  probe --provider P [--role verifier|generator] [--model M] [--base-url URL] [--provider-cmd C]
+                                     Call one provider once and show the actual command, its raw output, and
+                                     whether the contract parsed — the way to see *why* a provider keeps
+                                     coming back unusable. Everything but `--provider mock` leaves the machine
   ab <recipe1> <recipe2> ...          Run the same goal through multiple recipe variants concurrently and compare
     --provider <name> --goal G        speed/retries/results (#291). Each variant runs in its own isolated worktree
                                      (same path as --isolate), so variants never conflict.
@@ -86,13 +100,18 @@ The model does each step's "work", but this runner decides "what happens next":
   selftest                           Self-verification of determinism (proves same input -> same transitions)
 
 Dependencies: Python3 + PyYAML (same as validate.py).
-Exit code 0=success / 1=error or ESCALATE / 3=run parked at a human gate (`run` only; not a failure).
+Exit code 0=success / 1=error or ESCALATE / 2=refused before the run moved (bad usage, an
+unreadable or missing run-state, a BLOCKED state) / 3=parked at a human gate, awaiting an
+approval. Returned by `run`, `next`, `resume`, and by `approve` when the decision it
+records leaves the run parked (quorum unmet, or denied). 3 is not a failure.
 """
 
 import sys
 
 from .. import context_meter
 from ..gh_requirement import advise_gh
+from ..ports import Presenter
+from ..ports.local import ConsolePresenter
 from .commands import (cmd_ab, cmd_approve, cmd_check, cmd_fleet, cmd_init, cmd_install_shim,
                        cmd_next, cmd_otel, cmd_perf, cmd_plan, cmd_resume, cmd_run, cmd_runs,
                        cmd_status,
@@ -153,8 +172,9 @@ def _usage_for(cmd: str) -> str | None:
 
 
 def main():
+    out: Presenter = ConsolePresenter()
     if len(sys.argv) < 2 or sys.argv[1] not in COMMANDS:
-        print(__doc__)
+        out.out(__doc__)
         sys.exit(0 if len(sys.argv) < 2 else 1)
     cmd, rest = sys.argv[1], sys.argv[2:]
     # Several commands take a bare state-file path and parse no flags at all, so `--help`
@@ -164,14 +184,14 @@ def main():
     # by the time it matters.
     if rest and rest[0] in ("-h", "--help"):
         usage = _usage_for(cmd)
-        print(usage if usage else __doc__)
+        out.out(usage if usage else __doc__)
         sys.exit(0)
     # Count what this invocation prints at the parent session. context-minimal is
     # called a hard rule and was never measured; see rig_workbench/context_meter.
     context_meter.install(f"orchestrate {cmd}", rest)
     if _advises_gh(cmd, rest):
         advise_gh(f"orchestrate {cmd}")
-    COMMANDS[cmd](rest)
+    COMMANDS[cmd](rest, out=out)
 
 
 if __name__ == "__main__":

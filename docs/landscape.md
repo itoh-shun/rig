@@ -73,7 +73,7 @@ separate findings where there are none. As cells get filled, split the column.
 | 16 | Mutation / adversarial drill corpus | `native` | `unknown` | `workbench.py drill-corpus` — 24 seed classes, 4 fixture cases with answer keys |
 | 17 | Evidence freshness / invalidation | `native` | `unknown` | `workbench.py receipt --verify` recomputes content digests; a changed source reads `invalidated` |
 | 18 | Immutable target identity | `native` | `unknown` | `workbench.py import --head <sha>` pins the verified commit; a moved ref invalidates (#429) |
-| 19 | Portable assurance receipt | `native` | `unknown` | `rig.assurance-receipt/v1` (`rig_workbench/workbench/assurance.py`) — a projection that re-judges nothing |
+| 19 | Portable assurance receipt | `native` | `unknown` | `rig.assurance-receipt/v1` (`rig_workbench/assurance/assurance.py`) — a projection that re-judges nothing |
 | 20 | Machine verdict for an external caller | `native` | `unknown` | `workbench.py contract --json` — `acceptable` / `not-acceptable` / `pending` / `execution-error`, one exit code each |
 | 21 | Unmeasured values reported as unmeasured | `native` | `unknown` | `{"observed": false, "reason": …}` throughout the receipt; never a blank, zero, or default |
 | 22 | Prompt-surface change tied to approved evaluation cases | `native` | `unknown` | `rig-wb eval affected --ratchet`, CI-enforced on every PR |

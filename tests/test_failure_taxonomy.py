@@ -13,6 +13,8 @@ from rig_workbench.orchestrate import config
 from rig_workbench.orchestrate.runstate import (classify_failure, compute_next,
                                                 new_state, telemetry_append)
 
+from conftest import pin_runs_path
+
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 
@@ -76,7 +78,7 @@ def _read_jsonl(path):
 
 
 def test_telemetry_records_failure_mode_for_stopped_run(tmp_path, monkeypatch, step_factory):
-    monkeypatch.setattr(config, "RUNS_PATH", tmp_path / "runs.jsonl")
+    pin_runs_path(monkeypatch, tmp_path / "runs.jsonl")
     monkeypatch.setattr(config, "GLOBAL_RUNS_PATH", tmp_path / "global.jsonl")
     state = _drive(new_state("esc", [step_factory(id="v", gate="acceptance-gate",
                                                   checks=["false"], max_retries=2)], None),
@@ -89,7 +91,7 @@ def test_telemetry_records_failure_mode_for_stopped_run(tmp_path, monkeypatch, s
 
 
 def test_telemetry_omits_failure_mode_for_clean_run(tmp_path, monkeypatch, step_factory):
-    monkeypatch.setattr(config, "RUNS_PATH", tmp_path / "runs.jsonl")
+    pin_runs_path(monkeypatch, tmp_path / "runs.jsonl")
     monkeypatch.setattr(config, "GLOBAL_RUNS_PATH", tmp_path / "global.jsonl")
     state = _drive(new_state("ok", [step_factory(id="a")], None),
                    [("next", None), ("next", None)])  # single no-gate step → DONE

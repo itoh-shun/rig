@@ -14,8 +14,8 @@ import sys
 
 import pytest
 
-from rig_workbench.workbench import org_knowledge as ok
-from rig_workbench.workbench.knowledge_candidate import CANDIDATE_SCHEMA, EVIDENCE_SCHEMA
+from rig_workbench.assurance import org_knowledge as ok
+from rig_workbench.assurance.knowledge_candidate import CANDIDATE_SCHEMA, EVIDENCE_SCHEMA
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 WORKBENCH = ROOT / "scripts" / "workbench.py"
@@ -159,8 +159,18 @@ def test_a_tampered_ledger_is_refused_rather_than_read_around(repo):
 def test_the_module_never_touches_the_instinct_store():
     """Inspected as code, not grepped: the docstring names instincts to say why it stays
     away from them, so a text search would flag the explanation."""
-    source = (ROOT / "rig_workbench" / "workbench" / "org_knowledge.py").read_text()
+    source = (ROOT / "rig_workbench" / "assurance" / "org_knowledge.py").read_text()
     tree = ast.parse(source)
+    judging = {"register", "promote", "active_rules", "conflicts", "history", "replay"}
+    # An `ast.walk` loop that matches nothing passes, so an empty or mis-pathed file would
+    # read as a clean module. Assert the functions being judged are in the file first.
+    found = {node.name for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)}
+    assert judging <= found, (
+        "the module this test reads does not define the functions it is about: "
+        f"{sorted(judging - found)}. The loop below judges whatever it finds, "
+        "so a file that lost these names — or a path that stopped resolving to this "
+        "module — would walk zero functions and pass."
+    )
     strings = [node.value for node in ast.walk(tree)
                if isinstance(node, ast.Constant) and isinstance(node.value, str)
                and not (isinstance(node, ast.Constant) and node.value.strip().startswith(("The", "`", "A ", "\n")))]

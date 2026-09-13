@@ -66,6 +66,6 @@ producer の結論が正しいことは保証しない。
 
 ## K（再試行上限）の目安
 
-- 既定 K=2（超えたら user 判断・無限ループ禁止）。step の **`max_retries` キー**（SKILL §3.5）で指定する。manifest の `default_max_retries` で全体既定も上書きできる。
+- 既定 K=2（超えたら user 判断・無限ループ禁止）。step の **`max_retries` キー**（RECIPE-SCHEMA.md §3.5）で指定する。manifest の `default_max_retries` で全体既定も上書きできる。
 - K と基準は recipe / manifest で調整可能（厳しい品質が要る step ほど基準を増やす。回数を増やすより**基準を明確にする**方が収束は速い）。
 - **`max_retries` と stuck-guard（SKILL §6）の関係**：`max_retries` は acceptance-gate **内の収束ループ上限**（基準未達で何回再生成したか）。stuck-guard は親オーケストレーターが**同一エラーの繰り返し**で発動する**別カウンタ**。両者は独立だが、**どちらも最終的に user へエスカレーション**する。

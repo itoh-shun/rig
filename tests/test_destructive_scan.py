@@ -3,7 +3,8 @@
 Covers: fail/warning pattern classification (including the deliberate
 non-flagging of relative-path rm -rf and --force-with-lease), mass-deletion
 detection, and the gate integration in a scratch repo (dangerous line in the
-task diff → check fails/warns; explicit --set passed is the escape hatch).
+task diff → check fails/warns, and a hand-written --set passed is refused
+rather than recorded — see tests/test_gate_sensor_authority.py for that rule).
 """
 
 import json
@@ -119,22 +120,23 @@ def test_warning_grade_finding_warns_not_fails(git_repo):
     assert check["status"] == "warning"
 
 
-def test_explicit_pass_is_recorded_override(git_repo):
+def test_explicit_pass_over_a_finding_is_refused(git_repo):
     task_id, wt = _new_task(git_repo)
     (wt / "ci.sh").write_text("git clean -fdx\n", encoding="utf-8")
 
     r = run_cli(["gate", task_id, "--set", "no_destructive_operation=passed"], git_repo)
-    assert "manual override recorded" in r.stdout
+    assert r.returncode == 2, r.stdout + r.stderr   # a usage error, not a failed gate
+    assert "you set 'passed' — the sensor measured 'warning'" in r.stdout + r.stderr
     acc = json.loads((git_repo / ".rig" / "runs" / task_id / "acceptance.json").read_text(encoding="utf-8"))
     check = next(c for c in acc["checks"] if c["name"] == "no_destructive_operation")
-    assert check["status"] == "passed"
-    assert check["destructive_override"] is True
+    assert check["status"] == "warning"
+    assert "destructive_override" not in check
 
-    # Override sticks across later evaluations.
+    # And the evaluation beside it records what the sensor measured.
     run_cli(["gate", task_id, "--set", "task_intent_satisfied=passed"], git_repo)
     acc = json.loads((git_repo / ".rig" / "runs" / task_id / "acceptance.json").read_text(encoding="utf-8"))
     check = next(c for c in acc["checks"] if c["name"] == "no_destructive_operation")
-    assert check["status"] == "passed"
+    assert check["status"] == "warning"
 
 
 def test_clean_diff_resets_previous_sensor_flag(git_repo):

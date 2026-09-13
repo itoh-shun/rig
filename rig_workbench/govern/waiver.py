@@ -33,6 +33,8 @@ import fnmatch
 import json
 import pathlib
 
+from ..ports import Clock, FileStore
+from ..ports.local import LOCAL_FILES, SYSTEM_CLOCK
 from .policy import EffectivePolicy
 
 
@@ -40,12 +42,12 @@ def waivers_path(root: pathlib.Path) -> pathlib.Path:
     return root / ".rig" / "waivers.json"
 
 
-def load_waivers(root: pathlib.Path) -> list[dict]:
+def load_waivers(root: pathlib.Path, *, files: FileStore = LOCAL_FILES) -> list[dict]:
     p = waivers_path(root)
-    if not p.is_file():
+    if not files.is_file(p):
         return []
     try:
-        data = json.loads(p.read_text(encoding="utf-8"))
+        data = json.loads(files.read_text(p))
     except json.JSONDecodeError:
         return []
     if isinstance(data, dict):
@@ -53,19 +55,19 @@ def load_waivers(root: pathlib.Path) -> list[dict]:
     return [w for w in data if isinstance(w, dict)] if isinstance(data, list) else []
 
 
-def save_waivers(root: pathlib.Path, waivers: list[dict]) -> None:
-    p = waivers_path(root)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps({"schema": "rig.waivers/v2", "waivers": waivers},
-                            ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+def save_waivers(root: pathlib.Path, waivers: list[dict], *,
+                 files: FileStore = LOCAL_FILES) -> None:
+    files.write_text(waivers_path(root),
+                     json.dumps({"schema": "rig.waivers/v2", "waivers": waivers},
+                                ensure_ascii=False, indent=2) + "\n")
 
 
 class WaiverError(Exception):
     """A waiver cannot be granted as asked (authority, lifetime, or scope)."""
 
 
-def _today() -> datetime.date:
-    return datetime.datetime.now().astimezone().date()
+def _today(*, clock: Clock = SYSTEM_CLOCK) -> datetime.date:
+    return clock.today()
 
 
 def _parse_date(text: str) -> datetime.date:
@@ -76,7 +78,8 @@ def _parse_date(text: str) -> datetime.date:
 
 
 def grant(root: pathlib.Path, eff: EffectivePolicy, *, waiver_id: str, actor: str,
-          criteria: list[str], reason: str, expires: str, scope: str = "*") -> dict:
+          criteria: list[str], reason: str, expires: str, scope: str = "*",
+          clock: Clock = SYSTEM_CLOCK, files: FileStore = LOCAL_FILES) -> dict:
     """Issue a waiver. Raises WaiverError when the policy does not allow it as asked.
 
     Authority (the `waiver.grant` permission) is checked by the caller — the CLI
@@ -96,11 +99,11 @@ def grant(root: pathlib.Path, eff: EffectivePolicy, *, waiver_id: str, actor: st
             f"criteria {', '.join(blocked)} are marked non-waivable by the org policy and cannot be "
             "covered by any waiver")
     expiry = _parse_date(expires)
-    if expiry <= _today():
+    if expiry <= _today(clock=clock):
         raise WaiverError(f"expiry {expires} is not in the future")
     max_days = rule.get("max_days")
     if max_days:
-        limit = _today() + datetime.timedelta(days=float(max_days))
+        limit = _today(clock=clock) + datetime.timedelta(days=float(max_days))
         if expiry > limit:
             raise WaiverError(
                 f"expiry {expires} exceeds the policy limit of {max_days:g} days "
@@ -111,35 +114,37 @@ def grant(root: pathlib.Path, eff: EffectivePolicy, *, waiver_id: str, actor: st
         "scope": scope,
         "reason": reason.strip(),
         "granted_by": actor,
-        "granted_at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+        "granted_at": clock.stamp(),
         "expires": expiry.isoformat(),
         "revoked": False,
     }
-    waivers = [w for w in load_waivers(root) if w.get("id") != waiver_id]
+    waivers = [w for w in load_waivers(root, files=files) if w.get("id") != waiver_id]
     waivers.append(record)
-    save_waivers(root, waivers)
+    save_waivers(root, waivers, files=files)
     return record
 
 
-def revoke(root: pathlib.Path, waiver_id: str, *, actor: str, reason: str = "") -> dict:
-    waivers = load_waivers(root)
+def revoke(root: pathlib.Path, waiver_id: str, *, actor: str, reason: str = "",
+           clock: Clock = SYSTEM_CLOCK, files: FileStore = LOCAL_FILES) -> dict:
+    waivers = load_waivers(root, files=files)
     for w in waivers:
         if w.get("id") == waiver_id:
             w["revoked"] = True
             w["revoked_by"] = actor
-            w["revoked_at"] = datetime.datetime.now().astimezone().isoformat(timespec="seconds")
+            w["revoked_at"] = clock.stamp()
             if reason:
                 w["revoked_reason"] = reason
-            save_waivers(root, waivers)
+            save_waivers(root, waivers, files=files)
             return w
     raise WaiverError(f"no waiver with id '{waiver_id}'")
 
 
-def is_active(waiver: dict, *, on: datetime.date | None = None) -> bool:
+def is_active(waiver: dict, *, on: datetime.date | None = None,
+              clock: Clock = SYSTEM_CLOCK) -> bool:
     if waiver.get("revoked"):
         return False
     try:
-        return datetime.date.fromisoformat(waiver.get("expires", "")) >= (on or _today())
+        return datetime.date.fromisoformat(waiver.get("expires", "")) >= (on or _today(clock=clock))
     except ValueError:
         return False
 
@@ -157,14 +162,15 @@ class Coverage:
 
 
 def coverage(root: pathlib.Path, criteria: list[str], *, task_type: str = "",
-             task_id: str = "") -> Coverage:
+             task_id: str = "", clock: Clock = SYSTEM_CLOCK,
+             files: FileStore = LOCAL_FILES) -> Coverage:
     """Which of `criteria` a live waiver covers.
 
     `scope` is an fnmatch pattern tested against both the task_type and the
     task_id, so a waiver can be pinned to one migration ("rig-2026*") or opened
     to a class of work ("documentation") without inventing a query language.
     """
-    waivers = load_waivers(root)
+    waivers = load_waivers(root, files=files)
     covered: set[str] = set()
     used: list[dict] = []
     expired: list[dict] = []
@@ -175,7 +181,7 @@ def coverage(root: pathlib.Path, criteria: list[str], *, task_type: str = "",
         scope = w.get("scope") or "*"
         if not (fnmatch.fnmatch(task_type or "", scope) or fnmatch.fnmatch(task_id or "", scope)):
             continue
-        if not is_active(w):
+        if not is_active(w, clock=clock):
             expired.append(w)
             continue
         covered |= applies

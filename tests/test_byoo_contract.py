@@ -21,8 +21,9 @@ import subprocess
 
 import pytest
 
-from rig_workbench.workbench import assurance, contract, lifecycle
-from rig_workbench.workbench import import_task as byoo
+from rig_workbench.workbench import lifecycle
+from rig_workbench.assurance import assurance, contract
+from rig_workbench.assurance import import_task as byoo
 from rig_workbench.workbench.state import build_acceptance
 
 
@@ -201,18 +202,26 @@ def test_removing_the_producer_record_changes_no_gate_outcome(repo, monkeypatch)
                   producer_claim=["tests=passed", "review=approved"])
     task_id = _task(run)["task_id"]
     gate_args = argparse.Namespace(task_id=task_id, set=None)
-    lifecycle.cmd_gate(gate_args)
+    # Nothing is recorded on this gate, so `cmd_gate` ends in `sys.exit(3)` — the
+    # not-yet-judged code. What is compared is the acceptance.json it wrote on the way out.
+    with pytest.raises(SystemExit) as first:
+        lifecycle.cmd_gate(gate_args)
+    assert first.value.code == 3
     with_producer = (run / "acceptance.json").read_text(encoding="utf-8")
 
     task = _task(run)
     task.pop("import")
     (run / "task.json").write_text(json.dumps(task), encoding="utf-8")
-    lifecycle.cmd_gate(gate_args)
+    with pytest.raises(SystemExit) as second:
+        lifecycle.cmd_gate(gate_args)
+    assert second.value.code == 3
     without_producer = (run / "acceptance.json").read_text(encoding="utf-8")
 
     def _without_timestamp(text):
         record = json.loads(text)
         record.pop("checked_at", None)
+        # `evaluated_head` is the same head in both evaluations — nothing moved between
+        # them — so it is left in rather than popped: it is part of what has to match.
         return record
 
     assert _without_timestamp(with_producer) == _without_timestamp(without_producer)

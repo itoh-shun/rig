@@ -13,8 +13,8 @@ import sys
 
 import pytest
 
-from rig_workbench.workbench import intent
-from rig_workbench.workbench.intent import (FAILED, PASSED, SATISFIED, SCHEMA,
+from rig_workbench.assurance import intent
+from rig_workbench.assurance.intent import (FAILED, PASSED, SATISFIED, SCHEMA,
                                             UNSATISFIED, UNVERIFIABLE, load,
                                             status, undeclared, unverifiable,
                                             validate)

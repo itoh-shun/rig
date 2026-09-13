@@ -86,8 +86,7 @@ def installed(tmp_path, remote):
     project.mkdir()
     write_sources(project, {"product": {
         "scheme": "git+file", "url": str(remote.parent / "rig-pack-{pack}")}})
-    result = install_pack("product:northwind@1.4.0", scope="project", project=project,
-                          allow_unverified=True)
+    result = install_pack("product:northwind@1.4.0", scope="project", project=project)
     return project, result.path.parent
 
 
@@ -162,8 +161,7 @@ def test_available_versions_ignores_tags_that_are_not_releases(remote):
 
 def test_update_moves_the_pin_and_the_content_together(installed, remote):
     project, root = installed
-    result = update_pack("northwind", to="1.5.0", scope="project", project=project,
-                         allow_unverified=True)
+    result = update_pack("northwind", to="1.5.0", scope="project", project=project)
     assert result.manifest["version"] == "1.5.0"
 
     entry, = read_lock(root)["packs"]
@@ -180,8 +178,7 @@ def test_a_failed_update_leaves_the_old_version_installed(installed):
     before = read_lock(root)["packs"]
 
     with pytest.raises(PackError, match="no tag v9.9.9"):
-        update_pack("northwind", to="9.9.9", scope="project", project=project,
-                    allow_unverified=True)
+        update_pack("northwind", to="9.9.9", scope="project", project=project)
 
     assert (root / "northwind" / "pack.yaml").is_file()
     assert read_lock(root)["packs"] == before
@@ -195,10 +192,9 @@ def test_update_refuses_a_pack_that_has_no_source_to_ask(tmp_path, remote):
     source = tmp_path / "local-pack"
     source.mkdir()
     _write_pack(source, "northwind", "1.4.0")
-    install_pack(source, scope="project", project=project, allow_unverified=True)
+    install_pack(source, scope="project", project=project)
     with pytest.raises(PackError, match="which has no version to resolve"):
-        update_pack("northwind", to="1.5.0", scope="project", project=project,
-                    allow_unverified=True)
+        update_pack("northwind", to="1.5.0", scope="project", project=project)
 
 
 def test_update_refuses_when_the_tag_and_the_manifest_disagree(installed, remote):
@@ -210,8 +206,7 @@ def test_update_refuses_when_the_tag_and_the_manifest_disagree(installed, remote
     _git(remote, "tag", "v1.6.0")
     project, _root = installed
     with pytest.raises(PackError, match="the tag and the manifest disagree"):
-        update_pack("northwind", to="1.6.0", scope="project", project=project,
-                    allow_unverified=True)
+        update_pack("northwind", to="1.6.0", scope="project", project=project)
 
 
 def test_inventory_cli_round_trip(installed, monkeypatch, capsys):
@@ -226,7 +221,7 @@ def test_inventory_cli_round_trip(installed, monkeypatch, capsys):
     # A newer version is available, so `outdated` reports non-zero — it is meant to be usable
     # as a check, not only as a listing.
     assert cmd_pack(["outdated"]) == 1
-    assert cmd_pack(["update", "northwind", "--to", "1.5.0", "--allow-unverified"]) == 0
+    assert cmd_pack(["update", "northwind", "--to", "1.5.0"]) == 0
     assert cmd_pack(["outdated"]) == 0
 
 
@@ -248,14 +243,13 @@ def test_the_lock_records_what_satisfied_each_dependency_not_only_the_range(tmp_
     base = tmp_path / "base-pack"
     base.mkdir()
     _write_pack(base, "company", "2.1.0", slug="company-policy")
-    install_pack(base, scope="project", project=project, allow_unverified=True)
+    install_pack(base, scope="project", project=project)
 
     dependent = tmp_path / "dependent-pack"
     dependent.mkdir()
     _write_pack_with_dependency(dependent, "northwind", "1.4.0",
                                 {"id": "company", "range": ">=2.0.0"})
-    result = install_pack(dependent, scope="project", project=project,
-                          allow_unverified=True)
+    result = install_pack(dependent, scope="project", project=project)
 
     entry = next(item for item in read_lock(result.path.parent)["packs"]
                  if item["id"] == "northwind")

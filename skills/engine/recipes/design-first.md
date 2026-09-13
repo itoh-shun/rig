@@ -14,6 +14,7 @@ steps:
     pattern: parallel-fanout
     gate: acceptance-gate
     acceptance: ["4-way review に REJECT が無い", "APPROVE_WITH_CONDITIONS のマージ前必須条件をすべて反映済み"]
+    acceptance_binding: [unobserved, unobserved]
     personas: [security-reviewer, design-reviewer, test-reviewer, behavioral-correctness-reviewer]
     policies: [pre-push-review]
     output_contract: review-verdict

@@ -58,7 +58,7 @@ default_recipe: "interactive"  # 例: "review-only" / "full-flow" / "interactive
 default_personas: []  # 例: ["house-authenticity", "mix-engineer"]  （VST 製品）
 
 # ── サイズ判定 閾値 （任意） ──────────────────────────────
-# design / review / tdd の size-aware ON/OFF（SKILL §4.4）が参照する行数閾値。
+# design / review / tdd の size-aware ON/OFF（RESOLVE.md §4.4）が参照する行数閾値。
 # 汎用既定: pr-hygiene の基準（S≤100 / M≤200 / L≤400 / L超>400）。
 # プロジェクトの変更規模感に合わせて調整してよい。
 size_thresholds:
@@ -123,7 +123,7 @@ Knowledge facet が注入するドキュメントの場所を指す。
 ### default_recipe
 裸の `/rig:dev "X"` 実行時に使う recipe 名。
 `interactive`（または未設定）の場合は毎回ユーザーに選択を求める。
-recipe の詳細スキーマは `SKILL.md §3.5` を参照。
+recipe の詳細スキーマは `RECIPE-SCHEMA.md §3.5` を参照。
 
 ### default_personas
 この製品の review/adversarial step に毎回自動投入する reviewer persona 名のリスト。
@@ -131,17 +131,17 @@ recipe の詳細スキーマは `SKILL.md §3.5` を参照。
 解決した persona が `inject: [[slug]]` を宣言していれば wiki も同伴注入される。
 最終 reviewer は「組み込み reviewer ＋ recipe `personas[]` ＋ default_personas ＋ `--persona`」の
 名前和集合（dedup）。この run だけ外すには `--no-default-personas`。
-未設定（`[]`）は自動投入なし。詳細は `SKILL.md §5「manifest default_personas の自動投入」`。
+未設定（`[]`）は自動投入なし。詳細は `COMPOSE.md §5「manifest default_personas の自動投入」`。
 
 ### size_thresholds
-`SKILL.md §4.4` の size-aware 既定（design / review / tdd の自動 ON/OFF）が参照する行数閾値。
+`RESOLVE.md §4.4` の size-aware 既定（design / review / tdd の自動 ON/OFF）が参照する行数閾値。
 サブキーは `S_max` / `M_max` / `L_max`。変更行数が `S_max` 以下＝S、`M_max` 以下＝M（S/M は重い step を既定 OFF）、
 `M_max` 超＝L 以上（design / review を推奨）、`L_max` 超＝L超（分割必須）。
 未設定の場合は pr-hygiene のベースライン（S≤100 / M≤200 / L≤400 / L超>400）を使う。
 
 ### default_max_retries
 `gate: acceptance-gate` の最大収束試行数 K の全体既定（未設定時 2）。
-step 個別には `SKILL.md §3.5` の `max_retries` キーで上書きする。
+step 個別には `RECIPE-SCHEMA.md §3.5` の `max_retries` キーで上書きする。
 §6 stuck-guard（同一エラー反復のカウンタ）とは独立。
 
 ### default_backend

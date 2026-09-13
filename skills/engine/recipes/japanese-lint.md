@@ -23,6 +23,12 @@ steps:
       - "所見を消すために本文が削られておらず、規則が理由なく無効化されていない"
       - "warning は読まれており、直さなかったものには理由がある"
       - "検査が走らなかった場合（unchecked）は合格ではなく未検査として報告されている"
+    acceptance_binding:
+      - unobserved
+      - unobserved
+      - unobserved
+      - unobserved
+      - unobserved
     personas: [japanese-lint-reviewer]
     policies: [japanese-textlint-rules, independent-verification]
     output_contract: japanese-lint-verdict

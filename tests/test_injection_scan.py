@@ -6,9 +6,10 @@ Covers: invisible-unicode detection (fail-grade, every declared range, raw
 character never in a finding), instruction-override phrase detection
 (warning-grade, case-insensitive), prose-surface scanning (pre-existing
 markers in .claude/rig.md etc. are found even when the diff is clean),
-diff-scoped scanning, clean-run no-op, the explicit
-`--set no_injection_markers=passed` escape hatch (injection_override, sticky),
-preset wiring, and the CLI (`scan-injection` paths / --diff / gate
+diff-scoped scanning, clean-run no-op, the sensor's verdict standing over a
+`passed` already on the check (a hand-written `--set` that contradicts it is
+refused by the gate — tests/test_gate_sensor_authority.py), preset wiring,
+and the CLI (`scan-injection` paths / --diff / gate
 integration in a scratch repo).
 """
 
@@ -212,20 +213,17 @@ def test_clean_run_passes(tmp_path):
     assert "injection_findings" not in acc["checks"][0]
 
 
-# ── escape hatch / reset ──────────────────────────────────────────────────────
-def test_explicit_pass_is_recorded_and_sticks(tmp_path):
+# ── the sensor's own verdict / reset ─────────────────────────────────────────
+def test_sensor_writes_its_verdict_over_a_passed_check(tmp_path):
     repo, sha = make_repo(tmp_path)
     (repo / "notes.md").write_text(f"a{ZWSP}b\n", encoding="utf-8")
     commit(repo)
     task, acc = make_state(repo, sha)
     acc["checks"][0]["status"] = "passed"
-    notes = apply_injection_sensor(repo, tmp_path, task, acc,
-                                   explicit_set={"no_injection_markers"})
-    assert acc["checks"][0]["status"] == "passed"
-    assert acc["checks"][0]["injection_override"] is True
-    assert any("manual override" in n for n in notes)
-    apply_injection_sensor(repo, tmp_path, task, acc)  # survives later evaluations
-    assert acc["checks"][0]["status"] == "passed"
+    notes = apply_injection_sensor(repo, tmp_path, task, acc)
+    assert acc["checks"][0]["status"] == "failed"
+    assert "injection_override" not in acc["checks"][0]
+    assert any("no_injection_markers failed" in n for n in notes)
 
 
 def test_sensor_resets_its_own_failure_when_marker_removed(tmp_path):
@@ -303,12 +301,13 @@ def test_gate_integration_invisible_unicode_fails_no_injection_markers(tmp_path)
     assert r.returncode == 1
     assert "invisible_unicode" in r.stdout and ZWSP not in r.stdout
 
-    # documented escape hatch: explicit --set no_injection_markers=passed after review
+    # the sensor's verdict is not overridable by hand: the gate refuses the declaration
     r = cli(repo, wt_root, "gate", task_id, "--set", "no_injection_markers=passed")
-    assert r.returncode == 0, r.stdout + r.stderr
+    assert r.returncode == 2, r.stdout + r.stderr   # a usage error, not a failed gate
+    assert "you set 'passed' — the sensor measured 'failed'" in r.stdout + r.stderr
     acc = json.loads((repo / ".rig" / "runs" / task_id / "acceptance.json").read_text(encoding="utf-8"))
     check = next(c for c in acc["checks"] if c["name"] == "no_injection_markers")
-    assert check["status"] == "passed" and check.get("injection_override") is True
+    assert check["status"] == "failed"
 
 
 def test_scan_injection_cli_paths_and_default(tmp_path):
@@ -375,5 +374,7 @@ def test_scan_injection_deps_stays_out_of_default_surfaces(tmp_path):
 def test_scan_injection_deps_is_mutually_exclusive(tmp_path):
     repo, _sha = make_repo(tmp_path)
     r = cli(repo, tmp_path / "wt", "scan-injection", "--deps", ".")
-    assert r.returncode == 1
+    # 2: a usage error, not a finding. 1 is what this command exits when it scanned and
+    # found something (`rig_workbench.exitcodes.REJECTED`).
+    assert r.returncode == 2
     assert "not a combination" in (r.stdout + r.stderr)

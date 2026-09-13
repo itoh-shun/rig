@@ -9,10 +9,11 @@ import pathlib
 import posixpath
 import subprocess
 
-from rig_workbench import __version__
-
-from .affected import analyze_affected
+from ..ports import Clock, Env, ProcessRunner
+from ..ports.local import OS_ENV, SUBPROCESS, SYSTEM_CLOCK
+from .affected import BrickGraphSource, analyze_affected
 from .cases import (
+    EXECUTOR_VERSION,
     EvalCaseError,
     canonical_json,
     evaluation_spec_hash,
@@ -21,6 +22,7 @@ from .cases import (
 )
 from .compare import validate_result
 from .execution import execution_diff_sha256
+from .source_graph import SOURCE_TREE_GRAPH
 
 # Where a measurement lands once it is committed. `evals/` is where the cases and
 # the surface registry already live and is not a prompt-surface root, so evidence
@@ -40,22 +42,23 @@ from .execution import execution_diff_sha256
 EVIDENCE_REL = "evals/evidence"
 
 
-def _git_ok(root: pathlib.Path, argv: list[str]) -> bool:
+def _git_ok(root: pathlib.Path, argv: list[str], *,
+            proc: ProcessRunner = SUBPROCESS) -> bool:
+    """Whether git could answer at all. `text=False` because nothing here reads the
+    output: only the status is read, so decoding it would be work whose result is
+    discarded — and on a `rev-parse` of a path git holds in another encoding, a decoding
+    that can fail."""
     try:
-        completed = subprocess.run(
-            ["git", *argv], cwd=root, capture_output=True, timeout=10, shell=False,
-        )
+        completed = proc.run(["git", *argv], cwd=root, timeout=10, text=False)
     except (OSError, subprocess.SubprocessError):
         return False
     return completed.returncode == 0
 
 
-def _resolve_commit(root: pathlib.Path, revision: str) -> str:
+def _resolve_commit(root: pathlib.Path, revision: str, *,
+                    proc: ProcessRunner = SUBPROCESS) -> str:
     try:
-        completed = subprocess.run(
-            ["git", "rev-parse", revision], cwd=root, capture_output=True, text=True,
-            encoding="utf-8", errors="replace", timeout=10, shell=False,
-        )
+        completed = proc.run(["git", "rev-parse", revision], cwd=root, timeout=10)
     except (OSError, subprocess.SubprocessError) as exc:
         raise EvalCaseError("cannot resolve evaluation gate revision") from exc
     value = completed.stdout.strip()
@@ -119,7 +122,8 @@ def _evidence_index(evidence_root: pathlib.Path) -> dict[str, list[dict]]:
 
 
 def _evidence_symlinks(evidence_root: pathlib.Path, resolved_head: str,
-                       root: pathlib.Path) -> list[str]:
+                       root: pathlib.Path, *,
+                       proc: ProcessRunner = SUBPROCESS) -> list[str]:
     """Links at or under the evidence tree, which this gate does not accept.
 
     Two readers, two answers, and the gap between them was a bypass: evidence is
@@ -161,10 +165,9 @@ def _evidence_symlinks(evidence_root: pathlib.Path, resolved_head: str,
                 if path.is_symlink():
                     found.add(name(path))
     try:
-        listing = subprocess.run(
+        listing = proc.run(
             ["git", "ls-tree", "-r", "-z", resolved_head, "--", EVIDENCE_REL],
-            cwd=root, capture_output=True, text=True, encoding="utf-8",
-            errors="replace", timeout=15, shell=False,
+            cwd=root, timeout=15,
         )
     except (OSError, subprocess.SubprocessError):
         return sorted(found)
@@ -182,11 +185,11 @@ def quality_result_failures(
     expected_base: str | None = None, expected_diff: str | None = None,
     provider: str | None = None, model: str | None = None,
     judge_provider: str | None = None, judge_model: str | None = None,
-    verify_attestation: bool = True,
+    verify_attestation: bool = True, env: Env = OS_ENV, clock: Clock = SYSTEM_CLOCK,
 ) -> list[str]:
     """Canonical attested-current quality policy for eval gates and packs."""
     validate_case(case)
-    validate_result(result, verify_attestation=verify_attestation)
+    validate_result(result, verify_attestation=verify_attestation, env=env, clock=clock)
     case_id = case["id"]
     failures: list[str] = []
     policy = case["provider_policy"]
@@ -212,9 +215,9 @@ def quality_result_failures(
         failures.append(f"judge_provider_mismatch:{case_id}")
     if judge_model is not None and result["judge_model"] != judge_model:
         failures.append(f"judge_model_mismatch:{case_id}")
-    if result["executor_version"] != __version__:
+    if result["executor_version"] != EXECUTOR_VERSION:
         failures.append(f"executor_version_mismatch:{case_id}")
-    if result["judge_executor_version"] != __version__:
+    if result["judge_executor_version"] != EXECUTOR_VERSION:
         failures.append(f"judge_executor_version_mismatch:{case_id}")
     if result["case_id"] != case_id or result["case_hash"] != evaluation_spec_hash(case):
         failures.append(f"case_hash_mismatch:{case_id}")
@@ -245,7 +248,8 @@ def quality_result_failures(
     return sorted(set(failures))
 
 
-def _head_digest(root: pathlib.Path, path: str, *, resolved_head: str, head: str) -> str | None:
+def _head_digest(root: pathlib.Path, path: str, *, resolved_head: str, head: str,
+                 proc: ProcessRunner = SUBPROCESS) -> str | None:
     """The object id this path has at the head being gated, or None if absent.
 
     The working-tree form hashes the file on disk rather than reading the tree, so
@@ -261,10 +265,7 @@ def _head_digest(root: pathlib.Path, path: str, *, resolved_head: str, head: str
     else:
         argv = ["rev-parse", "--verify", "--quiet", f"{resolved_head}:{path}"]
     try:
-        completed = subprocess.run(
-            ["git", *argv], cwd=root, capture_output=True, text=True,
-            encoding="utf-8", errors="replace", timeout=15, shell=False,
-        )
+        completed = proc.run(["git", *argv], cwd=root, timeout=15)
     except (OSError, subprocess.SubprocessError):
         return None
     value = completed.stdout.strip()
@@ -275,7 +276,7 @@ def _head_digest(root: pathlib.Path, path: str, *, resolved_head: str, head: str
 
 def _evidence_identity_failures(
     root: pathlib.Path, result: dict, case_id: str, *, resolved_head: str, head: str,
-    affected_surfaces: set[str],
+    affected_surfaces: set[str], proc: ProcessRunner = SUBPROCESS,
 ) -> list[str]:
     """Bind evidence to the prompt content it measured, not to a commit id.
 
@@ -327,17 +328,20 @@ def _evidence_identity_failures(
         return [f"execution_digests_absent:{case_id}"]
     failures: list[str] = []
     for path in sorted(affected_surfaces):
-        if _head_digest(root, path, resolved_head=resolved_head, head=head) != recorded.get(path):
+        if _head_digest(root, path, resolved_head=resolved_head, head=head,
+                        proc=proc) != recorded.get(path):
             failures.append(f"execution_prompt_surface_changed:{case_id}:{path}")
     measured = result["execution_commit"]
     measured_base = result["execution_base_commit"]
-    if not _git_ok(root, ["rev-parse", "--verify", "--quiet", f"{measured}^{{commit}}"]):
+    if not _git_ok(root, ["rev-parse", "--verify", "--quiet", f"{measured}^{{commit}}"],
+                   proc=proc):
         return failures                # squashed or rebased away; content decides
     if not _git_ok(root, ["rev-parse", "--verify", "--quiet",
-                          f"{measured_base}^{{commit}}"]):
+                          f"{measured_base}^{{commit}}"], proc=proc):
         return [*failures, f"execution_base_unreachable:{case_id}"]
     try:
-        recomputed = execution_diff_sha256(root, base=measured_base, head=measured)
+        recomputed = execution_diff_sha256(root, base=measured_base, head=measured,
+                                           proc=proc)
     except EvalCaseError:
         return [*failures, f"execution_base_unreachable:{case_id}"]
     if recomputed != result["execution_diff_sha256"]:
@@ -463,7 +467,7 @@ def _started_at(result: dict) -> dt.datetime | None:
 
 
 def _base_evidence(
-    root: pathlib.Path, revision: str,
+    root: pathlib.Path, revision: str, *, proc: ProcessRunner = SUBPROCESS,
 ) -> dict[str, tuple[dt.datetime, str]] | None:
     """case id → (when the evidence at `revision` was measured, its identity).
 
@@ -480,10 +484,9 @@ def _base_evidence(
     result under a case it is not, on the one side that would not have noticed.
     """
     try:
-        listing = subprocess.run(
+        listing = proc.run(
             ["git", "ls-tree", "-r", "-z", "--name-only", revision, "--", EVIDENCE_REL],
-            cwd=root, capture_output=True, text=True, encoding="utf-8",
-            errors="replace", timeout=15, shell=False,
+            cwd=root, timeout=15,
         )
     except (OSError, subprocess.SubprocessError):
         return None
@@ -494,10 +497,7 @@ def _base_evidence(
         if not path.endswith(".json"):
             continue
         try:
-            blob = subprocess.run(
-                ["git", "show", f"{revision}:{path}"], cwd=root, capture_output=True,
-                text=True, encoding="utf-8", errors="replace", timeout=15, shell=False,
-            )
+            blob = proc.run(["git", "show", f"{revision}:{path}"], cwd=root, timeout=15)
         except (OSError, subprocess.SubprocessError):
             return None
         if blob.returncode != 0:
@@ -526,6 +526,8 @@ def evaluate_gate(
     evidence_dir: pathlib.Path | str, provider: str | None = None,
     model: str | None = None, judge_provider: str | None = None,
     judge_model: str | None = None, ratchet: bool = False,
+    proc: ProcessRunner = SUBPROCESS, env: Env = OS_ENV, clock: Clock = SYSTEM_CLOCK,
+    graph: BrickGraphSource = SOURCE_TREE_GRAPH,
 ) -> tuple[dict, int]:
     """`ratchet` is the same direction CI drives with `eval affected --ratchet`.
 
@@ -544,7 +546,7 @@ def evaluate_gate(
     root = pathlib.Path(repo).resolve()
     affected = analyze_affected(
         root, base=base, head=head, require_cases=not ratchet, ratchet=ratchet,
-        evidence_dir=evidence_dir,
+        evidence_dir=evidence_dir, proc=proc, graph=graph,
     )
     debt = affected["coverage_debt"]
     if affected["status"] == "noop":
@@ -569,7 +571,7 @@ def evaluate_gate(
                     if affected["coverage_base_unreadable"] else [])
                  + [f"registry_narrowed:{item}"
                     for item in affected["registry_narrowings"]]}, 1)
-    resolved_head = _resolve_commit(root, "HEAD" if head == "working" else head)
+    resolved_head = _resolve_commit(root, "HEAD" if head == "working" else head, proc=proc)
     cases = _cases(root)
     failures: list[str] = []
     infra: list[str] = []
@@ -577,7 +579,8 @@ def evaluate_gate(
     evidence_index = _evidence_index(evidence_root)
     affected_surfaces = {item["path"] for item in affected["affected_surfaces"]}
     failures.extend(f"evidence_symlink:{item}"
-                    for item in _evidence_symlinks(evidence_root, resolved_head, root))
+                    for item in _evidence_symlinks(evidence_root, resolved_head, root,
+                                                   proc=proc))
     # Read at `base`, once for every case rather than once per case. `base` is
     # resolved rather than passed through so the revision handed to git is a
     # commit id this repository produced, and so a base that cannot be resolved is
@@ -585,7 +588,7 @@ def evaluate_gate(
     # is the caller's to get right — CI resolves the ref in the runner and passes
     # a commit id, so this call is a second line of defence rather than the
     # mechanism. See `_evidence_ratchet_failures` for why it has to be a tip.
-    prior = (_base_evidence(root, _resolve_commit(root, base))
+    prior = (_base_evidence(root, _resolve_commit(root, base, proc=proc), proc=proc)
              if affected["affected_cases"] else {})
     for case_id in affected["affected_cases"]:
         case = cases.get(case_id)
@@ -599,7 +602,7 @@ def evaluate_gate(
         valid: list[dict] = []
         for result in candidates:
             try:
-                validate_result(result)
+                validate_result(result, env=env, clock=clock)
             except EvalCaseError as exc:
                 infra.append(f"invalid_evidence:{case_id}:{exc}")
                 continue
@@ -617,11 +620,11 @@ def evaluate_gate(
         result = matching[0]
         quality = quality_result_failures(
             result, case, provider=provider, model=model,
-            judge_provider=judge_provider, judge_model=judge_model,
+            judge_provider=judge_provider, judge_model=judge_model, env=env, clock=clock,
         )
         identity = _evidence_identity_failures(
             root, result, case_id, resolved_head=resolved_head, head=head,
-            affected_surfaces=affected_surfaces,
+            affected_surfaces=affected_surfaces, proc=proc,
         )
         identity.extend(_evidence_ratchet_failures(result, case_id, prior=prior))
         if any(item.startswith(("execution_", "executor_", "judge_executor_"))
