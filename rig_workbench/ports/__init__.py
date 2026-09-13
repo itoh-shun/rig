@@ -86,6 +86,10 @@ class ProcessRunner(Protocol):
     or a caller can redirect — the exact scatter this stage exists to end. A command whose
     output is meant for the operator is two calls: run it here, print it there.
 
+    Text mode also declares one variable to the child, which is the single way this port
+    adds to an environment rather than replacing it; `run`'s own docstring states it in full,
+    and an implementation that stops reading here will not reproduce this port.
+
     **Text is the default; it is no longer the rule.** `text=False` exists because three sites
     in the second pillar read bytes and decoding would destroy what they read:
     `eval/affected.py:412` (`git cat-file --batch`, whose stdout is length-framed binary),
@@ -154,9 +158,35 @@ class ProcessRunner(Protocol):
         `text` is on, and no decoding at all when it is off. That is what today's callers
         already read (`proc.stdout.strip()`, `proc.returncode`, and `bytes` at the three sites
         above), so the migration stays a swap rather than a rewrite. `env` replaces the
-        environment rather than adding to it, as `subprocess` does; `input` is written to the
-        process's stdin and has to be `str` in text mode and `bytes` out of it, again as
-        `subprocess` has it. `errors` with `text=False` is a contradiction and is refused
+        environment rather than adding to it, as `subprocess` does — **with one declared
+        exception, stated here because a second implementation or a test fake written from
+        this protocol has to reproduce it**: in text mode the child is given
+        `PYTHONIOENCODING="utf-8:<handler>"`, and that is the whole of the exception. Text
+        mode pins the pipe to UTF-8 in both directions and a Python child resolves its own
+        stdio from that variable, so leaving the operator's console to answer it is how rig
+        comes to hand a child UTF-8 and tell it to read ASCII — the child then dies on rig's
+        own bytes and the caller reads that as the program failing. The codec is pinned and
+        the error handler is carried, never replaced: whatever the operator named in their
+        own `PYTHONIOENCODING`, and `local.PIPE_ERRORS` (`surrogateescape`) when they named
+        none. **That default preserves a handler under some locales and replaces one under
+        others, and an implementer has to be told which.** Under `C`, `POSIX` and the
+        C-locale-coercion targets — the locales a bare container actually ships — CPython
+        resolves an unset handler to `surrogateescape` itself, so the declaration changes
+        nothing but the codec. Under a genuine UTF-8 locale it resolves to `strict`
+        (measured against a generated `en_US.UTF-8`), and there the declaration overrides it
+        on purpose: `strict` is what makes a child die printing a filename that is not valid
+        UTF-8, and rig owns both ends of this pipe. The override is bounded — a lone
+        surrogate the child re-encodes to its raw byte comes back through the `errors=`
+        above as U+FFFD, so it never reaches rig's strings — and the one text-mode read that
+        would want surrogates preserved (`eval/affected.py`, `git ls-tree`) has a child that
+        is not a Python process and cannot see this variable at all. In bytes mode nothing
+        is declared, because nothing is claimed. Callers that curate a child's environment
+        keep every other key exactly:
+        `workbench/adjudication.py` builds the drill judge's environment as an allowlist and
+        this adds one constant to it, with one value, fixed in rig's source — pinned by
+        `tests/test_drill_judge_adjudication.py` so it stays a constant. `input` is written
+        to the process's stdin and has to be `str` in text mode and `bytes` out of it, again
+        as `subprocess` has it. `errors` with `text=False` is a contradiction and is refused
         rather than ignored.
         """
         ...

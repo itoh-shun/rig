@@ -19,7 +19,7 @@ try:
 except ImportError:
     fcntl = None  # type: ignore[assignment]  # Windows fallback (locking disabled)
 
-from rig_workbench import gitroot
+from rig_workbench import console, gitroot
 from rig_workbench.exitcodes import ERROR, REJECTED
 # Module level, unlike every other `govern` import in this file, because a type alias is
 # resolved when the `def` below is executed and there is no function to hide it in.
@@ -51,6 +51,28 @@ def now_iso() -> str:
 #
 # Neither takes a code, and there is no default to inherit: a call site chooses by which
 # function it calls, so "is this a judgement?" is answered where the answer is known.
+#
+# **All three write through `console.write_line` rather than `print`, and that is about
+# who calls them rather than how they are spelled.** The line is byte for byte the one
+# `print` wrote — same text, same newline, same stream, resolved at call time — until the
+# console's encoder refuses a character, which is where `print` raises `UnicodeEncodeError`
+# and prints nothing at all. These three are rig's last-resort speech, reached from 37
+# modules, and `warn` is how `_set_unusable_key_aside` tells an operator that a provenance
+# key has **already** been renamed to `.unusable`: a raise there leaves the file moved and
+# the sentence unsaid, in the middle of `accept`. A process rig started has hardened
+# streams (`console.harden_streams`, from `exitcodes.guard` and the `scripts/` shims) and
+# never reaches the fallback; a caller who imported this module into their own program has
+# whatever streams that program opened, and these three sentences are the ones that must
+# not depend on the difference. The rest of this pillar's `print` sites do —
+# `rig_workbench/console.py` says exactly which.
+#
+# `warn` is the one that was dying, and that was measured rather than assumed: CPython
+# opens `sys.stderr` with `backslashreplace` already (under `PYTHONIOENCODING=ascii` a
+# process reports `stdout ascii strict | stderr ascii backslashreplace`, and `:strict`
+# does not move stderr either), so `die` and `reject` only raise when what they are
+# pointed at is not the process's own stderr — a caller that redirected it into a narrow
+# wrapper, which `tests/test_console_encoding.py` drives. They are spelled like `warn`
+# anyway: the three are one family, and what differs between them is the exit code.
 
 
 def die(msg: str) -> "NoReturn":  # noqa: F821
@@ -63,7 +85,7 @@ def die(msg: str) -> "NoReturn":  # noqa: F821
     written. What is refused there is the operator's declaration, never the work, which
     is exactly why it must not come back as `reject`'s 1.
     """
-    print(f"[ERROR] {msg}", file=sys.stderr)
+    console.write_line(f"[ERROR] {msg}", stream=sys.stderr)
     sys.exit(ERROR)
 
 
@@ -74,12 +96,12 @@ def reject(msg: str) -> "NoReturn":  # noqa: F821
     policy that blocks, an actor who is not permitted to accept. A caller acts on this
     and does not retry it, which is exactly what makes it wrong for a missing file.
     """
-    print(f"[REJECTED] {msg}", file=sys.stderr)
+    console.write_line(f"[REJECTED] {msg}", stream=sys.stderr)
     sys.exit(REJECTED)
 
 
 def warn(msg: str) -> None:
-    print(f"[WARN] {msg}")
+    console.write_line(f"[WARN] {msg}")
 
 
 # ── git helpers ───────────────────────────────────────────────────────────────

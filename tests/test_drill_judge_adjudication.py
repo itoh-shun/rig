@@ -23,6 +23,7 @@ import sys
 import pytest
 
 from rig_workbench.orchestrate import providers
+from rig_workbench.ports import local as ports_local
 from rig_workbench.workbench import adjudication, detection_corpus
 from rig_workbench.workbench.adjudication import (Adjudicator, Ledger, judge_prompt,
                                                   ledger_key, parse_verdict)
@@ -324,7 +325,17 @@ def test_a_new_rig_variable_is_invisible_to_the_judge_without_anyone_remembering
 
 
 def test_the_judge_actually_receives_that_environment(monkeypatch):
-    """The allowlist is worth nothing if `run_provider` still inherits `os.environ`."""
+    """The allowlist is worth nothing if `run_provider` still inherits `os.environ`.
+
+    The operator's own `PYTHONIOENCODING` is set for the length of this test, and that is
+    load-bearing rather than scene-setting: `ports/local.py` reads the handler out of the
+    environment it was *given*, and reading it from `os.environ` instead would route the
+    operator's choice into this curated child. With this process happening to have none
+    set, that mutation passed the whole file — the claim "nothing of the operator's reaches
+    the handler in this path" was true and unmeasured. A value nothing in rig would ever
+    choose makes it measured.
+    """
+    monkeypatch.setenv("PYTHONIOENCODING", "utf-8:backslashreplace")
     captured = {}
 
     class _Result:
@@ -338,7 +349,25 @@ def test_the_judge_actually_receives_that_environment(monkeypatch):
     case = next(c for c in load_cases(["ts-mixed-violations"]))
     Adjudicator(ledger=None)(case, case["violations"][0], _finding("some body"))
     assert captured, "the provider was launched with an inherited environment"
-    assert set(captured) <= set(adjudication._ENV_KEEP) | {"PATH", "RIG_PROVIDER_SUBPROCESS"}
+    # The two names beside the allowlist are constants rig sets on every text-mode child,
+    # not inherited state: `RIG_PROVIDER_SUBPROCESS` marks the process so rig's own Stop
+    # hook stands down in it, and `PYTHONIOENCODING` tells a child what encoding the pipe
+    # it is being handed already has (`ports/local.py:SubprocessRunner.run` — rig writes
+    # UTF-8 and used to let the operator's console tell the child to read something else).
+    # The allowlist stays a list of what is *kept from the environment*, which is what
+    # makes a new rig variable invisible here by default.
+    assert set(captured) <= set(adjudication._ENV_KEEP) | {
+        "PATH", "RIG_PROVIDER_SUBPROCESS", "PYTHONIOENCODING"}
+    # **The value, not just the name.** Admitting the name alone was worth nothing: with it
+    # the whole of this file passed while the value carried
+    # `"utf-8," + os.environ.get("RIG_CASE_HINT", "")` — an answer key smuggled through a
+    # variable the blindness check had waved past. Pinned here the way
+    # `tests/test_provider_subprocess_env.py` pins the other one. It is a constant because
+    # this environment is curated: `judge_env` builds it from an allowlist that does not
+    # keep `PYTHONIOENCODING`, so nothing of the operator's reaches the handler, and the
+    # default is the one `ports/local.py` names.
+    assert captured["PYTHONIOENCODING"] == f"utf-8:{ports_local.PIPE_ERRORS}"
+    assert captured["RIG_PROVIDER_SUBPROCESS"] == "1"
 
 
 def test_the_prompt_that_is_actually_sent_carries_no_answer_key(monkeypatch):
