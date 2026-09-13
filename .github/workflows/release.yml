@@ -12,6 +12,22 @@ name: release
 # Release in one shot. Tag pushes from clients get 403 by environment policy, but
 # the GITHUB_TOKEN inside Actions can create tags/Releases with contents:write,
 # so this path goes through.
+#
+# Two things this workflow learned from the 3.0.0 release, which did not publish:
+#
+# 1. The notes are cut to fit. `--notes-file` fails the whole job with
+#    `HTTP 422: Validation Failed / body is too long (maximum is 125000
+#    characters)`, which is what the 3.0.0 run hit at 129,059 bytes.
+#    scripts/release_notes.py does the extraction and the cutting, and points the
+#    reader at CHANGELOG.md at the tag for the rest. The CHANGELOG entry is the
+#    record and stays whole.
+# 2. The tag can outlive the run that made it. `gh release create` creates the tag
+#    *first*, so a run that fails at the release leaves the tag behind with no
+#    release — exactly the state 3.0.0 was left in. The idempotence check below
+#    keys on the release, so a re-run comes back through here with the tag already
+#    present; "Resolve release and tag state" is what makes that path defined
+#    rather than accidental. It is also the ordinary path for a manual `v*` push,
+#    where the tag always exists before the job starts.
 on:
   push:
     branches: [master]
@@ -33,65 +49,217 @@ jobs:
         run: |
           set -euo pipefail
           if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
-            # Manual tag push path: take the version from the tag name and use the existing tag as-is
+            # Manual tag push path: take the version from the tag name
             VERSION="${GITHUB_REF_NAME#v}"
             TAG="${GITHUB_REF_NAME}"
-            TARGET="${GITHUB_REF_NAME}"
           else
             # master push path: read the version from plugin.json and tag this push's commit
             VERSION="$(python3 -c "import json;print(json.load(open('.claude-plugin/plugin.json'))['version'])")"
             TAG="v${VERSION}"
-            TARGET="${GITHUB_SHA}"
+          fi
+          # The version reaches $GITHUB_OUTPUT, a shell and a git refspec. On the master
+          # path it is repository content — a newline inside plugin.json's version string
+          # writes a second output line of the author's choosing — so it is refused here
+          # unless it is a version number, rather than escaped at each of the three. The
+          # bash test anchors the whole string, so a value carrying a newline fails it.
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.]+)*$ ]]; then
+            echo "::error::the version this run would release, \"$VERSION\", is not a" \
+                 "version number — refusing to go further"
+            exit 1
+          fi
+          # One commit sha, resolved by git rather than assumed. The next step compares
+          # this against a tag peeled to its commit, and on an annotated tag push
+          # GITHUB_SHA may be the tag object rather than the commit under it — so peel
+          # this side too and the question stops mattering: `^{commit}` is a no-op on a
+          # commit and a dereference on a tag object. `fetch-depth: 0` has the object.
+          if ! TARGET="$(git rev-parse --verify --quiet "${GITHUB_SHA}^{commit}")"; then
+            echo "::error::cannot resolve ${GITHUB_SHA} to a commit in this checkout"
+            exit 1
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=$TAG"         >> "$GITHUB_OUTPUT"
           echo "target=$TARGET"   >> "$GITHUB_OUTPUT"
 
-      - name: Skip if release already exists
-        id: exists
+      - name: Resolve release and tag state
+        id: state
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.target.outputs.tag }}
+          TARGET: ${{ steps.target.outputs.target }}
         run: |
           set -euo pipefail
-          if gh release view "${{ steps.target.outputs.tag }}" >/dev/null 2>&1; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "::notice::Release ${{ steps.target.outputs.tag }} already exists — skipping"
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
+          # Tags are read from git, not from the API. `gh api .../git/ref/tags/<tag>`
+          # answers 404 for a tag that is not there and 403 when the token is scoped
+          # wrong or rate-limited, and a `2>/dev/null` around it made those the same
+          # answer — "no tag" — which would walk a tag at some *other* commit straight
+          # past the refusal below and into a release. git either has the ref or it does
+          # not, and it peels an annotated tag to its commit in the same expression.
+          # `--prune --prune-tags` so the local view is the remote's, deletions
+          # included: without it a tag deleted upstream is still sitting in the
+          # checkout, and this step would report a tag that is not there any more.
+          if ! git fetch --prune --prune-tags --force origin "+refs/tags/*:refs/tags/*"; then
+            echo "::warning::could not refresh tags; reading the copy actions/checkout" \
+                 "fetched, which at fetch-depth: 0 is every tag as of checkout"
           fi
+          tag_sha="$(git rev-parse --verify --quiet "refs/tags/${TAG}^{commit}" || true)"
+
+          # The one `gh` read left, and its `2>&1` hides a 403 the same way the tag read
+          # used to. It is left that way deliberately: a token that cannot read the
+          # release cannot create one either, so this fails loudly two steps later at
+          # `gh release create` rather than quietly doing the wrong thing here.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Release $TAG already exists — skipping"
+            # One thing worth saying even on the path that does nothing. Comparing the
+            # tag's commit against this run's TARGET would be wrong here — every ordinary
+            # push to master after a release has a different HEAD and would warn for
+            # ever — but a release whose tag has gone is a state no later run would
+            # otherwise mention at all.
+            if [ -z "$tag_sha" ]; then
+              echo "::warning::release $TAG exists but the tag does not — it was deleted" \
+                   "after the release was published"
+            fi
+            exit 0
+          fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+          if [ -z "$tag_sha" ]; then
+            echo "tag_state=absent" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$tag_sha" != "$TARGET" ]; then
+            # Not ours to heal. The tag names a different commit from the one this run
+            # would release; moving it would rewrite what $TAG already means to anyone
+            # who has fetched it, and choosing between the two is a maintainer's call.
+            echo "::error::$TAG already exists at $tag_sha, but this run would release" \
+                 "$TARGET. Refusing to publish a release whose tag names a different" \
+                 "commit — move or delete the tag deliberately, then re-run."
+            exit 1
+          fi
+          # The tag is right and the release is missing. What that means depends on which
+          # path is running, and only one of the two is a symptom of anything.
+          echo "tag_state=present" >> "$GITHUB_OUTPUT"
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            # Somebody pushed the tag deliberately and this job exists to give it a
+            # release. The tag coming first is the design of that path, not a fault.
+            echo "::notice::$TAG was pushed as a tag; attaching the release to it"
+            exit 0
+          fi
+          # On master nobody pushes tags — this workflow is the only thing that creates
+          # them, and it creates them as a side effect of `gh release create`. So here a
+          # tag with no release means a previous run died between the two (a 422 on
+          # oversized notes is how 3.0.0 got here). Re-running is meant to finish that
+          # job, so this heals — but not silently. That state is one a maintainer should
+          # get to see, so it is a warning and a line in the run summary, and both outlive
+          # the release landing afterwards.
+          echo "::warning::$TAG already exists at $TARGET with no release attached — a" \
+               "previous run created the tag and then failed. Attaching the release to" \
+               "the existing tag; the tag is not moved."
+          echo "- \`$TAG\` already existed at \`$TARGET\` with no release; this run" \
+               "attached one." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Extract release notes from CHANGELOG
-        if: steps.exists.outputs.skip == 'false'
+        if: steps.state.outputs.skip == 'false'
         id: notes
+        env:
+          VERSION: ${{ steps.target.outputs.version }}
+          TAG: ${{ steps.target.outputs.tag }}
         run: |
           set -euo pipefail
-          VERSION="${{ steps.target.outputs.version }}"
-          awk -v ver="$VERSION" '
-            BEGIN { gsub(/\./, "\\.", ver); hdr = "^## \\[" ver "\\]" }
-            $0 ~ hdr { flag = 1; next }
-            flag && /^## \[/ { flag = 0 }
-            flag { print }
-          ' CHANGELOG.md > notes.md || true
-          sed -i -e '/./,$!d' notes.md 2>/dev/null || true
-          if [ -s notes.md ]; then
-            echo "source=changelog" >> "$GITHUB_OUTPUT"
-          else
-            echo "source=auto" >> "$GITHUB_OUTPUT"
+          # Writes notes.md, and `source` / `shortened` / `entry_chars` / `notes_chars`
+          # straight into $GITHUB_OUTPUT. A missing section is not an error here (it
+          # reports source=auto and the create falls back to --generate-notes);
+          # rig_workbench/validation/release.py is what fails a missing section.
+          python3 scripts/release_notes.py \
+            --changelog CHANGELOG.md \
+            --version "$VERSION" \
+            --repo "$GITHUB_REPOSITORY" \
+            --tag "$TAG" \
+            --output notes.md \
+            --status-file "$GITHUB_OUTPUT"
+
+      - name: Report what the notes carry
+        if: steps.state.outputs.skip == 'false'
+        env:
+          VERSION: ${{ steps.target.outputs.version }}
+          SOURCE: ${{ steps.notes.outputs.source }}
+          SHORTENED: ${{ steps.notes.outputs.shortened }}
+          ENTRY_CHARS: ${{ steps.notes.outputs.entry_chars }}
+          ENTRY_BYTES: ${{ steps.notes.outputs.entry_bytes }}
+          NOTES_CHARS: ${{ steps.notes.outputs.notes_chars }}
+          NOTES_BYTES: ${{ steps.notes.outputs.notes_bytes }}
+        run: |
+          set -euo pipefail
+          if [ "$SOURCE" = "auto" ]; then
             echo "::notice::No $VERSION section in CHANGELOG — using auto-generated notes"
+            exit 0
           fi
+          if [ "$SHORTENED" != "true" ]; then
+            exit 0
+          fi
+          # Both units in the sentence, because the budget is bytes and the two numbers
+          # disagree. Reporting only characters produced "77038 characters, over the
+          # 125000-character limit" for a CJK-heavy entry — a claim a reader can see is
+          # false, which is worse than no warning at all.
+          echo "::warning::The $VERSION CHANGELOG entry is $ENTRY_BYTES UTF-8 bytes" \
+               "($ENTRY_CHARS characters), and a release body holds 125000. The notes" \
+               "were cut to $NOTES_BYTES bytes ($NOTES_CHARS characters) and point at" \
+               "CHANGELOG.md at the tag."
+          echo "- release notes shortened: $ENTRY_BYTES -> $NOTES_BYTES bytes" \
+               "($ENTRY_CHARS -> $NOTES_CHARS characters)." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Create tag + release
-        if: steps.exists.outputs.skip == 'false'
+        if: steps.state.outputs.skip == 'false'
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.target.outputs.tag }}
+          TARGET: ${{ steps.target.outputs.target }}
+          TAG_STATE: ${{ steps.state.outputs.tag_state }}
+          SOURCE: ${{ steps.notes.outputs.source }}
         run: |
           set -euo pipefail
-          TAG="${{ steps.target.outputs.tag }}"
-          TARGET="${{ steps.target.outputs.target }}"
-          TITLE="rig ${TAG}"
-          if [ "${{ steps.notes.outputs.source }}" = "changelog" ]; then
-            gh release create "$TAG" --target "$TARGET" --title "$TITLE" --notes-file notes.md
+          args=("$TAG" --title "rig ${TAG}")
+          if [ "$TAG_STATE" = "absent" ]; then
+            # `--target` places the tag this call is about to create.
+            args+=(--target "$TARGET")
+          fi
+          # With the tag already there, `--target` has nothing left to decide — the tag is
+          # what the release attaches to. It is left off rather than passed and ignored, so
+          # that this call cannot be read as an instruction to move a tag that other people
+          # may already have fetched.
+          if [ "$SOURCE" = "changelog" ]; then
+            args+=(--notes-file notes.md)
           else
-            gh release create "$TAG" --target "$TARGET" --title "$TITLE" --generate-notes
+            args+=(--generate-notes)
+          fi
+          gh release create "${args[@]}"
+
+          # Verified, not assumed. Creating a release against a tag that already exists is
+          # a path this repository had never run, and "it attaches to the tag and leaves it
+          # alone" is the claim the whole tag_state=present branch rests on. Checking it on
+          # the run that makes it is the only honest way to hold it: the release is already
+          # published at this point, so a moved tag is reported as a job failure with the
+          # release intact, which is the pair a maintainer needs to see. Read through git
+          # for the same reason as the step above — an API error and an absent tag must not
+          # arrive as the same answer — and `^{commit}` peels an annotated tag.
+          # The wildcard refspec, not `+refs/tags/$TAG:refs/tags/$TAG`: fetching one ref
+          # by name *fails* when that ref is absent, which would report a vanished tag as
+          # "could not re-read" and send a maintainer looking for a network fault. The
+          # wildcard succeeds either way and the answer is then the rev-parse below.
+          if ! git fetch --prune --prune-tags --force origin "+refs/tags/*:refs/tags/*"; then
+            echo "::error::could not re-read $TAG after publishing the release; the" \
+                 "release exists and the tag has not been checked"
+            exit 1
+          fi
+          after="$(git rev-parse --verify --quiet "refs/tags/${TAG}^{commit}" || true)"
+          if [ -z "$after" ]; then
+            echo "::error::$TAG does not exist after publishing the release. The release" \
+                 "exists; the tag needs a maintainer."
+            exit 1
+          fi
+          if [ "$after" != "$TARGET" ]; then
+            echo "::error::$TAG now points at $after, not $TARGET — publishing the" \
+                 "release moved the tag. The release exists; the tag needs a maintainer."
+            exit 1
           fi
           echo "::notice::Created $TAG at $TARGET"
