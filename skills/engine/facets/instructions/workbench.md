@@ -156,7 +156,13 @@ python3 scripts/workbench.py gate <task_id> --set no_type_errors_or_explained=pa
 
 diff が日本語の散文を足したタスクでは、gate に `ja_lint_clean` と `ja_prose_ai_smell_reviewed` が現れる。前者はセンサーが書く。後者は `ai-smell-reviewer` の verdict を `workbench.py review <task_id> --set ai-smell-reviewer=<verdict>` で記録するまで `pending` のままで、accept できない（`facets/instructions/parallel-review` の日本語散文レーン）。
 
-review 系タスク（`review`/`security_review`/`pr-review`）で reviewer persona の verdict が出たら記録する。記録先は `workbench.py review <task_id> --set <persona>=<APPROVE|REJECT|APPROVE_WITH_CONDITIONS>`。これは gate 判定そのものではなく、`/rig:go stats` の「verifier のゴム印検知」（REJECT ゼロが続く reviewer への警告）に使う観測データ。
+タスクのレビューで reviewer persona の verdict が出たら記録する。
+記録先は `workbench.py review <task_id> --set <persona>=<APPROVE|REJECT|APPROVE_WITH_CONDITIONS>`。
+`accept` は記録済みの `REJECT` が残っていれば拒否する。gate 通過後に届いた判定も対象になる。
+指摘を修正し、REJECT した reviewer の再レビュー結果を同じ persona 名で記録する。
+レビュー専用タスクの gate は、指摘の具体性などレビュー作業の完了を判定する。
+対象の変更を却下しても、レビュー作業自体は完了できる。
+verdict は `/rig:go stats` のゴム印検知にも使う。REJECT ゼロが続く reviewer への警告である。
 
 ### ⑤ 結果サマリ
 

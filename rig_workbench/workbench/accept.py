@@ -16,7 +16,7 @@ import sys
 # resolves to a non-existent `site-packages/scripts` once installed.
 from .. import ast_diff
 from ..govern import enforce as govern_enforce
-from .config import CHECK_ICON, RECOMMENDATION
+from .config import CHECK_ICON, RECOMMENDATION, VALID_VERDICT
 from .state import (_diff_lines, audit_append, build_acceptance,
                     current_identity, die, drift_lines, effective_base,
                     gate_status, git, load_access_control,
@@ -367,6 +367,36 @@ def cmd_diff(args: argparse.Namespace) -> None:
     print(f"\nRecommended:\n  {RECOMMENDATION[gate_status(acc)]}")
 
 
+def _rejected_reviews(run: pathlib.Path, task_id: str) -> list[dict]:
+    """Read the current reviewer vetoes while accept holds the task lock.
+
+    Reviews remain optional. An existing record must be interpretable before
+    applying changes; malformed or duplicate verdicts are not an empty review.
+    """
+    path = run / "review.json"
+    try:
+        data = load_json(path, {"task_id": task_id, "verdicts": []})
+    except (OSError, ValueError) as exc:
+        die(f"Cannot read {path}: {exc}. Restore the review record before accepting.")
+    if (not isinstance(data, dict) or data.get("task_id") != task_id
+            or not isinstance(data.get("verdicts"), list)):
+        die(f"Invalid {path}: expected this task's per-persona verdicts. "
+            "Restore the review record before accepting.")
+    seen: set[str] = set()
+    rejected = []
+    for item in data["verdicts"]:
+        if (not isinstance(item, dict) or not isinstance(item.get("persona"), str)
+                or item.get("verdict") not in VALID_VERDICT
+                or item["persona"] in seen):
+            die(f"Invalid {path}: expected one valid verdict per persona. "
+                "Restore the review record before accepting.")
+        seen.add(item["persona"])
+        if item["verdict"] == "REJECT":
+            rejected.append({"persona": item["persona"], "verdict": item["verdict"],
+                             "recorded_at": item.get("recorded_at")})
+    return sorted(rejected, key=lambda item: item["persona"])
+
+
 def cmd_accept(args: argparse.Namespace) -> None:
     root = repo_root()
     task_id = resolve_task_id(root, args.task_id)
@@ -413,6 +443,9 @@ def _cmd_accept_locked(args: argparse.Namespace, root: pathlib.Path, task_id: st
     # was accepted cleanly. The reviewed-and-accepted-anyway decision has one door, and it
     # is `--force`, which records all four.
     gate_ok = status in ("passed", "passed_with_warnings")
+    # A review can arrive after `gate`. Read it here under the same task lock as
+    # `review`, without replacing the gate's judgment of task completion.
+    rejected_reviews = _rejected_reviews(d, task_id)
     # WHICH COMMITS THE VERDICT IS ABOUT. `accept` squashes the branch as it stands now;
     # the gate judged the worktree as it stood when `gate` last ran. Nothing tied the two
     # together, so a clean gate followed by another commit in the worktree carried an
@@ -463,6 +496,7 @@ def _cmd_accept_locked(args: argparse.Namespace, root: pathlib.Path, task_id: st
         ("acceptance_gate_not_failed", gate_ok),
         ("no_unrelated_diff", unrelated_ok),
         ("gate_judged_this_head", head_ok),
+        ("no_rejected_reviews", not rejected_reviews),
     ]
     print(f"## rig accept: {task_id} — accept_requirements")
     for name, ok in hard + soft:
@@ -522,6 +556,14 @@ def _cmd_accept_locked(args: argparse.Namespace, root: pathlib.Path, task_id: st
         if not head_ok:
             lines += _head_refusal_lines(task_id, acc, task.get("branch"),
                                          worktree_head, branch_tip)
+        if rejected_reviews:
+            lines += [
+                "Cannot accept: unresolved reviewer rejections: "
+                + ", ".join(f"{v['persona']}=REJECT" for v in rejected_reviews),
+                "  Address the findings and record each rejecting reviewer's new verdict "
+                f"with `workbench.py review {task_id} --set <persona>=<verdict>`.",
+                "  Re-running the acceptance gate does not clear a reviewer's REJECT.",
+            ]
         lines.append("  Or pass --force if you understand the risk (recorded in .rig/audit.jsonl and provenance.json)")
         reject("\n".join(lines))
 
@@ -531,7 +573,8 @@ def _cmd_accept_locked(args: argparse.Namespace, root: pathlib.Path, task_id: st
     # anything is written or merged, so a refusal leaves the tree and the run-state
     # exactly as they were.
     unmet_criteria = sorted({c["name"] for c in acc["checks"] if c["status"] in ("failed", "pending")}
-                            | {name for name in ("no_unrelated_diff", "gate_judged_this_head")
+                            | {name for name in ("no_unrelated_diff", "gate_judged_this_head",
+                                                 "no_rejected_reviews")
                                if name in soft_fail})
     # WHICH COMMIT AN APPROVAL IS SPENT ON. The same distinction the head check above
     # makes, made once more for the human half of it. `check_accept` was handed the
@@ -762,6 +805,7 @@ def _cmd_accept_locked(args: argparse.Namespace, root: pathlib.Path, task_id: st
             "recipe": task.get("recipe"),
             "bypassed": soft_fail,
             "gate_status": status,
+            "rejected_reviews": rejected_reviews,
             "failed_checks": [c["name"] for c in acc["checks"]
                               if c["status"] in ("failed", "pending")],
             # All three refs, always, and not only when they differ: an audit reading a
@@ -801,6 +845,7 @@ def _cmd_accept_locked(args: argparse.Namespace, root: pathlib.Path, task_id: st
         "accepted_at": task["accepted_at"],
         "gate_status": status,
         "forced": bool(task.get("forced")),
+        "rejected_reviews": rejected_reviews,
         "checks": sorted([{"name": c["name"], "status": c["status"]} for c in acc["checks"]],
                          key=lambda c: c["name"]),
         # Derivable from `checks`, and listed anyway: a reader asking "what did nobody
