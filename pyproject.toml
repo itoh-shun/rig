@@ -270,7 +270,7 @@ extend-select = [
 # しており、柱の外へ出ているのは名前だけで層はまだ越えていない。
 # 台帳の行と層の規則は、ここでも同じ柱を指している。
 "rig_workbench/assurance/**" = ["T201", "TID251"]    # 160 print, 7 banned
-"rig_workbench/workbench/**" = ["T201", "TID251"]    # 348 print, 24 banned
+"rig_workbench/workbench/**" = ["T201", "TID251"]    # 345 print, 24 banned
 # root 直下のモジュールは glob 1 行にまとめられない。ruff の per-file-ignores は
 # パターンを設定ファイルからの相対パスに突き合わせるが、その glob では `*` が `/` を
 # またぐ（実測: `rig_workbench/*.py` は govern/cli.py にも当たり、上の柱の行を全部
