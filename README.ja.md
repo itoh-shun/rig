@@ -2,1295 +2,845 @@
 
 <p align="center">
   <img src="./Rig.png" width="640"
-       alt="Rig — Reasoning Integration Gateway。3本の柱: Reasoning（考え、評価し、改善する）、Integration（ツールとAIをつなぐ）、Gateway（開発の入口となる）。">
+       alt="Rig — Reasoning Integration Gateway。AIによる作業、検証、変更の受け入れをつなぐ開発ツール。">
 </p>
 
-**Claude Code のための AI Quality Operating System。** タスクに応じて必要なハーネスを自動構成し、隔離された worktree で変更を行い、acceptance-gate で検証し、最後にユーザーが差分を accept / discard できる。さらにチーム利用では、**共通ポリシー**を複数リポジトリへ効かせ、権限管理・承認フロー・期限つき例外・改竄検知つき監査台帳でそれを担保する（§18）。
+**AIに頼んだ変更を、差分と検証結果を見てから取り込むための開発ツールです。**
+Rigはタスクごとに作業用のgit worktreeを作り、受け入れ基準に沿って結果を確認します。
+変更を取り込む`accept`と、作業を破棄する`discard`を明示的に選べます。
 
-> 🇬🇧 English version: [README.md](./README.md)
+[English README](./README.md) · [CHANGELOG](./CHANGELOG.md)
 
-> ⬆️ **2.x から上げる方は。** 3.0.0 は publisher 署名をまるごと削除しました。移行4パターンのうち3つは大きく失敗し、1つは黙って動きます——どれがどれかは [3.0.0 への移行](#300-への移行) にあります。
+まずは[導入手順](#install)と[基本フロー](#workflow)を参照してください。
+2.xから更新する場合は[v3への移行](#300-への移行)も確認してください。
+
+Claude Codeではプラグイン、CodexではスキルとCLIから利用します。
+ChatGPTにはMCP接続を用意しています。ChatGPT WorkにRigの個人スキルを導入した環境では、会話からも呼び出せます。
+使える実行環境やフックは、導入方法によって異なります。
 
 ## 1. rig とは何か
 
-自然文でタスクを頼むだけでいい。rig がタスクの種類（バグ修正/機能追加/リファクタ/レビュー/ドキュメント/…）を判定し、必要なブリック（persona / instruction / pattern — LEGO 式の部品）を組み合わせてハーネスを合成し、**現在の作業ツリーとは隔離された git worktree**で作業し、明示的な**受け入れ基準**（意図の充足・無関係な差分がないか・リスク要約・テスト・型エラー・secret 漏洩がないか等）で検証し、`accept` が呼ばれるまで本体には一切触れない。「できました」という自己申告は完了の根拠にならない——根拠は常にゲートの合否。
+「ログインの不具合を直して」のように依頼すると、Rigがタスクの種類に合う手順を選びます。
+この手順をrecipe（レシピ）と呼びます。実装、テスト、レビューの結果はタスクごとに記録します。
+最後にacceptance-gate（受け入れゲート）を評価し、未達の条件があれば通常の`accept`を拒否します。
 
-rig の本当の価値は、AI を動かすこと自体ではない。AI に作業を任せるときの危険な部分を、**隔離・検証・測定・記録・反映制御**によって構造的に潰すことにある。
+Rigが確認できる範囲は、用意した基準、テスト、センサー、レビュアーに依存します。
+要件の取り違えや、テストにない不具合まで自動で防げるわけではありません。
+レビューを増やすと実行時間やモデルの利用量も増えるため、必要な手順を選んで使います。
 
-正確に言えば：**rig は品質を自動的に生むのではなく、あなたが定義した品質基準を AI に無視させず実行するツール**である。基準作りは人間の仕事のまま——rig の仕事は強制と測定。そして対価がある：rig はその安全のために速度とトークンを意図的に払う設計であり、とにかく速くコードを書かせたいだけならモデルに直接頼むほうがいい。
+### 位置づけ
 
-安全性の核が「documented だけで実装が伴わない」状態にならないよう、3 つの性質を配線に組み込んでいる:
+Claude Codeのプラグインは、コマンド、スキル、サブエージェント、フックを組み合わせて動きます。
+裏側の処理はPythonパッケージ`rig_workbench`にあり、`rig-wb` CLIからも呼び出せます。
+CIや別のアシスタントから利用しても、worktreeと受け入れゲートには同じ実装を使います。
 
-- **Force-proof な accept 前提条件** — `accept` は構造的前提（worktree の存在・base branch の記録・diff サマリの作成）が欠けていると `--force` でも通らない。`--force` が上書きできるのは soft な gate 未達だけで、そのときは `.rig/audit.jsonl` に記録が残る（`workbench.py audit`）。checkpoint はフラグで外せない場所に置く。
-- **クロスプロバイダを前提にした設計** — 生成役と検証役は別プロセスで走り、それぞれ LLM を選べる：`claude` / `codex` / `ollama` / `lmstudio` / `cmd` / `mock` / さらに `rig` ハーネスをネスト。Claude で実装して Codex で検証する（あるいは逆）が既定の流し方で、同じクラスのモデルが自分の成果物をレビューする状況を構造的に避ける。`orchestrate.py probe` が「read-only サンドボックスは configuration だけでなく実装として発動している」ことを provider ごとに確認する（§6・§13）。
-- **Claude Code plugin として動く** — `/rig:go` は普段の作業と同じ session に住む。別ツールに切り替える文脈スイッチではなく、隔離・ゲート・accept まで一続きのキー操作でできる。
+既存のオーケストレータが作った変更を登録する経路もあります。
+使い分けは[機能と設計方針](./docs/landscape.md)、連携方法は[外部オーケストレータとの連携](./docs/byo-orchestrator.md)を参照してください。
 
-**rig の現在地：** 安全性の核——task 分類・隔離・acceptance-gate・明示的な accept/discard——は実装済みで、このリポジトリ自身のテストスイート（§16）で裏付けが取れている。その上に乗る品質・観測系のツール（drill・board・stats・GitHub 連携）は実用可能だが発展中。用途特化のワークフローは既定core目録に混ぜず、明示installするdomain extensionとして提供する。§8 でこれを名指しで区分けする。
+### 参考にした考え方
 
-### ポジショニング
+[nrslib（成瀬允宣さん）](https://zenn.dev/nrs)の次の考え方を採用しています。
 
-rig は意図的に、独自 DSL を持つ重量級の外部エンジン**ではない**。Claude Code のセッション内では、Claude Code 自身のプリミティブ——slash command（`commands/`）・skill（`skills/engine`）・subagent（`agents/`）・hook（`hooks/`）——だけで合成された薄い品質・安全レイヤーとして動く。隔離・ゲート・accept は、いま作業しているセッションにそのまま規律として乗るのであって、別ツールへの乗り換えを要求しない。
+- [Faceted Prompting](https://zenn.dev/nrs/articles/5d19b4c8a39ecb)：プロンプトを役割、方針、知識、指示、出力形式に分ける考え方です。Rigの`facets/`とプロンプトの組み立てに反映しています。
+- [ループエンジニアリング](https://zenn.dev/nrs/articles/e4a2ae8a9fb785)：発見、委譲、検証、保持、予約を継続する考え方です。`goal-loop`レシピと同名のwikiで参照しています。
 
-同じ設計にはもう一つの顔がある：このレイヤーの背後にある決定論エンジン（`scripts/orchestrate.py`。`rig_workbench/` としてパッケージ化され、pip の `rig-wb` CLI としても導入できる）は、**外部制御プレーン**を兼ねる。CI・別セッション・別ツール（Codex / Cursor 等）から、まったく同じ recipe・ゲート・read-only verifier をセッションの外から駆動できる——§14「横断利用（CLI として）」を参照。package-nativeなremote/SDK MCP経路は`rig-mcp`として提供する（[`docs/remote-mcp.md`](docs/remote-mcp.md)）。従来の`scripts/mcp_server.py`（#263）は異なるtool contractを持つstdlib-onlyのlocal stdio adapterとして残る——§8を参照。
-
-そして「品質ゲートがあります」という他所の売り文句との差別化点：rig のゲートとレビュアーは主張されるだけでなく**実測される**。`/rig:drill`（§12）は既知バグの注入に対する各 reviewer persona の実際の検出率をスコア化し、`/rig:go stats`（§11）は実 run 履歴からラバースタンプ化したレビュアーや頻繁に落ちるゲートを炙り出す。測れないゲートは願望にすぎない——rig はゲートの実効性をデータとして扱う。
-
-### 土台にしたもの
-
-rig は二つの考え方を、知ったうえで採用している。どちらも [nrslib](https://zenn.dev/nrs)（成瀬允宣）さんのものだ。
-
-- **[Faceted Prompting](https://zenn.dev/nrs/articles/5d19b4c8a39ecb)** — プロンプトを persona / policy / knowledge / instruction / output contract の5つの関心に分解し、recency を意識した順で配置する。rig の `facets/` ディレクトリとその配置順（`skills/engine/SKILL.md` §COMPOSE）は、この分解をそのまま使っている。
-- **[ループエンジニアリング](https://zenn.dev/nrs/articles/e4a2ae8a9fb785)** — 作業者をループから外し、発見・委譲・検証・保持・予約を回し続ける層。rig の `recipes/goal-loop` と wiki `loop-engineering` はこの語彙で書いている。
-
-rig がその上に足しているのは**受け入れの判定**だ。決定論センサーを一次に置くこと、`accept` をコードが拒否すること、レビュアーの検出率を `/rig:drill` で測ること、失敗を型で記録すること。`docs/landscape.md` の一文で言えば、オーケストレータが「どう回すか」を決め、rig は「回った結果を受け入れてよいか」を決める。TAKT のようなオーケストレータと競合するのではなく、その後ろに置く層として設計している。
+Rigでは、これらに受け入れ判定、機械センサー、レビューの検出率測定、実行記録を組み合わせています。
 
 ## 2. まず、やりたいことを言う
 
-rig の入口は1文です。Claude Code の中で：
+導入済みのClaude Codeでは、次のように依頼します。
 
-```bash
+```text
 /rig:go "ログインバグを直して"
-/rig:go "このPRを厳しめにレビューして"
-/rig:go "今の変更が安全か確認して"
+/rig:go "このPRをレビューして"
+/rig:go "READMEの日本語を読みやすくして"
 ```
 
-最初はこれだけでいい——**設定ゼロ**。manifest も gates.json も persona 設定も要らず、CLI のインストールも要らない。結果が出る前にあなたが承認を求められることもない（すべて後から足す opt-in）。rig が唯一たずねるのは `.gitignore` だ。実行状態は `.rig/` に置かれる。その 1 行は `.gitignore` に入れておく（次のコミットに紛れ込ませない）。端末があれば 1 回だけ聞く（y/N・既定は N）。端末が無いところ（CI、`claude -p`、subagent、`/rig:go` 自身）では何も書かず、足すべき行だけを出す。`RIG_ALLOW_GITIGNORE=1` で先に答えておける。安全フローは箱から出してすぐ動く。裏側では、タスクを分類し、対応する recipe を選び、隔離 worktree を作る（レビュー等の読み取り専用タスクは省略）。あとは実装・テスト → acceptance-gate 判定と進み、次アクションつきのサマリを返す:
+Rigがレシピと作業場所を表示し、作業後に差分と検証結果を返します。
+確認には次のコマンドを使います。
 
+```text
+/rig:go status
+/rig:go diff
+/rig:go accept
+/rig:go discard <task-id> --yes
 ```
-/rig:go diff       # 何が変わったか、なぜ安全か（あるいは危ういか）を確認
-/rig:go accept     # 作業ツリーへ反映（gate が未達なら拒否される）
-/rig:go discard    # 試みを破棄（作業ツリーは最初から一切触れられていない）
-```
 
-**最初の1回のコストは、実測してあります。** `tests/test_first_run_cost.py` は
-`python3 scripts/workbench.py new "<task>" --type bugfix` を素の `git init` リポジトリで
-走らせます。条件は、`.claude/rig.md` なし、PATH のどこにも `rig-wb` なし、`RIG_ALLOW_*` の
-consent 変数はすべて除去、stdin は `/dev/null`。stdin を閉じるのは、人間への問いかけが
-待ちぼうけにならずその場で失敗するようにするためです。そのうえで exit 0 であること・
-何も聞かないこと・run がディスクに残ることを要求します。
+Codexでは`$rig`、Rigの個人スキルを導入済みのChatGPT Workでは`@rig`を入口にします。
+CLIだけを使う場合は、`rig-wb wb new`で作業場所と基準を作り、実装や判定の根拠を自分で記録します。
+`new`だけではAIによる実装まで自動実行しません。
 
-何も要求されない理由は、3本の随伴テストが固定しています。既定の `bugfix` ルートは同梱
-`core` tier の中で解決するので、承認すべき pack 信頼がそもそもありません。`rig-wb hostcheck`
-は助言的（exit 0 か 3）でゲートではありません。一度も承認していない `.claude/rig.md` は
-run を止めず、stderr の警告1行に縮退します。測っているのは **run を作るコマンド**であって、
-その後に続く全 step ではありません——後段の step がここで測っていないものを要求することは
-あり得ます。
+プロジェクト設定ファイルは必須ではありません。
+実行状態を置く`.rig/`は、Gitに含めないよう`.gitignore`に追加してください。
+端末がある場合は追加の確認が出ます。非対話環境ではファイルを変更せず、必要な行を案内します。
 
-残っている前提は2つだけです：git リポジトリであること、`python3` があること。
+`tests/test_first_run_cost.py`は、設定のないGitリポジトリで`new`が入力待ちにならず成功することを確認しています。
+検証対象はタスク作成までです。後続の実装やテストには、選んだモデルやプロジェクトの依存関係が必要です。
 
-モデルに直接頼む場合と実際に何が変わるか：
+<a id="install"></a>
 
-| | 直接頼む | rig 経由 |
+## 3. インストール
+
+GitとPython 3.10以上が必要です。レシピの読み込みにはPyYAMLを使います。
+CLIをインストールすると、宣言済みの依存パッケージも導入されます。
+
+| 利用環境 | 導入するもの | 入口 |
 |---|---|---|
-| 失敗した変更 | 作業ツリーに残る | worktree ごと破棄——本体は無傷 |
-| 「できました」 | 信じるしかない | acceptance-gate の合否が根拠 |
-| レビューの質 | 不明 | `/rig:drill` が各 reviewer の検出率を実測 |
-| 何が起きたか | チャットログ | run log・監査証跡・再検証できる来歴 |
+| Claude Code | Rigプラグイン | `/rig:go` |
+| Codex | Codex用スキルとRigの実行環境 | `$rig`、`rig-wb` |
+| ChatGPT Work | Rigの実行環境を同梱した個人スキルを別途導入 | `@rig` |
+| ChatGPTなどのMCPクライアント | Rig MCPサーバとクライアント側の接続設定 | MCPツール |
+| CI・スクリプト | `rig-workbench`パッケージ | `rig-wb` |
 
-## 3. インストール——プラグインは今、CLI は Claude Code の外が必要になったとき
+### Claude Code
 
-`/rig:go` をはじめとするスラッシュコマンドは Claude Code のプラグインから来ます。最初に2コマンドだけ：
+Claude Codeの中で実行します。
 
-```bash
+```text
 /plugin marketplace add itoh-shun/sito-plugins
 /plugin install rig@sito-plugins
 ```
 
-**`rig-wb` CLI は2つ目の入口であって、入り方ではありません。** 同じ決定論エンジンを
-Claude Code のセッション外から動かすためのものです——CI、スクリプト、あるいは別の
-アシスタント（Codex / Cursor / Copilot）。入れるのは、セッションの外にあるものが同じ
-recipe とゲートに届く必要が出たときであって、始めるためではありません。
+共有marketplaceを使わず、本リポジトリから導入する場合は次の2コマンドです。
+
+```text
+/plugin marketplace add itoh-shun/rig
+/plugin install rig@rig
+```
+
+プラグインからの利用に、`rig-wb`のグローバルインストールは不要です。
+CLIも使いたくなったら`/rig:setup`で導入できます。`/rig:setup --check`は確認だけを行います。
+
+### CLI
+
+リリース版を指定してインストールする例です。`pipx`の代わりに`uv tool install`も使えます。
 
 ```bash
-pipx install git+https://github.com/itoh-shun/rig.git     # uv tool install / pip install でも可
+pipx install 'git+https://github.com/itoh-shun/rig.git@v3.0.1'
 rig-wb version
 ```
 
-既に Claude Code の中にいるなら `/rig:setup` が同じことをして、方法も選んでくれます——
-`pipx` → `uv` → `pip` の順に優先し、「入っているか」ではなく**このチェックアウトと一致するか**を
-比べ、黙って入れ替えることはしません。`/rig:setup --check` は何も入れずに検出だけします。
+タスク操作は、対象プロジェクトのGitリポジトリで実行します。
 
-両方は要りません。プラグインだけで安全フローは一通り動き、CLI だけで CI から回せます。
+```bash
+rig-wb wb new "READMEの日本語を読みやすくする" --type documentation
+rig-wb wb status
+rig-wb wb board
+```
 
-**manifest（`.claude/rig.md`）も後の手順です。** プロジェクト既定値・知識層・CLAUDE.md の
-"Compact Instructions" が欲しくなったら `/rig:init` が scaffold します。それまでは manifest が
-無いリポジトリでも、一度も承認していない manifest があるリポジトリでも動きます（上の実測を参照）。
+### CodexとChatGPT
 
-その他の導入経路——このリポジトリ自身の marketplace から、ダウンロードから、開発用の
-`--plugin-dir`、Codex、MCP アダプタ——は §16 にあります。
+Codex用のスキルは[`codex/skills/rig/SKILL.md`](./codex/skills/rig/SKILL.md)です。
+配置方法とフックの範囲は[Codex向けの設定](#codex-setup)を参照してください。
+
+ChatGPT Workの個人スキルは、このリポジトリのClaude Code用marketplaceからは導入されません。
+実行環境を同梱したスキルを導入した場合は、そのスキルが指定するランチャーを使います。
+スキルを追加するだけで、Codex CLIやClaude CLI、MCP接続、フックまで有効になるわけではありません。
+
+MCP経由で使う場合は、[サーバの起動方法](./docs/remote-mcp.md)と[ChatGPTとの接続手順](./docs/chatgpt-mcp.md)を参照してください。
 
 ## 4. メイン入口
 
-主入口は次のコマンドです。
+Claude Codeで通常の開発作業を頼む入口は`/rig:go`です。
+原因や進め方を相談しながら決めたい場合は`/rig:talk`を使います。
 
-```bash
-/rig:go "ログインバグを直して"
+```text
+/rig:talk "ログインの不具合が再発した。原因から調べたい"
 ```
 
-**`/rig:go` は唯一のメイン入口**であり、このドキュメントの中で一番先に覚えるべきコマンドである。旧名の `/rig:rig` は 3.x のあいだ非推奨の互換 shim として残る。同じエンジン・同じ引数なので既存のスクリプトは壊れない。4.0.0 で削除するので、この major のうちに `/rig:go` へ書き換えてほしい。
+レシピや実行範囲を指定したい場合は`/rig:dev`を使います。
+旧コマンド`/rig:rig`は3.xで非推奨の互換用コマンドとして残り、4.0.0で削除する予定です。
+既存の手順は`/rig:go`へ置き換えてください。
 
-`/rig:talk` は同じエンジンへのより会話的な入口としてそのまま残る——状況を説明して rig に聞き返してもらいたいとき、1つのタスクを最初から言い切るより向いている：
-
-```bash
-/rig:talk "ログインバグがまた出た、今回は原因が分からない"
-```
-
-フルの品質保証ワークベンチフローには `/rig:go` を使う。同じエンジンへの会話的な入口が欲しいときは `/rig:talk` を使う。
+<a id="workflow"></a>
 
 ## 5. 安全な基本フロー
 
-```
-自然文のタスク
-        │
-        ▼
-①  分類（bugfix / feature / refactor / review / documentation / security_review / …）
-        │
-        ▼
-②  対応する recipe を選択＋選択理由を表示（当て推量ではなく1行バナー）
-        │
-        ▼
-③  隔離 worktree を開き、recipe を実行（実装/テスト/レビューを subagent に dispatch）
-        │
-        ▼
-④  acceptance-gate：意図の充足・差分スコープ・リスク・テスト・secret・重大度付き所見を確認
-        │
-        ▼
-⑤  構造化された差分サマリ＋次アクション
-        │
-        ▼
-ユーザー判断
-   ├─ accept  → staged diff として作業ツリーへ反映
-   └─ discard → worktree を削除し、ログは保持
+以下は`/rig:go`と`rig-wb wb`のworkbenchフローです。
+レシピランナーの取り込み方法は[CLIでの継続実行](#recipe-runner)を参照してください。
+
+```mermaid
+flowchart TD
+    A[依頼とレシピの選択] --> B[専用worktreeで編集・コミット]
+    B --> C{受け入れゲート}
+    C -->|未達・未判定| B
+    C -->|通過| D[差分と根拠を確認]
+    D -->|accept| E[変更をステージ]
+    D -->|discard| F[worktreeを削除]
 ```
 
-`new` の直後には**選択理由バナー**が必ず出るので、なぜその recipe が選ばれたか迷わない：
-
-```
-▸ rig
-task: ログインバグを直して
-detected: bugfix
-recipe: bugfix — 「バグ」「直して」を検出
-mode: isolated worktree
-gate: standard + bugfix
-```
-
-②で recipe がどう合成されるかは §9、③〜⑤を支える仕組みは §6 を参照。
+読み取り専用のレビューや調査では、worktreeの作成を省略できます。
+タスク作成時には、分類、選んだレシピ、作業場所、受け入れ基準が表示されます。
+ゲートを通った後も、差分と残る注意点を確認してから反映します。
 
 ## 6. なぜ安全か
 
-### isolated worktree
+### 作業場所の分離
 
-タスクごとに専用の git worktree（`patterns/isolated-worktree`）と使い捨てブランチを作る。rig は作業ツリーに直接書き込まない——失敗しても中断しても、あなたの手元は何も汚れない。
+変更を伴うタスクでは、専用のgit worktreeとブランチを作ります。
+通常の手順ではそこで編集し、`accept`で元の作業ツリーへ取り込みます。
+ただし、worktreeはOSのサンドボックスではありません。
+コマンドの書き込み先やネットワークアクセスは、実行ホストの権限設定にも依存します。
+Rig自身の実行記録は、タスク開始時からリポジトリの`.rig/`に保存します。
 
-```
-<repo の親>/rig-worktrees/<repo名>/rig-YYYYMMDD-HHMMSS-<slug>/   ← 使い捨て worktree + branch
-<repo>/.rig/runs/rig-YYYYMMDD-HHMMSS-<slug>/                      ← run state（discard 後も残る）
-  task.json        task_id / 入力 / task_type / recipe / base branch+commit / worktree path / status
-  steps.json       step ごとの進行状態
-  acceptance.json  {task_id, task_type, presets, status, checks: [{name, status, detail, by, note?}]}
-                   `by` はその status を最後に書いた者（`gate --set` なら `operator`、測ったセンサーならその名前）。status が一度書かれてから現れる（作りたての gate には無い）
-                   `note` は `--set <criterion>=<status>:<detail>` で操作者が書いた一文。センサーは書きも書き換えもせず、その status が立っている間だけ残る
-  review.json      review タスクの persona 別 verdict（/rig:go stats に反映）
-  reviews/<persona>.md   その reviewer の本文全文（`review --body` で記録・任意）
-  plan.md / diff.md / log.md / final.md   モデルが書く散文（計画・差分要約・決定・まとめ）
-```
+| 保存先 | 内容 |
+|---|---|
+| `<repoの親>/rig-worktrees/<repo名>/<task-id>/` | 既定の作業用worktree |
+| `.rig/runs/<task-id>/task.json` | 入力、タスク種別、ブランチ、作業場所、状態 |
+| `steps.json` / `acceptance.json` | 手順の進捗、基準ごとの判定と根拠 |
+| `review.json` / `reviews/<persona>.md` | レビュアー別の判定と本文 |
+| `plan.md` / `diff.md` / `log.md` / `final.md` | 計画、差分の要約、経過、結果 |
 
-読み取り専用のタスク（レビュー・まだ直すと決まっていない調査）は `--no-worktree` で worktree を丸ごと省略できる。設計の詳細は [`patterns/isolated-worktree.md`](./skills/engine/patterns/isolated-worktree.md) を参照。
+表の2行目以降のファイルは`.rig/runs/<task-id>/`に置かれます。
+保存先やライフサイクルは[worktreeの設計](./skills/engine/patterns/isolated-worktree.md)を参照してください。
 
-**複数タスクを並行で進める（ターミナルを増やさず一括把握）。** 隔離が task 単位で完結しているため、**複数タスクを同時に走らせても構造的に安全**（別 worktree・別 branch）。`/rig:go "<task>"` を1つずつ打つ代わりに、実際に並列実行したいなら queue に積んで一括 GO する：
+複数タスクを動かす場合は`/rig:queue`を使えます。
+worktreeは分かれますが、外部サービスや同じポートなど、Gitの外にある資源の競合には注意が必要です。
 
-```bash
+```text
 /rig:queue add "ログイン画面のバグを直して"
 /rig:queue add "在庫一覧に検索機能を追加して"
-/rig:queue add "READMEをわかりやすくして"
-/rig:queue go --provider rig --max-parallel 3   # 独立した headless プロセスを3つ並列実行
+/rig:queue go --provider rig --max-parallel 2
+/rig:go board
 ```
 
-`--provider rig` は各 queue item を `/rig:go "<task>"` 経由で dispatch するため、直接 `/rig:go` を打ったときと同じように各タスクが自動的に隔離される——並列実行中のプロセス同士がファイルを取り合う心配がない。queue 自身の verifier は「gate が確定したか」「isolated worktree 内で完結し本体に書き込んでいないか」を確認するだけで、**ユーザーの代わりに accept はしない**。完了後は `/rig:go board`（§11）が唯一の確認場所になる——どの端末・プロセスが実行したかに関わらず。
+queueの完了は、自動的な`accept`を意味しません。
+依存タスクを`--depends-on`で指定した場合は、先行タスクが受け入れられるまで待機します。
+この依存関係はlocal backendで扱います。
 
-**視覚検証のスクリーンショット。** `visual-verify`（UI diff 確認）と `design-audit`（Playwright での画面取得）はいずれもスクリーンショットを生成する。これらは判断のための使い捨て証拠であって成果物ではない——結論は常に散文（`diff.md`）に残る：
+画面検証の画像は、タスク内の`visual/`に保存します。
+`discard`で削除し、それ以外は`gc`の経過日数による削除対象です。
+既定は14日超で、`rig-wb wb gc --dry-run`で対象を確認できます。
+詳しくは[画像の保存と削除](./skills/engine/patterns/visual-artifacts.md)を参照してください。
 
-```
-<repo>/.rig/runs/<task-id>/visual/            ← task 紐づき（/rig:go 経由で実行）
-<repo>/.rig/visual/adhoc/<ts>-<slug>/         ← ad-hoc（例: 単独の /rig:design <url> 監査）
-```
+### 受け入れゲート
 
-`discard` は task の `visual/` を即時削除する（run log の JSON/MD は残る）。それ以外——accept 済み task の screenshot も含め——は経過日数で処分する（`python3 scripts/workbench.py gc --dry-run` でプレビュー、`gc` で削除。既定14日超が対象）。詳細ルールは [`patterns/visual-artifacts.md`](./skills/engine/patterns/visual-artifacts.md) を参照。
+実装や文書整備などのタスクには`standard`を使い、種別に応じた基準を追加します。
+読み取り専用の`review`は`review`基準、`security_review`は`review`と`security`基準を使います。
+現在の一覧は`rig-wb wb gates`で確認できます。
 
-### acceptance-gate
+| プリセット | 主な確認内容 |
+|---|---|
+| `standard` | 依頼の充足、差分の範囲、要約、リスク、テスト、型、機密情報、ゲート改変、指示注入、破壊的操作 |
+| `bugfix` | 原因、修正の範囲、回帰テスト、既存動作の維持 |
+| `feature` | 要件、テスト、公開API、互換性や移行 |
+| `refactor` | 動作の境界、意図しない変更、無関係な改修 |
+| `review` | 具体的な指摘、重大度、参照先、修正必須かどうか、誤検知の検討 |
+| `security` | 認証・認可、入力、秘密情報、危険な実行、依存関係 |
 
-acceptance-gate は、run を反映候補として渡してよいかを判定する。モデルが「完了しました」と言うだけでは完了扱いになりません——unrelated diff・test/type/lint・risk summary・task 別要件などの機械的なチェックを通過して初めて渡せる。failed または pending の gate がある場合は accept を止める。
+機械センサー8本が、次の項目を検査します。
+意図の充足やテスト結果の説明など、操作者が根拠を記録する項目もあります。
+全項目を機械が自動判定する仕組みではありません。
 
-全 task は `standard`（全 task_type 共通）＋ task_type 別プリセットの合成で基準リストを持つ（正本は `scripts/workbench.py gates`）：
+| 検査 | 対象と判定 |
+|---|---|
+| 秘密情報 | 差分をスキャンし、検出があれば失敗。表示する抜粋はマスクします |
+| ゲート改変 | ゲート設定、レシピ、CIの変更を検査。テストの弱体化は条件に応じて警告します |
+| 指示注入のマーカー | 差分とリポジトリ内の文章を検査。不可視文字などは失敗、疑わしい指示表現は警告します |
+| 破壊的コマンド | 差分に含まれるコマンドを検査。実行時のコマンドを傍受する機能ではありません |
+| OpenAPIの変更 | API変更が差分要約に記載されているかを確認。警告として扱います |
+| プロンプト回帰 | プロンプト資産を変更したときに追加し、評価ケースの証拠で判定します |
+| 証拠アンカー | 明示的に有効化した場合、レビュー本文の`file.py:42`などが実在するかを検査します |
+| 日本語校正 | 日本語の散文を追加した差分に`ja_lint_clean`を追加し、長文や冗長表現などを検査します |
 
-| preset | 上乗せ対象 | 基準の例 |
+日本語の散文には、`ai-smell-reviewer`の判定を写す`ja_prose_ai_smell_reviewed`も追加されます。
+これは機械センサーの数には含めません。レビュアーの判定がない間は未判定です。
+
+基準は`.rig/gates.json`の`extra_criteria`で追加できます。
+組み込み基準の削除や緩和はできません。
+`evidence_anchors_resolve`は既定では無効で、worktreeのあるタスクで使う基準です。
+
+各基準は`passed`、`failed`、`warning`、`skipped`などの状態を持ちます。
+`gate --set`で記録する際は、実際に確認した根拠を付けてください。
+秘密情報などのセンサーと矛盾する「合格」の宣言は拒否されます。
+プロンプト回帰の判定は`--set`で変更できません。
+
+`failed`や`pending`が残る場合、または全基準が`skipped`の場合、通常の`accept`は止まります。
+警告だけなら受け入れ可能ですが、その内容は確認が必要です。
+`--force`の扱いは[変更の取り込み](#accept-change)を参照してください。
+
+### 読み取り専用の検証
+
+実装役と検証役を別の呼び出しにし、それぞれにモデルやプロバイダを指定できます。
+異なる会社や種類のモデルが自動的に選ばれるとは限りません。
+
+Claude CLIの検証役にはツール制限、Codex CLIの検証役には`--sandbox read-only`を指定します。
+制限の強さはホストとプロバイダによって異なり、すべての経路で同じサンドボックスが働くわけではありません。
+`probe`で接続を確認でき、`selftest`では引数などの組み立てを検証します。
+実際のホストで制限が働くかの確認も必要です。
+
+検証役は、生成役の説明に加えて実際の差分を確認します。
+複数のレビューを使う場合も、同じ種類のモデルが同じ欠陥を見逃す可能性は残ります。
+
+### 反映操作と記録
+
+`accept`は変更をステージし、コミットは作りません。
+`discard`はworktreeとブランチを削除しますが、実行ログは残します。
+外部のデータベースやサービスに対する変更を巻き戻す操作ではありません。
+
+フックを導入したホストでは、会話の中断や圧縮後に実行状態を再提示します。
+復元できる範囲は、ホストのイベントと保持された状態に依存します。
+
+<a id="7-core-commands"></a>
+
+## 7. 基本コマンド
+
+Claude Codeでの操作と、CLIでの対応です。`<id>`はタスクIDに置き換えてください。
+
+| Claude Code | CLI | 用途 |
 |---|---|---|
-| `standard` | 全 task_type | `task_intent_satisfied`・`no_unrelated_diff`・`diff_summary_written`・`risk_summary_written`・`tests_pass_or_explained`・`no_type_errors_or_explained`・`no_secret_leak`・`no_gate_tampering`・`no_injection_markers`・`no_destructive_operation` |
-| `bugfix` | bugfix, performance | `bug_cause_identified`・`fix_is_minimal`・`regression_test_added_or_explained`・`existing_behavior_preserved`・`no_unrelated_refactor` |
-| `feature` | feature, test | `requirement_summary_written`・`implementation_matches_requirement`・`tests_added_or_explained`・`public_api_changes_documented`・`migration_or_backward_compatibility_considered` |
-| `refactor` | refactor | `behavior_boundaries_identified`・`no_unintended_behavior_change`・`tests_confirm_behavior_preserved`・`no_unrelated_refactor`・`public_api_changes_documented_if_any` |
-| `review` | review | `findings_are_concrete`・`severity_labeled`・`file_references_included`・`blocking_and_non_blocking_separated`・`false_positive_risk_considered` |
-| `security` | security_review（review に上乗せ） | `authn_authz_impact_checked`・`user_input_flow_checked`・`secret_exposure_checked`・`unsafe_eval_or_shell_checked`・`dependency_risk_checked` |
+| `/rig:go "<タスク>"` | `rig-wb wb new "<タスク>"` | タスクを開始。CLIの`new`は作成まで |
+| `/rig:go status <id>` | `rig-wb wb status <id>` | 進捗、ゲート、次の操作を表示 |
+| `/rig:go diff <id>` | `rig-wb wb diff <id>` | 差分と要約を表示 |
+| `/rig:go accept <id>` | `rig-wb wb accept <id>` | 条件を確認して変更をステージ |
+| `/rig:go discard <id> --yes` | `rig-wb wb discard <id> --yes` | 作業用worktreeを削除 |
+| `/rig:go board` | `rig-wb wb board` | 複数タスクの状態を一覧 |
+| `/rig:go log` | `rig-wb wb log` | 過去のタスクを表示 |
 
-この基準リストはプロジェクト側の **`.rig/gates.json`** から拡張できる。
-`extra_criteria` は preset / task_type 別に独自基準を足し（表示には `[project]` タグ）、`descriptions` がその説明を付ける。
-設定は**加算のみ**：組み込み基準の削除・緩和キーは即座に拒否されるため、repo 内のファイルが gate を弱めることはできない。
-また基準は自己申告でなく機械センサー8本が裏付ける。
-うち5本は上記プリセットの基準を見る。
-`public_api_changes_documented` は OpenAPI schema-diff のセンサーが見る。
-refactor プリセットの `public_api_changes_documented_if_any` も同じセンサーが見る。
-`openapi.json`/`swagger.json` 等は自動検出し、`openapi_paths` で明示もできる。
-API が変わったのに diff サマリに記述が無ければ `warning` に落とす。
-warning-grade であり、単独で gate を fail にはしない。
-`no_secret_leak` は task diff への決定論シークレットスキャン（`workbench.py scan-secrets`）である。
-検出があれば **failed** にし、抜粋は常にマスク済みで出す。
-偽陽性でも測定と食い違う `--set no_secret_leak=passed` は拒否される（exit 2＝使い方の誤りで、gate 失敗の 1 とは別）。
-findings を diff から取り除いて評価し直せば、`--set no_secret_leak=passed` は測定と一致するので受け付けられる。
-センサーが自分で書くのは findings の有無までで、pass そのものは書かない。
-`no_gate_tampering` は task diff への anti-tamper スキャン。
-`.rig/gates.json`・`.rig/recipes/`・CI workflow の編集は fail-grade。
-bugfix/feature task での既存テスト改変・assert 削除・skip マーカー追加は warning-grade。
-`no_injection_markers` は diff＋repo の prose 面を走るプロンプトインジェクション・マーカースキャンである。
-実装は `workbench.py scan-injection` と同じ。
-不可視/bidi Unicode は fail-grade、指示上書きフレーズは warning-grade。
-抜粋中の不可視文字は `<U+XXXX>` エスケープで描画される。
-`no_destructive_operation` は task diff への破壊的コマンドスキャンである（`workbench.py scan-destructive`）。
-ルート直下の再帰削除・ファイルシステム初期化・デバイスノードへの直接書き込み・データベース削除は fail-grade。
-絶対パスや未展開の変数への再帰削除、強制つきの git clean は warning-grade。
-lease 指定なしの force push、テーブルの削除や切り詰め、大量削除も同じく warning-grade。
-検出対象は diff に書き込まれたコマンドであり、実行時コマンドの傍受ではない（それはホストのパーミッション機構の責務）。
-宣言で黙らせられないのは 4 本。
-`no_secret_leak`・`no_gate_tampering`・`no_injection_markers`・`no_destructive_operation` がそれである。
-センサーと食い違う `--set` は拒否され、記録に残るのはセンサーの判定のほうである。
-人がレビューした上でなお進めるなら `accept --force` だけが道になる。
-迂回した基準は `.rig/audit.jsonl` に名指しで残り、署名付き provenance にも forced として残る。
-センサーより**厳しい**宣言は生き残る。
-warning-grade の schema センサーは fail を出さないので、食い違っても gate は拒否せず注釈に留める。
+<a id="8-feature-status"></a>
 
-残る3本のセンサーが見る基準は、上記プリセット表の外にある。
-`prompt_regression_passed` は diff が prompt 面に触れたときだけチェックリストに自動追加される。
-合否は機械 eval ゲートが決め、`--set` は status を問わず受け付けない。
-他 5 本が拒むのはセンサーと食い違う宣言だけで、ここはその区別すら無い。
-`evidence_anchors_resolve` は **opt-in でどのプリセットにも入っていない**。
-プロジェクトが `.rig/gates.json` の `extra_criteria` で入れたときだけ有効になる。
-有効時は、`review --body` で記録した reviewer 本文中の証拠アンカーを検査する。
-`file.py:42` 形式の引用が実在する行を指すかだけを見る（`workbench.py scan-anchors`）。
-解決は worktree→base commit の順なので、diff が削除したファイルへのアンカーは偽陽性にならない。
-参照先を特定できたのにアンカーが誤り（行数超過・行 0・範囲逆転）は fail-grade。
-ファイル自体を特定できなかったものは warning-grade。
-測定と食い違う `--set evidence_anchors_resolve=passed` は拒否される。
-既定の gate では常に no-op のまま。
-アンカーは **task の worktree を基準に解決する**ので、入れる先は worktree を持つ task 種別が使うプリセットになる。
-`{"extra_criteria": {"standard": ["evidence_anchors_resolve"]}}` が想定形になる。
-`standard` は実装系 task が必ず合成する土台である。
-名前が紛らわしい `review`（や `security`）プリセットに入れても**永久に発火しない**。
-`review`/`security_review` の task は worktree **なし**で route されるため、解決の基準になるツリーが存在しない。
-このセンサーが見るのは、review fan-out が実装 task に対して記録した本文（`review <task_id> --body`）であって、単体の review task ではない。
-評価できないとき（worktree 無し・base commit 無し・記録された本文が無い）は、基準を黙って `pending` のまま残さず gate 出力で理由を述べる。
-8本目は `ja_lint_clean` で、`prompt_regression_passed` と同じく diff が呼んだときだけ現れる。
-条件は diff が日本語の散文を足すことで、センサーは追加行を `rig-wb ja-lint` で判定する。
-error があれば failed、warning だけなら warning に置く。
-食い違う `--set ja_lint_clean=passed` は拒否ではなく次の評価で上書きされ、より厳しい `--set ja_lint_clean=failed` は残る。
+## 8. 機能の提供状況
 
-各基準は根拠つきで `passed` / `failed` / `warning` / `skipped` として記録する：
+Stableは基本機能、Betaは出力や運用方法を改善中の機能です。
+利用中のホストやモデルでの動作を一律に保証する分類ではありません。
 
-```bash
-python3 scripts/workbench.py gate <task_id> --set no_type_errors_or_explained=passed --set tests_added_or_explained=warning:"既存テストのみで新規追加なし"
-```
+| 領域 | 状況 | 内容 |
+|---|---|---|
+| タスク分類、worktree、受け入れゲート | Stable | レシピ選択、作業場所の分離、条件の確認 |
+| diff、accept、discard | Stable | 差分確認、ステージへの反映、作業の破棄 |
+| 検証役の制限 | Stable | 対応プロバイダで検証役向けの引数を指定 |
+| 実行記録、構造検証 | Stable | ログ保存、資産の構成と参照の検査 |
+| board、stats、drill、queue | Beta | 状態一覧、集計、検出率の測定、並列実行 |
+| GitHub連携 | Beta | Issue、PR、CIに関連する作業 |
+| 知識管理、計画、拡張パック | Beta | 知識の追加、手順の設計、用途別の拡張 |
+| 組織・ステージのガバナンス | Beta | 共通ポリシー、権限、承認、期限付き例外、監査 |
 
-gate 全体は `passed` / `passed_with_warnings` / `failed` / `pending` / `skipped` に集約される：
+<a id="9-task-routing-&#12392;-recipes"></a>
 
-```
-Gate:
-✓ task_intent_satisfied
-✓ no_unrelated_diff
-✓ diff_summary_written
-✓ risk_summary_written
-⚠ tests_pass_or_explained
-✓ no_secret_leak
+## 9. タスクの分類とレシピ
 
-Overall:
-passed_with_warnings
+レシピは、persona（担当する役割）、instruction（作業指示）、pattern（進め方）を組み合わせます。
+代表的なレシピは次のとおりです。
 
-Next:
-Review /rig:go diff, then choose accept or discard.
-```
-
-`gate` 自身も `$?` で答える。決着した gate（`passed` / `passed_with_warnings`）は 0、`failed` は 1 になる。センサーと食い違う `--set` は 2 である。判定に届かなかったとき（`pending` が1件でも残るか、全件が `skipped` のとき）は 3 になる。「まだ判定していない」を「通った」と読ませないためで、3 は `wb contract` と orchestrator が既に同じ意味で使っている。`failed` か `pending` が1件でも残っていれば `accept` は機械的に拒否される（exit 1）。全 criterion が `skipped` の gate も同じく止まる。何も判定していない gate を充足として読まないためで、通す道は `--force` だけ（他の force と同じく記録に残る）。`warning` は accept を止めないが、常に提示され黙って握りつぶされることはない。
-
-### read-only verifier
-
-rig は「実装する AI」と「検証する AI」を分離し、検証側はプロセスレベルで read-only に固定される——お願いではなく強制として。
-
-reviewer/verifier subagent はツールアクセスを制限して起動する（`claude --allowedTools Read,Grep,Glob`・`codex --sandbox read-only`）。ファイル確認、grep、diff 確認、指摘の作成はできる。一方でファイル編集、破壊的な shell 操作、formatter による変更、commit、worktree 変更はできない。これにより、レビュー担当が評価対象の成果物を勝手に修正してしまうことを防ぐ——実装と検証を同系統のモデルにまかせるときの実在するリスク。さらに verifier は生成側の自己申告レポートでなく **worktree の実際の git diff を一次証拠として判定する**——レポートは「未検証の主張」と明示ラベルづけして渡されるだけ——そして基準ごとの `CRITERION n: PASS|FAIL|UNKNOWN` 行を出し、判定は最後に置く。`scripts/orchestrate.py probe`/`selftest` が、この制限が文書上だけでなくプロバイダごとに実際に適用されていることを検証している。
-
-### 明示的な accept / discard
-
-`accept` はまず `accept_requirements` チェックリストを表示する——`worktree_exists`/`base_branch_recorded`/`diff_summary_generated` は**構造的な前提**であり `--force` でも上書きできない。そのうえで **staged**（未コミット）として反映する——コミットは常に人が行う。`discard` は task-id の明示と `--yes` 確認を必須とし、常に破棄対象の変更ファイル一覧を先に見せる。完全な例つきの解説は §10。
-
-### 実行履歴
-
-`discard` は worktree/branch を削除するが run log（`.rig/runs/<task-id>/`）は残る——何を試みてなぜ却下・破棄されたかは常に追える。
-
-これは `discard` だけの話ではない。途中で別の質問を挟んでも、静かにハーネスから外れることはない。RUN 中の各ターンは状態ヘッダを再掲する：
-
-```
-▸ rig | task: rig-20260704-153012-login-fix | recipe: bugfix | step: test (4/7) | gate: pending | mode: isolated worktree
-```
-
-中断（脱線質問・tool 呼び出し・長い間）があっても次のターンは必ずこのヘッダに再アンカーする——静かに素の直接作業へ切り替えることはない。**コンテキスト圧縮も生き延びる**：同梱の `PreCompact` フックが run-state の保全指示を注入し、`/rig:init` は同じ保全文を CLAUDE.md "Compact Instructions" にも置ける。
-
-## 7. Core commands
-
-Core commands は既定の安全フローそのもの：タスクを振り分け、隔離して作業し、検証し、diff を確認し、accept か discard する。
-
-| コマンド | 内容 |
+| レシピ | 用途 |
 |---|---|
-| `/rig:go "<タスク>"` | 分類 → recipe 選択 → 隔離 worktree での実行 → acceptance-gate → サマリ |
-| `/rig:talk "<タスク>"` | 同じエンジンへの会話的入口（§4） |
-| `/rig:dev ...` | 同じエンジンをすべて明示（recipe/step/flag）— 上級者向け入口、§14 |
-| `/rig:orchestrate` | 同じエンジンの step 単位の計算的オーケストレーション — §14 |
-| `/rig:go status [id]` | 現在（または最新）の task：Steps チェックリスト・Gate チェックリスト・未反映差分・次アクション |
-| `/rig:go diff [id]` | 変更ファイル一覧＋Summary/Risk/Tests/Unrelated diff/Recommended（§10） |
-| `/rig:go accept [id] [--force]` | 作業ツリーへ反映（staged）——gate が pass していないと拒否される（§10） |
-| `/rig:go discard <id> --yes` | worktree/branch を削除（run log は残る）（§10） |
-| `/rig:go log [--limit N]` | 過去 task の履歴（入力・recipe・gate 結果） |
+| `bugfix` / `feature` / `refactor` / `documentation` | 修正、機能追加、整理、文書整備の既定手順 |
+| `review-only` / `pr-review` | 現在の差分、既存PRのレビュー |
+| `debug` | 再現と原因調査を重視した修正 |
+| `release-flow` | リリース準備からPR、マージまで |
+| `design-first` / `design` / `design-audit` | 設計、UI作成、画面の監査 |
+| `hotfix` | 手順を絞った緊急修正 |
+| `adversarial-review` | 不要なコメントや過剰な抽象化など、コードの可読性を見直す |
+| `de-ai-smell` | 散文の不自然さや冗長さを見直す |
+| `goal-loop` | ゴールに向けた継続作業 |
 
-## 8. Feature status
+全レシピは`/rig:dev --list`、拡張を含む一覧は`/rig:catalog`で確認できます。
+資産の一覧は[`BRICKS.md`](./skills/engine/BRICKS.md)を参照してください。
 
-| 領域 | Status | 補足 |
-|---|---:|---|
-| 自然文タスクルーティング | Stable | `/rig:go "<task>"` がタスクを recipe に振り分ける（§5, §9） |
-| isolated worktree | Stable | 危険な作業は既定で隔離される（§6） |
-| acceptance gate | Stable | `failed`/`pending` の gate は accept を止める（§6） |
-| diff / accept / discard | Stable | 明示的な staged 反映フロー（§10） |
-| read-only verifier | Stable | reviewer は成果物を書き換えられない（§6）。プロバイダごとに強制 |
-| 実行履歴 / run-continuity | Stable | run log は保持され、中断やコンテキスト圧縮を跨いで状態が生き残る（§6） |
-| `--validate`（構造 doctor） | Stable | ブリック目録自体の構造検証。CI で強制 |
-| board / stats | Beta | 複数 run の観測に有用。出力形式は発展中（§11） |
-| reviewer drill | Beta | 注入した issue で reviewer 品質を測定（§12） |
-| GitHub 連携 | Beta | Issue/PR/CI フローは今後変わりうる（§13） |
-| queue（並列 dispatch） | Beta | 隔離により構造的には安全。UX は発展中（§6） |
-| knowledge import/export/persona/catalog/forge | Beta | 有用だが安全性の核ではない（§14） |
-| planning 系（goal/design/brainstorm/tasks/loop/harness/qa） | Beta | 実在のゲートつきフローだが Core ほど実績を積んでいない（§14） |
-| 組織ガバナンス（`rig-wb govern`・`/rig:govern`） | Beta | 共通ポリシー（org→team→project・締める方向のみ）・権限管理・承認フロー・waiver・改竄検知つき台帳・適合性ロールアップ。リポジトリを束ねるまで完全に不活性（§18） |
-| ステージ・ガバナンス（`actor` / `human_gate`） | Beta | recipe の step を人間の承認で止められる。org は `stage:<id>` で強制でき、駐機した run は永続して再開する（§18） |
-
-この表に "Planned" 行はない——未出荷の機能をここに書く方針は取らない。提案は GitHub issue として存在する。表に載っていないコマンドはまだ出荷されていない。
-
-## 9. task routing と recipes
-
-エンジン（`skills/engine/SKILL.md`)は起動時に4種のブリックを合成する：**persona**（誰が判定するか）・**instruction**（何をするか）・**pattern**（どう dispatch・gate するか）・**recipe**（step の束）。task_type の自動ルーティング（§5 の①）は4つの shipped recipe＋既存資産への native 委譲で構成される。この表は代表例であり網羅ではない——現在の全件は下記の `/rig:dev --list` または `/rig:catalog` を参照：
-
-| recipe | 内容 |
-|---|---|
-| `bugfix` / `feature` / `refactor` / `documentation` | workbench の既定4本 — inspect → … → acceptance |
-| `review-only` | 現在の変更を3観点で並列レビュー |
-| `pr-review` | 既存 PR のレビュー（GitHub MCP 取得） |
-| `debug` | 原因調査重視（reproduce→isolate→implement→verify） |
-| `release-flow` | intake→design?→implement→verify→review?→pr→merge（size-aware） |
-| `design-first` | 設計フェーズ厚め |
-| `hotfix` | 最短パス（intake→implement→verify→pr） |
-| `adversarial-review` | AI の癖排除・人間可読性の敵対レビュー |
-| `goal-loop` | ゴール駆動ループ |
-| `de-ai-smell` | 散文の AI 臭除去 |
-| `design` 🎨 / `design-audit` 🎨 | UI/UX・a11y の設計作成と URL 監査 |
-
-`/rig:dev --list` で全 tier（shipped＋project＋user）の recipe を badge つきで一覧、`/rig:catalog`（`--list --global`）で `domain × pack × persona × wiki × recipe` を全 tier 横断で地図化できる。core flow と明示的に導入した extension は、いずれも同じドメイン非依存エンジンに persona＋薄い instruction（＋recipe）を足しただけ（engine 不変）。opt-in domain pack は `skills/engine/SKILL.md` の Extension Catalog を参照。project pack は内容を確認し、初回実行時に `RIG_ALLOW_PROJECT_PACKS=1` を設定してasset trustを記録してから `$rig --recipe <installed-name>` で起動する。installだけでcommand assetがホストのslash commandへ自動登録されるわけではない。
+<a id="accept-change"></a>
 
 ## 10. diff / accept / discard
 
-**`/rig:go diff`** は `diff.md` の `## Summary` / `## Risk` / `## Tests` / `## Unrelated diff` 見出しを構造化して表示し、末尾に **コードが gate 状態から算出する** `Recommended:` 行を付す（モデルが書く行ではないので希望的観測が入らない）。Modifiedな`*.py`ファイルには`ast`モジュールによるセマンティックdiff（シグネチャ変更／本体変更／意味的変更なしを区別、#280）も自動で挿入される：
+`diff`は変更ファイルに加え、`diff.md`の次の見出しを表示します。
+見出し名は出力の読み取りに使うため、英語のまま記述します。
 
-```
-## rig diff: rig-20260704-153012-login-fix
-Changed files:
-  M  src/auth/login.ts
-  M  src/auth/login.test.ts
+```markdown
+## Summary
+メールアドレスに大文字が含まれるとログインできない問題を修正。
 
-Summary:
-  ログインでメールアドレスが大文字を含む場合に失敗する不具合を修正。
-Risk:
-  低。変更はメールアドレスの正規化処理に限定。
-Tests:
-  大文字小文字を区別しないログインの回帰テストを追加。
-Unrelated diff:
-  検出なし。
+## Risk
+変更はメールアドレスの正規化処理に限定。
 
-Recommended:
-  Safe to accept.
+## Tests
+大文字を含むメールアドレスの回帰テストと既存テストが成功。
+
+## Unrelated diff
+なし。
 ```
 
-**`/rig:go accept`** はまず `accept_requirements` チェックリストを表示する：
+`Recommended`はゲートの状態から表示される案内です。
+最終的な受け入れ可否は、`accept`が改めて確認します。
+Pythonの変更では、シグネチャや本体の変更を区別する意味的な差分も表示します。
 
-```
-## rig accept: rig-20260704-153012-login-fix — accept_requirements
-  ✓ worktree_exists
-  ✓ base_branch_recorded
-  ✓ diff_summary_generated
-  ✓ acceptance_gate_not_failed
-  ✓ no_unrelated_diff
-  ✓ gate_judged_this_head
-```
+`accept`の主な確認項目は次のとおりです。
 
-最初の3件は**構造的な前提**である。`diff.md` が無ければ accept できず、`--force` でも例外はない。残る3件は判断が伴う項目で、`--force` による上書きが可能である（`forced: true` として記録される＝消えない）。`gate_judged_this_head` は 3 つの commit を突き合わせる。gate が記録した `evaluated_head`・accept が squash する branch の先端・worktree の HEAD である。3 つが同一 commit でなければ未達になる。決め手は branch のほうである。accept が squash するのは worktree の HEAD ではなく branch だからだ。head を記録していない acceptance.json は「一致」ではなく「不明」として扱う。どの場合も `gate` を評価し直せば解ける。`--force` で越えた場合は監査エントリに 3 つの sha が残る。チェックリストを通過したら、task branch を作業ツリーへ **squash merge（staged・コミットなし）**で反映する。
-
-**`/rig:go discard <id> --yes`** は常に変更ファイル一覧を先に表示する（`--yes` なしは削除しないプレビュー）。worktree/branch を削除するが run log（`.rig/runs/<task-id>/`）は残る。
-
-## 11. run board と stats
-
-### Run board
-
-複数の AI タスクが走っている、あるいは走り終えている場合、`/rig:go board` は管制塔として機能する——どのターミナル・`/rig:queue` item が起動したかに関わらず、全 task の状態を1つの表で示す。
-
-```
-[running    ] rig-20260705-091200-search-feature
-    在庫一覧に検索機能を追加して
-    type=feature      recipe=feature      mode=isolated   step=implement(running)      gate=-
-[gate_passed] rig-20260705-090800-login-fix
-    ログインバグを直して
-    type=bugfix       recipe=bugfix       mode=isolated   step=acceptance(passed)      gate=passed
-[gate_failed] rig-20260705-091500-readme-clarity
-    READMEをわかりやすくして
-    type=documentation recipe=documentation mode=isolated step=verify-commands(failed) gate=failed
-```
-
-確認できる内容：どのタスクがまだ実行中か、どれが gate を通った/落ちたか、どの worktree に変更があるか、どの run が diff 確認待ちか、どれを discard すべきか。`/rig:go board --all` はアクティブなものだけでなく記録済み全 task に範囲を広げる。
-
-### Cockpit — Mission Control（`/rig:go cockpit`・read-only・#307）
-
-Run timeline・Gate radar・drill実測のreviewer confidence・cost meter・force-bypass safety stripを1画面に集約する——`board`/`stats`/`audit`/`confidence`を個別に叩く代わりに全体像を一度に見たいときに使う。新しい永続化層は無く、それらのコマンドが既に持つ集計関数（`.rig/runs/`・`drill-results.jsonl`・`runs.jsonl`・`audit.jsonl`）をそのまま再利用するため、ずれが生じない。**v1は完全にread-only**——accept/discardは既存コマンドのまま、cockpitは次に打つべきコマンドを案内するだけ。未計測のデータ（drill未実行・token usage未記録）は空欄ではなく「Unmeasured」と明示する（健全と誤読させない）。
-
-```
-python3 scripts/workbench.py cockpit
-```
-
-### Stats
-
-`/rig:go stats` は過去の run を集計する——単一 run の結果ではなく、workbench 全体を観測する層：
-
-```bash
-python3 scripts/workbench.py stats                          # 全体
-python3 scripts/workbench.py stats --recipe bugfix           # recipe 絞り込み
-python3 scripts/workbench.py stats --verifier security-reviewer --last 30d
-```
-
-```
-## rig stats
-Runs: 42
-Accepted: 27
-Discarded: 8
-Failed gate: 7
-
-Most used recipes:
-- bugfix: 18
-- review: 11
-- feature: 8
-
-Gate results:
-- passed: 24
-- passed_with_warnings: 11
-- failed: 7
-
-Verifier behavior:
-- strict_senior_engineer: 14 runs, 6 rejects
-- product_reviewer: 6 runs, 0 rejects
-
-Warning:
-product_reviewer has 0 rejects across 6 runs. Possible rubber-stamp behavior.
-```
-
-失敗しやすい recipe、まったく reject しない reviewer、accept を止めがちな gate、accept/discard の比率などが見える。`/rig:go review <task_id> --set <persona>=<APPROVE|REJECT|APPROVE_WITH_CONDITIONS>` で記録した verdict がここに集計される——review タスクの結果が確定するたびに記録しておくと、何でも通す reviewer を rig が検知してくれる。既存の `.rig/runs.jsonl`（`scripts/orchestrate.py runs` が読むエンジン全体の実行テレメトリ）とは別物——`workbench.py stats` は workbench task のライフサイクル（accept/discard/gate 結果）専用。
-
-## 12. reviewer drill
-
-reviewer persona は単なるプロンプトではない。rig では、それをテストできる。
-
-`/rig:drill` は既知のバグ class（認可漏れ・インジェクション・N+1・破壊的変更・片道 migration・テスト欠落…）を使い捨て diff に注入し、review fan-out を実行し、reviewer には見せない答案キーと突き合わせて採点する：
-
-```
-# Drill Result
-Persona: strict_senior_engineer
-
-## Score
-- Detection rate: 82%
-- False positive rate: 12%
-- Severity accuracy: 76%
-- Blocking accuracy: 81%
-- Explanation quality: 70%
-
-## Missed Issues
-1. SQL injection risk in search query (src/search.py:88)
-2. Missing authorization check in user update endpoint (src/api/users.py:120)
-
-## Recommended Persona Updates
-- [strengthen_security_focus] security 系の見逃しが2件以上 — セキュリティ観点の優先順位を引き上げる
-- [adjust_severity_rule] severity accuracy 76%（閾値80%未満）— 重大度判断基準を明文化する
-```
-
-reviewer ごとに6指標：`true_positive` / `false_positive` / `false_negative` / `severity_accuracy`（付けた重大度が種の期待値と一致するか）/ `blocking_accuracy`（Blocking/Non-blocking の配置）/ `explanation_quality`（修正案が具体的か、一般論か）。`Recommended Persona Updates` は固定4カテゴリ（`add_checklist_item`/`adjust_severity_rule`/`add_false_positive_guard`/`strengthen_security_focus`）からのみ選ぶ——曖昧な感想ではなく run をまたいで集計できる形。`--replay <persona>` はペルソナ編集後にアーカイブ済み diff へ再実行し新旧 verdict を差分表示する。本物のコードには一切触れない（全て使い捨て worktree）。
-
-rig は reviewer を動かすだけではない。reviewer を測定する。
-
-### Dogfooding（#284）
-
-同じ測定はrig自身の開発にも適用できる。fork/カスタム運用のメンテナーは、既出のコマンドだけで現在の数値を出せる（専用ツール不要）：
-
-```bash
-python3 scripts/workbench.py digest --period month   # §11 — 落ちがちなgate・drill検出率・ゴム印警告
-python3 scripts/workbench.py stats                    # §11 — 同じ集計を期間指定なしで
-/rig:drill --replay                                   # §12 — reviewer persona自体の回帰確認
-```
-
-**正直なスコープ注記**：このリポジトリは現状、これらの数値を自動公開する仕組み（マージ毎にbadgeやdocsページを再生成するCIジョブ等）を持たない——それは今後の課題であり、本リリースでは未実装。現時点の「dogfooding」は、メンテナーが上記をローカルで実行しPR説明やリリースノートに貼り付ける運用を指し、継続更新される公開スコアではない。
-
-### rigを使う意味は証明できるか——2本のベンチマーク、2つの異なる主張（#330）
-
-「rigを使う意味があるか」は、性質の異なる2つの主張に分かれる。片方だけが**課金なしで**証明できる。
-
-**主張A——rigは素のループには存在しない機械的な床を保証する。** `rig-wb sensor-bench`は、secrets/injection/destructiveの各機械センサーの`scan_line`を、既知の悪パターン（ハードコードされたAWSキー、`-----BEGIN...PRIVATE KEY-----`ヘッダ、指示上書きフレーズ、`rm -rf /`……）と、紛らわしいが安全な近似パターン（env変数参照、`rm -rf build/`、「以前の設定」に言及するだけの文章）から成る固定コーパスに直接ぶつける。LLM呼び出しゼロ・課金ゼロ・完全決定論：
-
-```bash
-python3 -m rig_workbench.cli sensor-bench     # または: rig-wb sensor-bench
-```
-
-現在のコーパスでの結果：既知の悪パターン10/10を捕捉、安全な近似パターンでの誤検知0/7。重要なのは具体的な数値そのものではなく、素の`claude -p`ループには**この数値自体が存在しない**という点——何かがそれらのチェックを配線しない限り実行されないため、このコーパスに対する保証捕捉率は構造的に0%になる。これは床であって天井ではない——判断を要する欠陥（設計上の欠陥・誤った業務ロジック）については何も証明しない。それは`/rig:drill`（上記§12）と主張Bの領分。
-
-**主張B——同じモデルでも、rig経由の出力の方が測定可能なレベルで優れている。** これには実LLMと実際の課金が必要になる。`rig-wb bench`は、Python/TypeScriptのリポジトリ型タスク10件以上を公平なペアで実行する。**bare**側は書き込み可能なエージェント呼び出しを1回だけ行い、**rig**側は明示的に選択した`adaptive-bugfix`を使う。両側でprovider、具体的なmodel、goal、開始tree、公開checkを同一にし、どちらかを実行する前に別々のworkspaceを作る。隠しcheckは両workspaceの外に置き、モデルには公開しない。採点はprovider/modelの組み合わせごとに分離し、混ぜて集計しない。
-
-`adaptive-bugfix`の通常経路は、実装と決定論的diff-risk分析が選んだreviewerの2 callである。高risk時だけ2人目のtargeted reviewを追加でき、allowlist済みcheckの失敗時だけ1回のbounded repairを追加できる。既存のdefault bugfix routingは変更していない。`rig-wb plan adaptive-bugfix`またはbenchmarkで明示的に選択する。
-
-```bash
-rig-wb bench --provider mock --runs 3 --out /tmp/bench.json --html /tmp/bench.html
-rig-wb bench --provider claude --allow-paid-provider --runs 3 --html /tmp/bench.html
-rig-wb bench --corpus ./my-corpus --tasks all --provider codex --allow-paid-provider --runs 3
-```
-
-schema v2の合格条件は厳密である。10タスク以上かつ各タスク3組以上のvalid pair、rigのsilent defect率がbareより50%以上低いこと、rigのsafe stop率がvalid rig runの20%以下、rigの平均call数がbareの2.5倍以下、infrastructure error率が10%以下でなければならない。bareのsilent defectが0件ならpassではなく`inconclusive`とする。completion・hidden check・invocationの証跡欠損はpairをinvalidにし、無関係diffやworkspace leakはfailにする。終了コードはpassが`0`、完了したfail/invalid/inconclusiveが`1`、CLI/schema errorが`2`。旧schema v1 JSONもHTML rendererで表示できる。
-
-**正直なスコープ注記**：`--provider mock`はレポート上も**WIRING ONLY**と表示され、配線とレポート経路だけを検証する。品質向上の証拠にはならない。Claude/Codexの実行は課金を伴うため`--allow-paid-provider`が必須で、このリポジトリは有料結果を自動実行・自動公開しない。
-
-**主張C — 結果がどのモデルで走らせたかに左右されない。** 最強のモデルでしか成立しないゲートはゲートではない。`rig-wb bench-invariance`は同一コーパスをモデルのパネル横断で走らせ、2つの指標を出す。**`agreement`**＝アーム同士がモデルを跨いで同じ終着点に至る一致率、**`safe_rate`**＝`clean_pass`＋`safe_stop`の割合（途中で安全に止まるのは安全側に数え、黙って欠陥を出すのは数えない）。
-
-```bash
-rig-wb bench-invariance --corpus benchmarks/hard-tasks \
-  --provider claude --allow-paid-provider \
-  --models claude-haiku-4-5-20251001,claude-sonnet-5,claude-fable-5 --html invariance.html
-```
-
-最初の実パネルはrigに有利な結果ではなかった。`trusted-helper-authz`では3モデルすべてがbareの全runでsilent defectを出し、**rigのsafe_rateはbareと同率**だった——検証役が見抜けない欠陥は、ループが再試行しても見抜けるようにはならない。条件と全結果は[`benchmarks/hard-tasks/README.md`](benchmarks/hard-tasks/README.md)にある。実際に走らせたパネルを超える主張はしない。
-
-**モデル跨ぎ比較。** `--bare-model`・`--rig-model`はそれぞれのアームだけモデルを上書きできる。上の同一モデル比較では答えられない第三の問い——「rig経由なら安価なモデルでも上位モデルのbare出力に迫れるか」——を検証できる。省略時はどちらも`--model`にフォールバックするため、明示的にopt-inしない限り従来の同一モデル挙動は変わらない：
-
-```bash
-rig-wb bench --provider claude --allow-paid-provider --bare-model fable --rig-model sonnet --runs 3
-```
-
-合格条件は同じschema v2基準を使う。JSONレポートには`model`（rig側のモデルを保持し後方互換を維持）に加えて`bare_model`/`rig_model`が併記されるため、比較対象が曖昧になることはない。
-
-### MCPサーバ（#263）
-
-package-nativeなMCP SDK adapter（Streamable HTTP / stdio）は`rig-workbench[mcp]`をinstallし、
-`rig-mcp`で起動する。固定repository境界・write tool・単一operator HTTPの手順は
-[`docs/remote-mcp.md`](docs/remote-mcp.md)にある。remote/SDK integrationはこちらを使う。
-
-既存の`scripts/mcp_server.py`は、agent・CI・別process向けのstdlib-onlyな
-historical/local stdio adapterとして引き続き利用できる：
-
-```bash
-python3 scripts/mcp_server.py
-```
-
-stdioでModel Context Protocol（JSON-RPC 2.0、line-delimited）を待ち受け、`mcp`公式SDKには
-依存しない。以下のtoolは`rig-mcp`と異なり、両contractは相互置換できない。新しい実行
-engineはなく、`workbench.py`/`orchestrate.py`を呼ぶ薄いadapterである。
-
-提供ツール：
-
-| ツール | 相当するCLI |
+| 条件 | 意味 |
 |---|---|
-| `rig_task_new` / `rig_task_status` / `rig_task_board` / `rig_task_diff` / `rig_task_gate` / `rig_task_accept` / `rig_task_discard` / `rig_task_log` | `workbench.py new/status/board/diff/gate/accept/discard/log` |
-| `rig_orchestrate_init` / `rig_orchestrate_next` / `rig_orchestrate_check` / `rig_orchestrate_status` / `rig_orchestrate_run` / `rig_orchestrate_runs` | `orchestrate.py init/next/check/status/run/runs` |
+| `worktree_exists` | 作業用worktreeがある |
+| `base_branch_recorded` | 取り込み先のブランチが記録されている |
+| `diff_summary_generated` | 差分要約が用意されている |
+| `acceptance_gate_not_failed` | ゲートが受け入れ可能な状態にある |
+| `no_unrelated_diff` | 無関係な差分についての基準を満たす |
+| `gate_judged_this_head` | 検証済みコミット、作業用ブランチの先端、worktreeのHEADが一致する |
+| `no_rejected_reviews` | 記録されたレビュアー別判定に`REJECT`が残っていない |
 
-opt-in：このサーバを起動しない限り何も変わらず、既存のCLI/skill経由の利用はそのまま有効。MCPクライアント（Claude Desktop等）から使う場合は、`command: python3`, `args: ["<repo>/scripts/mcp_server.py"]`をMCP設定に登録する。
+最初の3条件は`--force`でも省略できません。
+残る条件の例外には`--force`を使いますが、権限や組織ポリシーにも従います。
+例外が禁止された基準は回避できず、必要なwaiver（期限付き例外）がなければ拒否されます。
+回避した条件は監査ログに、強制取り込みの事実は署名付きの来歴に記録します。
+拒否されたレビューを回避した場合、その判定も両方に記録します。
 
-**自己脅威分析（`orchestrate.py mcp-scan`・#303）**：公開しているツール自体が過剰権限・secret露出・hookインジェクションのリスクを持ちうるため、`scripts/mcp_server.py`のツール定義を3層対抗推論（攻撃者/防御者/監査者）で静的分析するコマンドを用意した。実行はしない（決定論・副作用なし）。`validate.py`に組み込まれ、CI連携済み——現状の総合判定はLOW。#419までMEDIUMだった：`rig_orchestrate_run`は呼び出し側が`isolate`について何も言わなければメイン作業ツリーに対して直接走り、対策は「呼び出し側が`isolate: true`を忘れないこと」だった。いまは`rig-mcp`と同じく既定で隔離し、抜け道は明示的な`isolate: false`ひとつだけ。しかもこの判定はアダプタのソースから既定値を**読み取って**出しており、断定ではない——危険な既定に戻せば判定も自動的にMEDIUMへ戻る。
+v3.0.1から、`accept`はその時点のレビュー記録も確認します。
+ゲート通過後の`REJECT`でも通常の反映を止めます。
+別のレビュアーの承認やゲートの再実行では解除されません。
+修正後、拒否したレビュアーの再評価を記録してください。
+不正なレビュー記録は`--force`でも受け付けません。
 
-### コストティア自動ルーティング（`--auto-route`・`--auto-route-learn`・#264・#305）
+レビュー記録自体がないタスクに、全レビュアーの承認を新たに要求する変更ではありません。
+`APPROVE_WITH_CONDITIONS`もこの拒否条件には含みません。
+読み取り専用のレビュータスクでは、レビュー作業の完了と対象変更の承認を区別します。
 
-recipeのstepは`auto_route.candidates`（`{model, cost_tier, max_size}`の列、安い順に宣言）を持てる。`orchestrate.py run --auto-route`は、現在の diff size を測定し、その`max_size`をカバーする最も安い候補を決定論的に選ぶ——あくまでフォールバックで、実行時の`--step-model`とrecipe自身の`model:`はどちらも優先されたまま。選択結果は`runs.jsonl`の`steps[].auto_route`に記録される。
+作業用worktree内で変更をコミットし、そのコミットでゲートを評価してから`accept`を実行してください。
+未コミットの変更がworktreeに残っている場合も、受け入れを拒否します。
+条件を満たすと、タスクのブランチをsquash mergeし、元の作業ツリーに未コミットの差分をステージします。
+取り込み先に未コミットの変更がある場合などは、先にその状態を解消する必要があります。
 
-`--auto-route-learn`はこれをさらに発展させ、`.rig/runs.jsonl`自身の実績（どのrecipe/stepでどのmodelが実際に使われ、gateを通過したか）から頻度ベース（MLモデル不要）で学習する。**既定はshadow mode**：予測は常に記録される（`steps[].learned_route`）が、`--auto-route-mode active`を指定するまでは実際の選択に影響しない（段階導入）。参照run数が不足しているか、pass_rateが低い場合は静的な`--auto-route`の選択にフォールバックし、棄却した候補とその理由（counterfactual）を必ず記録する——ブラックボックス化しない。`--exploration-pct N`を指定すると、一定割合のrunだけ次点候補を試す（乱数ではなく`--exploration-date`＋recipe/stepのハッシュで決定論的に判定するため、結果は再現可能）。安く選んだことが節約だったのか偽の経済だったのかは、`rig-wb runs --auto-route-regret`が事後に答える。ルーティングされたstepごとに候補モデル別の試行数とpass rateを表示し、選ばれたモデルが品質基準を下回っていて、かつ十分なサンプルを持つより高価な候補の方が通過率が高い場合に**possible regret**として明示する。`.rig/runs.jsonl`を読むだけの読み取り専用で、ルーティング自体は変更しない。
+`discard <id>`は削除対象を表示するだけです。
+`--yes`を付けるとworktreeとブランチを削除し、ログを残します。
 
-### 性能バジェットと回帰ゲート（`rig-wb perf`、#502）
+<a id="11-run-board-&#12392;-stats"></a>
 
-RUN の計測はこれまで所要時間ひとつだけで、性能レポートに本当に問われる問い——**遅くなったの
-は rig か、プロバイダか**——に答えられなかった。前者は直すべき回帰、後者は天気で、必要な対応
-が正反対になる。いまは各 RUN が `perf` を `.rig/runs.jsonl` に記録する：フェーズ別の所要時間
-（`risk_assess` / `auto_route` / `provider_generator` / `provider_verifier` / `checks` /
-`gate` / `artifact`）、送出したプロンプトのバイト数、そして `rig_overhead_ms`（総時間から
-プロバイダ待ちを引いた、rig 自身の取り分）。
+## 11. タスク一覧と集計
 
-```console
-rig-wb perf --recipe bugfix                          # 直近 RUN のフェーズ別中央値(ms)
+`board`は実行中、ゲート通過、失敗などの状態を一覧にします。
+過去のタスクも見る場合は`--all`を付けます。
+`cockpit`は進捗、ゲート、レビュー、費用を読み取り専用の画面にまとめます。
+記録のない値は未計測として表示します。
+
+```bash
+rig-wb wb board --all
+rig-wb wb cockpit
+rig-wb wb stats --recipe bugfix
+rig-wb wb digest --period week
+```
+
+`stats`は受け入れ・破棄の件数、失敗しやすい基準、レビュアーの判定を集計します。
+拒否のないレビュアーへの警告は、レビュー内容を確認するきっかけです。
+拒否率だけでレビューの質を判定するものではありません。
+
+複数リポジトリの集計は[EvidenceとMission Control](./docs/evidence-mission-control.md)、操作画面は[Mission ControlのUI](./docs/interactive-mission-control.md)を参照してください。
+
+<a id="12-reviewer-drill"></a>
+
+## 12. レビューの検出力を測る
+
+`/rig:drill`は既知の不具合を使い捨ての差分に埋め込み、レビュー結果を採点します。
+正解情報はレビュアーに渡しません。
+検出率、誤検知、重大度、修正必須かどうか、説明の具体性を確認し、役割ごとの見落としを調べます。
+`--replay <persona>`では、保存した差分を使って再評価できます。
+
+### ベンチマークで確認できること
+
+| コマンド | 確認すること | 結果の範囲 |
+|---|---|---|
+| `rig-wb sensor-bench` | 固定の入力に対する機械センサーの検出と誤検知 | その入力集合に対する結果。設計や業務ロジックの品質は測りません |
+| `rig-wb bench` | 直接実行とRig経由の実行を、同じ課題・開始状態で比較 | 指定したモデルと課題の結果。実モデルの評価には利用料がかかります |
+| `rig-wb bench-invariance` | 複数モデルで結果の一致率と安全に終了した割合を比較 | 実行したモデル群の範囲で評価します |
+
+```bash
+rig-wb sensor-bench
+rig-wb bench --provider mock --runs 3 --out /tmp/rig-bench.json
+```
+
+`mock`は実行経路とレポート生成の確認用です。品質向上を測った結果にはなりません。
+実モデルを使うベンチマークには`--allow-paid-provider`が必要です。
+`--bare-model`と`--rig-model`で比較するモデルを分けることもできます。
+
+比較レシピ`adaptive-bugfix`は明示的に選んで使います。
+通常の`bugfix`の既定ルートを置き換えるものではありません。
+schema v2では課題数、反復数、欠陥率、安全に停止した割合、呼び出し数、実行障害を評価します。
+比較元に欠陥がない場合は`inconclusive`（終了コード1）として扱います。
+
+実モデルの測定では、Rig経由でも改善しなかった課題があります。
+条件と結果は[難しい課題のベンチマーク](./benchmarks/hard-tasks/README.md)に記録しています。
+Rig自身の数値はローカルで集計できますが、マージごとに最新スコアを自動公開する仕組みはありません。
+
+### MCPサーバ
+
+MCP SDKを使うサーバは`rig-mcp`です。
+リポジトリを固定して起動し、既定では読み取り専用ツールだけを公開します。
+書き込みツールの有効化やHTTP接続の認証境界は[remote MCP](./docs/remote-mcp.md)を参照してください。
+
+従来の`python3 scripts/mcp_server.py`は、標準ライブラリだけで動くローカルstdio用アダプタです。
+`rig-mcp`とはツール名と引数の契約が異なり、そのまま置き換えることはできません。
+ツール定義の静的な検査には`python3 /path/to/rig/scripts/orchestrate.py mcp-scan`を使います。
+
+### モデル選択と費用
+
+`--auto-route`は差分の規模に応じて、宣言した候補からモデルを選びます。
+明示した`--step-model`やレシピ内の`model:`が優先されます。
+`--auto-route-learn`は実行履歴を参考にしますが、既定のshadow modeでは選択を変更しません。
+適用には`--auto-route-mode active`が必要です。
+
+費用やトークンは、プロバイダが構造化された利用量を返した場合に記録します。
+CLI経由で取得できない値は未計測と表示します。
+`--budget-minutes`は見積もりの記録で、時間制限ではありません。
+
+### 性能と観測
+
+`rig-wb perf`はプロバイダの待ち時間とRig自身の処理時間を分けて集計します。
+性能の回帰判定には、保存した基準値を使います。
+
+```bash
+rig-wb perf --recipe bugfix
 rig-wb perf --recipe bugfix --save-baseline perf.json
-rig-wb perf --recipe bugfix --check --baseline perf.json   # 回帰なら exit 1
+rig-wb perf --recipe bugfix --check --baseline perf.json
 ```
 
-バジェットは生成物ではなくマニフェストに宣言する。ゲートである以上コミットされている必要が
-あり、`.rig/` は gitignore 対象だから：
+`rig-wb otel --dry-run`では、OpenTelemetryへ送る内容を確認できます。
+エクスポートはローカル記録をもとに行い、送信失敗でゲートの判定を変えません。
+送信対象のフィールドは限定し、プロンプトや差分の本文は送りません。
 
-```yaml
-perf_budget:
-  max_rig_overhead_ms: 5000
-  max_context_bytes: 400000
-```
+### Orcaランタイム
 
-RUN 中に超過しても警告を出すだけで判定は変えない。性能バジェットが bugfix を落とすようになれ
-ば、人はバジェットのほうを消す。実際に痛みを伴うのは CI の `rig-wb perf --check` だけにする。
-
-**やらないこと**が設計そのもの：
-
-- **プロバイダ遅延は報告するがゲートしない。** 他人のネットワークで落ちるゲートは一月で無効化
-  され、rig 自身が責任を負えるフェーズまで道連れになる。「どちらが遅くなったか」が要点なので、
-  比較自体は別枠で表示する。
-- **未計測のフェーズを `0ms` として描かない。** 計測されなくなったフェーズはゲート失敗として
-  扱う——それを含んでいた総和すべてが「改善」に見えてしまうから。
-- **RUN が計測できなかった値を指すバジェットは「合格」ではなく「未執行」と報告する。** 誰にも
-  検証できない上限は守られた上限ではなく、そこに青信号を出すのがゲートが黙って機能しなくなる
-  経路そのもの。
-- **ベースラインは平均ではなく中央値。** スリープしたラップトップやコールドキャッシュの 1 回
-  が、以降すべての基準を決めてしまわないように。
-- **並列したプロバイダ呼び出しは二重に数えない。** 320ms の窓の中で 300ms のレビュアーが 4 本
-  走っても、RUN が待ったのは 1.2 秒ではなく 320ms。総和は `provider_work_ms` として併記する
-  ので、並列ファンアウトが無駄に見えることもない。
-
-決定論的なスイートは既存のものをそのまま使う。`rig-wb bench --provider mock` はベンチマーク
-コーパスを実際のオーケストレータに mock プロバイダで通す。各 RUN のテレメトリは使い捨ての
-成果物ディレクトリに向き、run-state を読み終えた時点で削除されるので、`--runs-log` で
-rig 側 RUN の `runs.jsonl` レコードを削除前に中継する先を指定する——指定が無ければ `perf`
-ブロックはディレクトリごと消え、2 つ目のコマンドには読むものが無い。つまり CI ゲートはこの
-2 コマンドの組で、どこにもライブネットワークが入らない：
-
-```console
-rig-wb bench --provider mock --runs-log artifacts/runs.jsonl
-RIG_RUNS_PATH=artifacts/runs.jsonl rig-wb perf --check --baseline benchmarks/perf.json
-```
-
-`--out` はベンチマーク自身のレポート（JSON 1 ファイル）で、RUN テレメトリとは別物。両方を
-同時に指定してよい。
-
-### RUN の支出を見る（#532）
-
-rig は**投入**を絞るレバー（`--budget low|mid`、manifest の `default_budget`）を持つが、支出が
-**計測**されるのは provider が構造化された `usage` を返すときだけ。`claude` / `codex` を CLI
-provider として使う構成では、`rig-wb runs --cost` は「unmeasured」と答え続ける。
-
-これは欠陥ではなく設計。文字数からのトークン推定は rig が明示的に拒否している種類の数字で、
-もっともらしい推定値を実測値の隣に置くのは、「計測していない」と言い続けるより悪い。
-
-**どちらの状態かを毎回 RUN が言うようになった。** 開始行と完了レポートの両方——人が支出を判断
-するのはその2箇所だから：
-
-```text
-cost: unmeasured (claude — CLI providers expose no structured usage; ...)
-cost: metered (anthropic report usage)
-cost: partly metered (anthropic) — claude unmeasured
-```
-
-**計測された支出が見たいなら、どれかの役割を HTTP provider に向ける。** `anthropic` /
-`ollama` / `lmstudio` は `usage` フィールドから自動計測される：
-
-```console
-rig-wb run bugfix --provider claude --verifier-provider anthropic
-```
-
-CLI provider の実支出は Anthropic の Usage & Cost Admin API 側にあり、rig が正直に再構成できる
-場所には無い。
-
-**`--budget-minutes` は上限ではない。** 見積もりを記録するだけで、超過は `status`/`board` に
-出るが何も止まらない（#281）。名前が上限に読めるので、help にそう明記した。
-
-### Orca ランタイム（`--runtime`、#460〜#464、任意）
-
-**Orca は provider ではなく runtime です。** provider が決めるのは*誰がコードを書くか*（claude /
-codex / ollama）、runtime が決めるのは*作業がどこに置かれるか*（native の git worktree か、Orca
-管理の worktree か）。これを混ぜると「Codex で走らせる」と「Orca のワークスペースで走らせる」が
-同じ種類の選択になり、片方だけを選べなくなります。この分離はテストが**両モジュールの AST を
-解析して構造的に**確認しています。
-
-```text
-Orca → Claude Code → Rig → Orca CLI → Orca 管理の worktree
-                                        ↓
-       claude（生成）/ codex（読み取り専用の検証）/ テスト / acceptance gate
-```
-
-> どこで作業が見えるかは Orca が決める。どう行いそれが受け入れ可能かは rig が決める。
-
-```console
-rig-wb wb new "ログインのリダイレクトを直す"                  # auto（既定）
-rig-wb wb new "ログインのリダイレクトを直す" --runtime orca   # 決して降格しない
-```
-
-`auto` が Orca を使うのは、Orca セッションが環境変数として露出しており**かつ** CLI が ready で
-reachable な runtime を報告したときだけで、そうでなければ理由を出して native に戻ります。検出は
-環境変数を読んで返すだけでサブプロセスを起動しません——既定を選ぶ経路が、他のツールに「入って
-いますか」と尋ねずに済むように。明示した `--runtime orca` が満たせない場合は**フォールバック
-せず失敗**します：黙った降格は、あなたが指定も確認もしていない場所でタスクを走らせることだから。
-
-Orca が無いマシンでは以前とまったく同じに動作し、それがテストの最初の確認項目です。セットアップ・
-トラブルシュート・Orca が消えた後の discard 経路・IntelliJ との併用は
-**[docs/orca.md](docs/orca.md)** にあります。
-
-### OpenTelemetry エクスポート（`rig-wb otel`、#501）
-
-rig のローカル証跡——`.rig/runs.jsonl`、監査ログ、assurance receipt——が真実の源のまま。
-OTel はその**投影**であって、ここで何も再判定しないし、エクスポートが失敗しても verdict も
-gate も exit code も変わらない。監視バックエンドが落ちていることで rig の判断が変わってはなら
-ない。
-
-```console
-rig-wb otel --dry-run                        # 何がマシンの外に出るのかをそのまま表示
-rig-wb otel --endpoint http://localhost:4318 # OTLP/HTTP で任意のコレクタへ
-```
-
-```yaml
-observability:
-  enabled: true
-  otlp_endpoint: http://localhost:4318
-  service_name: rig
-```
-
-**SDK を入れない。** rig のランタイム依存は3つだけなので、OTLP/HTTP を JSON ボディで
-`urllib` から話す——モデルのエンドポイントに話しかけているのと同じ経路。どのコレクタも
-`/v1/traces` と `/v1/metrics` で受け取る。
-
-**投影は allowlist で、それが redaction のすべて。** 丸ごとコピーしてから濾すことはしない。
-フィルタは「これから存在しうる全フィールド」について正しくあり続けなければならず、何も考えず
-に追加された最初の1つが既定で流出する。具体的に：`runs.jsonl` の verdict は `anchor`——モデル
-が書いた自由テキストで、ファイルパスが入るのが普通——を持つ。denylist はそれを知っていなけれ
-ばならないが、allowlist はそもそも要求しない。よって prompt・応答本文・diff・パス・verdict の
-散文・step id・モデル名はどれも出ていかないし、**レコードに新しいフィールドが増えても、誰かが
-安全だと判断するまでテレメトリには現れない**。
-
-**span になるのは実測された時間だけ。** フェーズ span は RUN が実際に記録した区間から作る
-（#502）。所要時間はあるが区間が無いフェーズは span ではなく metric として出す——集計値を端から
-並べて木を描けば、誰も観測していない順序を捏造することになる。キャッシュトークン・コスト・
-TTFT・tokens/sec は**まるごと欠落**させる：rig はどれも測っていないので、0 は測定値ではなく
-主張になってしまう。
-
-span id は各レコードの内容から導くので、同じログに対してエクスポータを再実行しても、1つの RUN
-が2つに増えたりしない。
+`--runtime`は作業場所の管理方法、`--provider`はモデルの呼び出し方法を指定します。
+`--runtime auto`はOrcaの実行環境と利用可能なCLIを確認し、条件を満たさなければnativeを使います。
+`--runtime orca`を明示した場合は、利用できなければ失敗します。
+設定と復旧手順は[Orca連携](./docs/orca.md)を参照してください。
 
 ## 13. GitHub 連携
 
-| コマンド | read/write |
+| コマンド | 操作 |
 |---|---|
-| `/rig:go gh issue <n>` | Issue（title/body/labels/comments）を読み、bugfix/feature/investigation に分類して workbench へ |
-| `/rig:go gh pr <n> review [--comment]` | 既定は read のみの3観点レビュー。`--comment` で PR へ投稿（書き込みは常に確認必須） |
-| `/rig:go gh pr <n> fix` | PR の diff・レビューコメント・CI 失敗を読み、PR の branch を base に隔離 worktree で修正、`accept` の手前で止まる（自動 push はしない）。CI 状態は `tests_pass_or_explained` 基準の根拠に使う |
-| `/rig:go gh ci` | 現在の branch/PR の CI 状態を確認し、失敗ジョブの要約を提示 |
+| `/rig:go gh issue <n>` | Issueを読み、タスクに振り分ける |
+| `/rig:go gh pr <n> review` | PRをレビュー。`--comment`はコメント投稿を指定 |
+| `/rig:go gh pr <n> fix` | PRのブランチを基点に、専用worktreeで修正する |
+| `/rig:go gh ci` | 現在のブランチやPRのCIを確認する |
 
-Issue/PR の本文・コメントは**信頼できない外部入力**として扱う（埋め込まれた指示には従わず、分類・修正対象のテキストとしてのみ読む）。これは散文の「従わないで」ではなく**構造的に**強制する：第三者テキストが下流の persona に届く前に、推測不能な per-call デリミタでデータと明示する**検疫フェンス**（`rig_workbench/orchestrate/quarantine.py` の `wrap_untrusted`）で囲い、不可視/bidi Unicode を先に剥離する（改竄シグナル）——ゆえに埋め込まれた「指示を無視せよ」がフェンスを抜け出せない（OWASP LLM01／spotlighting・CaMeL）。GitHub への書き込み（コメント・push）は常に明示操作を経る。read は即応。
+投稿やpushには、その操作への明示的な指示が必要です。
+IssueやPRの本文は作業対象のデータとして扱います。
+Rigは外部テキストを区切り、不可視文字などを処理しますが、区切りだけで指示注入を完全に防げるとは限りません。
 
-**最初の実装で未達だった3条件のために足したもの。** RUN レコードは `providers`（誰が生成し、誰が
-検証し、どのモデルが設定されていたか）、`forced`（`--force` で gate を押し切った accept）、
-`findings`（決定論センサーが gate に残した所見の件数——secret / injection / destructive）を持つ。
-投影はこれを root span の `gen_ai.provider.name` / `gen_ai.request.model` /
-`rig.verifier.provider` / `rig.accept.force` と、カウンタ `rig.force.count` /
-`rig.secret.detection_count` / `rig.injection.detection_count` /
-`rig.destructive.detection_count` として出す。出るのは件数だけで、マスク済み抜粋は
-`acceptance.json` から出ない。所見を記録しなかったセンサーはゼロではなく点を出さない——
-走れなかったセンサーも同じ不在を残すため。
+GitHub Actions向けには[`action.yml`](./action.yml)を用意しています。
+内部では同じランナーを`--isolate`付きで呼び、ゲート通過時に限って指定されたPR作成処理へ進みます。
+モデルの認証情報とリポジトリへの書き込み権限は、利用するworkflowで設定してください。
+mockによる実行経路のテストと、実際のGitHub上でのpush・PR作成の確認は別です。
 
-### GitHub Action（#265）
+<a id="14-advanced-commands"></a>
 
-`action.yml`は、ライブなClaude Codeセッションが無いワークフロー向けに`orchestrate.py run --isolate`のheadless CI利用をパッケージ化する：
+## 14. 詳細設定と追加コマンド
 
-```yaml
-- uses: itoh-shun/rig@master
-  with:
-    task: "ci.ymlのflakyテストを直して"
-    recipe: recipes/bugfix.md
-    provider: claude
-    anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-    auto_pr: true
-```
-
-独自の実行ロジックは発明しない——`scripts/rig-action-entrypoint.sh`は他の箇所と同じ`orchestrate.py`を呼び出し、run-state JSONから最終状態(`DONE`/`ESCALATE`/`BLOCKED`/`STOPPED`)を導出し、gateが`DONE`で解決した場合のみbranch push + PR作成(`gh pr create`)を行う。未達/pendingのgateはjobを失敗させ、何も作成しない。
-
-**正直な検証範囲**: `run`ステップ(タスク実行・gate判定・worktree隔離/クリーンアップ)は`--provider mock`でローカルにend-to-end確認済み。`open-pr`ステップ(branch push + `gh pr create`)は、この環境から実際のGitHub Actionsランナーに対して実行検証できませんでした——`gh`の公開されたCLIインターフェース(GitHub-hostedランナーにプリインストール済み)に基づいて実装していますが、実運用では未検証です。実際のワークフロー実行で確認されるまでは「レビュー済み・未ライブ検証」として扱ってください。
-
-## 14. Advanced commands
-
-### コマンド分類
-
-| tier | コマンド |
+| 分類 | 主なコマンド |
 |---|---|
-| **Quality** | `/rig:drill`、`/rig:go stats\|review`、`/rig:pr`（既存 PR レビュー入口）、`/rig:harness`（自プロジェクトの開発ハーネス監査）、`/rig:qa`（仕様ベースのテストケース設計）、`/rig:japanese-lint`（textlint-ja 相当の日本語校正。stdlib のみ・`rig-wb ja-lint`） |
-| **Knowledge** | `/rig:import`、`/rig:export`、`/rig:catalog`、`/rig:knowledge`、`/rig:persona`、`/rig:forge`（自己拡張：説明文からブリック/パックを自作） |
-| **Planning** | `/rig:goal`、`/rig:design`、`/rig:brainstorm`、`/rig:tasks`、`/rig:loop`（繰り返しドライバ——見張り/ポーリング。goal の対極） |
+| 品質の確認 | `/rig:drill`、`/rig:pr`、`/rig:harness`、`/rig:qa`、`/rig:japanese-lint` |
+| 知識の管理 | `/rig:import`、`/rig:export`、`/rig:catalog`、`/rig:knowledge`、`/rig:persona`、`/rig:forge` |
+| 計画と継続作業 | `/rig:goal`、`/rig:design`、`/rig:brainstorm`、`/rig:tasks`、`/rig:loop` |
 
-いずれも安全な基本フロー（§5〜§7）を理解したあとに使う機能。全ブリック目録と opt-in Extension Catalog は [`skills/engine/BRICKS.md`](./skills/engine/BRICKS.md) §2 を参照。（`/rig:queue` は §6、`/rig:init` は FAQ、opt-in extension は §15 で扱っている。）
+完全な一覧は[`BRICKS.md`](./skills/engine/BRICKS.md)、オプションの定義は[`SKILL.md`](./skills/engine/SKILL.md)を参照してください。
 
-### install
+### レシピと実行範囲を指定する
 
-本リポジトリには `.claude-plugin/marketplace.json` を同梱しているので、単体インストール用の marketplace として使える。プラグイン名は `rig`、本リポジトリ自身の marketplace 名は `rig`。[`claude-context-checker`](https://github.com/itoh-shun/claude-context-checker) も同居する共有 marketplace が欲しい場合は、`itoh-shun/sito-plugins` リポジトリを使う（下記A）。
-
-> アップグレードについて: 本リポジトリ自身の marketplace 名は以前 `sito-plugins`（さらにその前は `itoshun-local-plugins`）だった。CLI上で `known_marketplaces.json` が名前をキーにしているため、2つのリポジトリが同じ名前を名乗ると登録が競合する——それを避けるため専用の `sito-plugins` リポジトリに名前を移した。既存インストールはどの旧名でも引き続き動作する。新規インストールは下記いずれかのパスを使うこと。
->
-> 別件として、本プラグインはCoworkのプラグイン一覧に**どのmarketplace経由でも表示されない**問題があった。原因はトップレベルの `bin/` ディレクトリ（詳細はCHANGELOGの1.28.2）で、上記のmarketplace名変更とは無関係。同じ症状がClaude Desktopでも出たため、1.35.0で `bin/` を削除した。`orchestrate` は自動でPATHに載らなくなるので、`python3 scripts/orchestrate.py install-shim` を一度実行して `~/.local/bin/rig` を張る。
-
-```bash
-# A) 共有 sito-plugins marketplace 経由（推奨・claude-context-checker も同居）
-/plugin marketplace add itoh-shun/sito-plugins
-/plugin install rig@sito-plugins
-
-# B) 本リポジトリを直接（共有 marketplace を使わない）
-/plugin marketplace add itoh-shun/rig
-/plugin install rig@rig
-
-# C) ダウンロード（ZIP / clone）から
-/plugin marketplace add /path/to/rig
-/plugin install rig@rig
-
-# D) --plugin-dir（開発・テスト用）
-cd /path/to/rig && claude --plugin-dir .   # 編集後の再読み込み: /reload-plugins
-```
-
-### 上級者向け入口: `/rig:dev`
-
-`/rig:go "<task>"` は分類と recipe 選択を自動でやる。`/rig:dev` は同じエンジンを recipe・step・flag すべて明示して使う入口：
-
-```bash
-/rig:dev --plan --only review "現在の変更"        # ドライラン：構成だけ確認
-/rig:dev --only review                            # 3-way 並列レビューを実行
+```text
+/rig:dev --plan --only review "現在の変更"
+/rig:dev --only review
 /rig:dev --recipe release-flow --design "機能X"
-/rig:dev --recipe hotfix --issue 1234             # 緊急修正を最短経路で
+/rig:dev --recipe hotfix --issue 1234
 ```
 
-| flag | 意味 |
+`--plan`は構成を表示して停止します。
+`--only`、`--from`、`--to`で範囲を指定し、`--design`、`--review`、`--tdd`で手順を追加できます。
+`--autonomous`でも、受け入れゲートは解除されません。
+
+### ソースから利用する
+
+プラグインの開発時は`claude --plugin-dir /path/to/rig`で読み込めます。
+`/path/to/rig`は、このリポジトリを取得した場所に置き換えてください。
+ソース内のスクリプトを別のプロジェクトから呼ぶときも、Rig側の絶対パスを指定します。
+
+<a id="codex-setup"></a>
+
+### Codex向けの設定
+
+本リポジトリを取得したうえで、Codex用スキルを配置します。
+既存の`rig`スキルがある場合は、配置先を確認してから更新してください。
+
+```bash
+mkdir -p ~/.agents/skills
+ln -s /path/to/rig/codex/skills/rig ~/.agents/skills/rig
+```
+
+プロジェクト内だけで使う場合は`.agents/skills/rig/`に配置します。
+Codexでスキルを読み込み直した後、`$rig`で呼び出します。
+タスク操作には`rig-wb wb ...`、ソースを直接使う場合は`python3 /path/to/rig/scripts/workbench.py ...`を使います。
+作業ディレクトリは対象プロジェクトにしてください。
+
+| 同梱ファイル | 用途 |
 |---|---|
-| `--recipe <name>` | shipped/user/project の recipe を名前で指定 |
-| `--only`/`--from`/`--to`/`--skip <step>` | 実行範囲のスライス・除外 |
-| `--design` / `--review` / `--tdd` | 該当 step を強制 ON（既定は size-aware） |
-| `--issue <id>` | 既存 Issue を intake 入力に |
-| `--plan` | 合成ハーネスを提示して停止（ドライラン） |
-| `--autonomous` | step ゲートを省略（capture ゲート・acceptance-gate は解除されない） |
-| `--workflow` | ultracode Workflow バックエンドを使用（opt-in・重い多段時のみ） |
-| `--save-recipe <name>` | 合成結果を recipe として保存 |
-| `--capture` | 学びを確認ダイアログなしで知識層へ |
-| `--list` / `--validate` | ブリック/recipe/flag 一覧、または構造 doctor（いずれも RUN 前に停止） |
-| `--adversarial` | 敵対的レビュー step を追加 |
-| `--cross-llm` | 他社 LLM が読む前提のコード/レビュー規律を注入 |
-| `--persona <name>` | カスタム reviewer persona を review fan-out に追加 |
-| `--verify-findings` | REJECT 根拠を独立した `finding-verifier` で敵対的検証 |
-| `--global` | `--list`/`--validate` を全 tier 横断に拡大 |
+| `codex/skills/rig/SKILL.md` | 既存のworkbenchとランナーを使うための手順 |
+| `codex/hooks.json` | `PreCompact`と`SessionStart`の設定 |
+| `.codex/agents/security-reviewer.toml` | 読み取り専用のセキュリティレビュアー定義 |
+| `.codex/agents/behavioral-correctness-reviewer.toml` | 動作の正しさを確認するレビュアー定義 |
 
-ブリックの完全な一覧は [`skills/engine/BRICKS.md`](./skills/engine/BRICKS.md) §2 が正本。flag 一覧は [`skills/engine/SKILL.md`](./skills/engine/SKILL.md) §3 が正本。README には複製しない＝`--validate` が守る目録ドリフト防止の原則。
+フックを使う場合は`codex/hooks.json`をプロジェクトの`.codex/hooks.json`へ配置します。
+フックはGitルートからスクリプトを探すため、そのプロジェクトに対応する`hooks/`も必要です。
+設定ファイルだけをグローバル設定へコピーしても動きません。
 
-### Codex skill として使う
+Codexの`PreCompact`では、処理の継続を許可するJSON（`{"continue":true}`）を返します。
+圧縮後の`SessionStart`で残った状態の再提示を試みますが、圧縮時に失われた情報は復元できません。
+フックのコマンド実行は回帰テスト済みです。
+ホスト自身のイベント発火、スキルの検出、サンドボックス、MCP接続は、利用環境で確認してください。
 
-Codex では、このリポジトリの `skills/engine` を `~/.codex/skills` から見えるようにすれば `$rig` skill として使える：
+### その他のホストと実験的な連携
 
-```bash
-mkdir -p ~/.codex/skills
-ln -sfn /path/to/rig/skills/engine ~/.codex/skills/rig
-```
+ホストごとの対応表は`python3 scripts/host_adapters.py`で表示できます。
+`supported`、`partial`、`unsupported`、`unverified`を区別しています。
+CursorやGrok Buildも登録されていますが、未検証の項目を動作確認済みとして扱わないでください。
+Grokの検証役など、読み取り専用の強制がプロンプト指示に限られる経路もあります。
 
-Codex を再起動したあと、`$rig "ログインバグを直して"` のように呼ぶ。Codex では `$rig` が Claude Code の `/rig:go` 相当の入口になる。横断 runner は既に `codex exec` provider を持っており、検証ロールでは read-only sandbox を強制する。
+Anthropic HTTPプロバイダには拒否応答やフォールバックを記録する処理があります。
+Managed Agentsへの委譲も実験的な設定として用意しています。
+実APIでの確認範囲と設定は[`commands/orchestrate.md`](./commands/orchestrate.md)を参照してください。
 
-### Codexネイティブ層統合（#294）
+VS Code向けの状態表示は[`vscode-extension/README.md`](./vscode-extension/README.md)に導入手順があります。
+読み取り専用で、拡張から`accept`や`discard`は実行しません。
 
-Codex CLI（2026年時点）はClaude Codeとほぼ同型の拡張機構（Skills・Hooks・Subagent TOML）を持つ。上記のskillシンボリックリンク方式に加え、本リポジトリはCodexネイティブな等価物も同梱する：
+### プロンプト評価
 
-| 機構 | 追加したファイル | 内容 |
-|---|---|---|
-| Skills | `codex/skills/engine/SKILL.md` | Codexの`.agents/skills/<name>/SKILL.md`規約（`name`/`description` frontmatter）に沿った薄いskill。新しいエンジンは作らず、既存の`workbench.py`/`orchestrate.py`への手続き的ポインタに留める |
-| Hooks | `codex/hooks.json` | Codexの`PreCompact`は`hooks/codex-precompact.sh`から妥当なno-op JSONを返し、`SessionStart(source=compact)`で`hooks/inject-run-continuity.sh`がbest-effortの再アンカーを試みる。Claude Codeは未変更の`hooks/preserve-rig-state.sh`平文出力を利用 |
-| Subagents | `.codex/agents/security-reviewer.toml` | `agents/security-reviewer.md`と同じ評価軸・出力契約を持つCodexネイティブsubagent定義。`sandbox_mode = "read-only"`でCodex自身のサンドボックスにもread-only強制を効かせる——rig側の`orchestrate.py`argv注入（`--sandbox read-only`）による既存の強制は変更せず残す（多層防御） |
-| MCP | `rig-mcp`（remote/SDK）; `scripts/mcp_server.py`（legacy local stdio） | package-nativeな`rig-mcp --repo <repo> --transport stdio`を優先する。legacyの異なるtool contractが必要な場合だけ従来の`command = "python3"`, `args = ["<repo>/scripts/mcp_server.py"]`を使う |
-
-インストール：`codex/skills/rig/`を`~/.agents/skills/rig/`（または repo 直下の`.agents/skills/rig/`）へコピー/シンボリックリンクし、`codex/hooks.json`をこのsource treeの`.codex/hooks.json`へコピーする。`.codex/agents/security-reviewer.toml`はリポジトリ直下に置くだけでproject-scoped agentとして認識される（Codexの規約）。hook commandは現在のgit rootからscriptを探すため、この設定はsource-tree/project scoped。他repoで使うならrigの`hooks/`もそのrepoへ配置する必要があり、global configへ設定ファイルだけをコピーしても動かない。
-
-**正直な検証範囲**：run-continuityの各hook commandは、設定JSONを読むだけでなく実際に起動する回帰テストで検証する。`PLUGIN_ROOT`のみ、`CLAUDE_PLUGIN_ROOT`のみ、Codexネイティブ設定でplugin rootなし、の各ケースでexit 0とホスト別stdout契約を確認済み。Codexのevent dispatcher自体、subagent sandbox強制、MCP接続は自動テストしていない。hook形式はCodex公式Hooks文書に基づき、今回の失敗はCodex CLI 0.147.0で再現した。
-- `codex/hooks.json`はJSONとして妥当で、hook commandの実行結果もJSONとして検証する。
-- `.codex/agents/security-reviewer.toml`は`tomllib`でパース可能で、[Codex公式ドキュメント](https://developers.openai.com/codex/subagents)に記載のフィールド（`name`/`description`/`sandbox_mode`/`developer_instructions`）のみを使用。
-- 既存の`--provider codex`ステートレス呼び出し（`build_argv`の`codex`分岐、`--sandbox read-only`の検証者強制含む）は本バッチで一切変更しておらず、`orchestrate.py selftest`の既存テストがそのままPASSすることで後方互換を確認。
-- Skill配布形式・hooksの実際のevent発火・subagent TOMLでの`sandbox_mode`強制・MCPサーバ接続は、実際のCodex CLIセッションでの確認が必要です。
-
-### ホストアダプタ層（複数ホストへの一般化・#304）
-
-#294はCodex限定だったが、Cursor・GitHub Copilot CLI等も同様の拡張機構（hooks/skills/MCP）を持つ。ホストごとの差分（hookイベント名・skill配置規約・機能対応度）を`scripts/host_adapters.py`の`HOSTS`辞書1箇所に集約し、新規ホスト対応は1エントリ追加するだけで済む設計にした。第二弾としてCursorを追加し、設計の妥当性を検証した：
-
-```
-| Host | skills | hooks | subagents | mcp | read_only_sandbox | precompact_context_injection | session_start | tool_acl |
-|---|---|---|---|---|---|---|---|---|
-| Claude Code | supported | supported | supported | supported | supported | supported | supported | supported |
-| Codex CLI | supported | supported | supported | supported | supported | unsupported | supported | unverified |
-| Cursor | supported | supported | unverified | supported | unverified | unsupported | supported | partial |
-| Grok Build | unverified | unverified | unverified | unverified | unverified | unverified | unverified | unverified |
-```
-（`python3 scripts/host_adapters.py`で再生成できる——このREADMEの表が古くなったら実行して差し替えること）
-
-**grok-build（#328）**はこれまでで最も安いホスト対応：grok-buildはClaude Code完全互換（plugins/skills/hooks/MCP/CLAUDE.mdをゼロ設定で自動読込）を公式に謳っているため、`HOSTS`エントリは**native passthrough**——イベント名変換もファイル再配置も不要で、rigの既存Claude Codeレイアウトがそのまま統合になる。全capabilityは`unverified`（互換性の主張は先方のドキュメントであり、この環境にgrok CLIが無いため実機未検証）。ギャップも1点明示：grokのheadlessモードにはread-only/sandboxフラグが文書化されていないため、`--provider grok`（`build_argv`の`grok -p` headless分岐。step別`-m`モデル指定対応）使用時、検証者ロールのread-only強制は**プロンプト契約のみ**に依る——`claude`（`--allowedTools`）や`codex`（`--sandbox read-only`）より1層薄い。`--always-approve`は意図的に渡さない（ツール実行を自動承認するフラグであり、検証者に渡してはならない。必要なgeneratorは`--provider-cmd`でopt-in可能）。
-
-Cursorで具体的に分かったこと（`cursor.com/docs/hooks`・`/docs/skills`で確認）：
-- **CodexとClaude CodeではPreCompact stdout契約が異なる**——CodexはJSONを要求し、平文を圧縮指示として扱わない。rigはここで妥当なno-op JSONを返し、Codexが対応する`SessionStart(source=compact)`の`additionalContext`からbest-effortの再アンカーを試みる。compactorが残さなかった状態は復元できない。
-- **hookイベント名はcamelCase**（`PreCompact`→`preCompact`、`UserPromptSubmit`→`beforeSubmitPrompt`）——#304が懸念した通りホストごとに異なる。
-- **skillは`.agents/skills/`もlegacy互換で読む**——`codex/skills/engine/SKILL.md`をそこに置けばCursorでもそのまま使える（新規ファイル不要）。
-- **`preCompact`はobservational-onlyで、run-continuityの状態注入はできない**（公式ドキュメントに明記）。ここは黙って「動いたふり」をせず`degrade`として明示し（`cursor/hooks.json`は状態保全を諦め、短い通知メッセージのみを返す設計にした）、READMEの表上もunsupportedと表示する。
-
-**正直な検証範囲**：`scripts/host_adapters.py`の対応表・golden fixture test（`tests/test_host_adapters.py`）はコードとして検証済み。Codex/Claude Code向けhook commandの実行は回帰テスト済みだが、ホスト自身のevent dispatch・skill読み込みは自動化していない（Cursorはこの環境に実機なし）。Claude CodeのPreCompact平文出力は維持され、回帰テストで固定している。
-
-### Fable 5 refusal-classifier→フォールバック（`--provider anthropic`・#297）
-
-Fable 5はcyber/bio/reasoning_extractionの3分類に該当するリクエストを安全フィルターで自動遮断し、Opus 4.8へフォールバックする仕組みを持つ。`orchestrate.py run --provider anthropic`はAnthropic Messages APIを直接HTTPで叩き、この遮否を検知・記録・透過的にハンドリングする（`claude`/`rig`のCLI経由providerは構造化`stop_reason`を持たないため対象外）：
-
-- `fallback_model`（例`claude-opus-4-8`）を設定すると`anthropic-beta: server-side-fallback-2026-06-01`を要求し、フォールバック成功時は`state["history"]`に`FABLE_FALLBACK`を記録して**gateを止めず処理を継続**する。
-- フォールバック未設定/尽きた直接拒否は`FABLE_REFUSAL`（category/explanation）を記録し、silent失敗にしない。
-- `runs --cost`にトークン計測（`cache_read_input_tokens`含む）とfallback/refusal発生件数を表示する。
-- 攻撃手法の議論が本業の`security-reviewer`等のpersonaへFable 5を`--step-model`（#293）で割り当てる場合は`fallback_model`必須（`agents/security-reviewer.md`参照）。
-
-**正直な検証範囲**：モックHTTPサーバ（Anthropic Messages APIのレスポンス形状を再現）で直接拒否・サーバー側フォールバック・通常成功の3パターンを確認済み。**実際のAnthropic APIには接続していません**（実運用トラフィックが必要かつ課金リスクを避けるため）。使用したスキーマは`anthropics/claude-cookbooks`の`fable_5_fallback_billing/guide.ipynb`に基づいていますが、実モデルでの動作は未検証です。
-
-### Managed Agents API委譲（実験的opt-in・#295）
-
-review-gateの並列レビューを、既存のsubprocess+ThreadPoolExecutorではなくAnthropic Managed Agents API（coordinator/worker構成のbeta）に委譲する実験的backend。`cfg["parallel_backend"] = "managed-agents"` + `cfg["environment_id"]`（必須）で有効化——**既定は従来方式のまま**、完全にopt-in。詳細・正直な限界（RESTパスは公式SDKメソッド名からの推測／実APIには未接続／イベントストリーム統合は未実装）は`commands/orchestrate.md`「⑧」を参照。
-
-### VS Code拡張 — rig board（読み取り専用・#286）
-
-`vscode-extension/`は`.rig/runs/`のtask/gate状態を**読み取り専用**でサイドバーのTree Viewに表示する。エディタを離れず`/rig:go board`相当を見られる。`scripts/workbench.py`が既に書いている`task.json`/`acceptance.json`/`steps.json`をそのままパースするだけだ。新しい状態管理エンジンは無く、accept/discard等の書き込みコマンドは拡張全体を通して一切登録していない。インストール手順（未公開・ソースから）と正直な検証範囲は`vscode-extension/README.md`参照。内訳はこうだ。状態パースロジックはplain Nodeでユニットテスト済み、実際のVS Code Extension Hostでの動作確認はこの環境では未検証。
-
-### プロンプト評価ゲート（`rig-wb eval`・v2.1.1）
-
-persona・instruction・recipe・facet といったプロンプト面は、rig のうちコンパイラが一切検査しない部分だ。`rig_workbench/eval/` は diff がどのプロンプト面に触れたかを台帳（`evals/prompt-surfaces.json`）と突き合わせ、その変更の裏づけとして承認済み評価ケース（`evals/cases/`）を要求する：
+プロンプト資産の変更は、登録済みの評価ケースと照合します。
 
 ```bash
-rig-wb eval affected --base origin/master --ratchet    # この diff はどのプロンプト面に触れ、カバーされているか
-rig-wb eval capture <task-id>                           # workbench task を未承認 draft として捕捉
-rig-wb eval run <case> / compare / promote              # ケース実行→baseline と比較→裏づけが揃ったら昇格
-rig-wb eval gate --base origin/master --evidence-dir <dir> --ratchet
-rig-wb eval affected-run --base origin/master --head HEAD --ratchet --provider <p> --judge-provider <j> …
+rig-wb eval affected --base origin/master --ratchet
 ```
 
-`--ratchet` が正直な中間解だ：**カバレッジは上がる方向にしか動かせない。** ケースがまだ無い面は `coverage_debt` として報告され exit 0、既存のカバレッジを**外す**変更と未登録の面種別は従来どおり fail。これが無いとゲートは厳格で、カバー済みの面1つと未カバーの面1つに触れた PR は、どれだけ署名済みの証拠を積んでも落ちる——誰にも通せない検査（#383/#384）になる。証拠検査自体はどちらでも不変で、存在するケースの判定は同一。CI は全 PR でこれを回す（`.github/workflows/validate.yml`）。fork PR の証拠は信頼された maintainer の実行から得る必要がある（fork に provider の資格情報を渡せないため）。実際に当たる機会は少ない——ケースを持つプロンプト面は2つで、残り約198面は未カバーなので、fork が未カバー面に触れる限り構造チェックだけで通り、それ以上は求められない。カバー済みの面（`skills/engine/SKILL.md` がその1つ）に触れた場合は、maintainer が `eval affected-run` を回して署名済み証拠をレビュー対象ブランチへ push する——貢献者側の再実行は不要。詳細は [`docs/evaluation-cases.md`](./docs/evaluation-cases.md) の「Who needs the key, and who cannot have it」を参照。
+`--ratchet`では、まだ評価ケースがない資産を`coverage_debt`として報告します。
+既存のカバレッジを減らす変更は失敗します。
+評価ケースがある資産には、その変更を裏付ける証拠が必要です。
+forkからのPRなどの手順は[評価ケースの運用](./docs/evaluation-cases.md)を参照してください。
 
-### セッション横断の継続的instinct学習層（`instincts`・#306）
+### プロジェクト設定と知識
 
-`workbench.py instincts`が`.rig/instincts.jsonl`を管理する——「このプロジェクトではこう書く」「ここはこう探索すると早い」のような、confidence付きの**未検証**パターンを軽量に蓄積・再注入する層で、`facets/knowledge`の検証済みwikiとは完全に別枠。`--add`はsecret/トークン/ローカル絶対パス/`ENV_VAR=value`風の候補を却下し理由を必ず表示する。`--decay`は30日以上未使用のinstinctのconfidenceを下げ、0.2未満で失効させる——暗黙知は放置すれば腐る、という前提を設計に組み込む。競合解決は推測ではなく明示：`--supersedes <old-id>`でモデルが「この2つは矛盾する」と宣言すると旧instinctがmuteされる。次回注入対象はconfidence>=0.7のみ、合計500字まで（context-minimal）。`hooks/suggest-instincts.sh`（Stop）は「提案を検討してください」と促すのみで抽出自体は行わない——何が本当に有用かの判断はモデルの仕事。`hooks/inject-instincts.sh`（SessionStart）が選定されたinstinctを`additionalContext`として注入する。
+`/rig:init`で`.claude/rig.md`を作り、ビルド、lint、テスト、レシピなどの既定値を設定できます。
+形式は[設定テンプレート](./skills/engine/manifests/_template.md)を参照してください。
 
-tierは2層で、移動は1件ずつ（#418）：`--promote <id>`はinstinctをproject tier（`.rig/instincts.jsonl`）から**host tier**（`~/.rig/instincts.jsonl`・`RIG_USER_HOME`で上書き可）へ引き上げ、1つのリポジトリで学んだパターンを全リポジトリへ届かせる。`--demote <id>`はその逆で、誤った昇格は一方通行にならない。昇格を自動ではなく1件ずつ・人間がidを名指しする形にしているのは意図的だ——instinctの多くは特定のコードベースの話で他所ではノイズにしかならない一方、昇格に値するものはハーネスかマシンの話であり、その判別は本文からコードに推測させない判断だから。書き込み順はhost tierが先・project tierの書き直しが後なので、2つ目の書き込みが失敗しても記録は「両方に残る（見えて直せる）」であって「どちらからも消える」ではない。
+プロジェクトのレシピには実行コマンドが含まれるため、初回読み込みには内容への同意が必要です。
+同意は内容のハッシュと結び付けて保存し、変更後は再確認します。
+未承認のmanifestは警告を出して無視し、既定値で処理を続けます。
 
-正直な検証範囲：意味的な矛盾の自動**検知**は未実装——`--supersedes`で明示宣言された矛盾の機械的な**解決**のみ。パターン抽出自体は完全にモデルの判断に委ねている。
+`instincts`は、未検証の作業パターンを確信度付きで記録します。
+検証済みの知識とは分けて管理し、矛盾する記録は`--supersedes`で明示的に置き換えます。
+意味上の矛盾を自動検出する機能ではありません。
+`--promote`と`--demote`で、プロジェクトとホストの保存先を移せます。
 
-### manifest・知識層
+<a id="recipe-runner"></a>
 
-`<repo>/.claude/rig.md` を置くと build/lint/test コマンド・branch/CI 戦略・reviewer・本番影響検知パターン・既定 recipe・既定 reviewer persona 等を設定できる（`skills/engine/manifests/_template.md` 参照）。知識層（`~/.claude/rig/knowledge/{methodology,ai-quirks}/`、`<repo>/.claude/rig/knowledge/domain/`）は全 RUN に注入され、実行を重ねるごとに蓄積される。
+### CLIでの継続実行
 
-### 横断利用（CLI として）
+`rig-wb run <recipe> --provider <provider>`でレシピを実行します。
+変更を伴う作業には`--isolate`を付けてください。
+このランナーは、完了時にコミットがあり、両方の作業ツリーがクリーンで、fast-forward可能なら元のブランチへ自動反映します。
+`wb accept`の操作を待つフローではありません。未達や未コミットの変更、競合などがあればworktreeを残します。
+差分を確認してから明示的に受け入れたい場合は、workbenchフローを使ってください。
+プロバイダのCLIや認証情報は別途必要です。
+`resume`は現在の手順を再検証してから再開します。
+git hookの導入には`rig-wb githooks install`を使います。
+導入時点のmanifestにあるコマンドを確認してから実行してください。
 
-決定論ランナー `scripts/orchestrate.py` は shim を1回置けばどのディレクトリからでも呼べる：
+<a id="15-opt-in-extension"></a>
 
-```bash
-python3 scripts/orchestrate.py install-shim          # → ~/.local/bin/rig（symlink）
-rig models                                           # 利用可能プロバイダ探索
-rig probe --provider codex                           # 疎通テスト（read-only サンドボックス強制の実証も兼ねる）
-rig run review-only --provider rig --verifier-provider codex
-rig run bugfix --provider rig --step-model implement=claude-opus-4-8   # step 単位のモデル上書き（--step-model > recipe model: > --model）
-rig resume run-state.json                            # verify-first 再開：現 step の checks を再実行し、世界がドリフトしていたら前進を拒否
-rig-wb githooks install                              # pip 版：native pre-commit（manifest lint＋staged シークレットスキャン）/ pre-push（build＋test）フック。RIG_HOOK_SKIP*=1 で回避
-rig-wb wb digest --period week                       # テレメトリの Markdown ダイジェスト（runs / gate / force-accept / ゴム印 / drill）
-```
+## 15. 追加パック
 
-`$RIG_HOME` で install 先を上書き、`<cwd>/.rig/recipes/<name>.md` が同名 built-in recipe をプロジェクト overlay、recipe の `checks:` は呼び出し元プロジェクト（rig リポジトリではない）の cwd で実行される。
-
-**プロジェクト recipe は初回のみ明示的な同意が必要。** プロジェクトローカルの recipe は shipped recipe を同名で overlay でき、その `checks:` 行は shell コマンドとして実行される——つまり repo を clone しただけでそのコマンドが動いてはいけない。`<cwd>/.rig/recipes/` 配下の recipe の初回ロードは拒否され、`--allow-project-recipes` フラグまたは `RIG_ALLOW_PROJECT_RECIPES=1` で明示的に同意して初めて読み込まれる。同意はコンテンツハッシュとして `~/.claude/rig/trusted-recipes.json` に記録され（保存先は `RIG_TRUST_STORE` で上書き可）、以降は黙って通る——ただしファイルを編集すると再同意が必要になる。shipped と org 層の recipe は対象外：あの置き場は作業対象のリポジトリではなく、あなた自身が設定する場所だから。
-
-プロジェクト manifest `.claude/rig.md` も同じ trust store の背後にあり、専用の同意スイッチ（`--allow-project-manifest` / `RIG_ALLOW_PROJECT_MANIFEST=1`）を持つ。manifest は既定値を供給するだけなので、未同意でも recipe のようにハード拒否せず **soft degrade** する——警告1行を出して「manifest が無い」場合と同じ挙動に落ちる。同梱の git hook は manifest の lint/build/test コマンドを eval する前に記録済みハッシュを検証し、`rig-wb githooks install` がそのハッシュを記録する：hook のインストール＝その時点の manifest への同意であり、以後ファイルを編集すると再同意が必要になる。
-
-## 15. opt-in extension
-
-用途特化ワークフローは既定カタログの外で配布する。Extension Catalog から内容を確認した pack だけを導入すること。project pack の trust は内容ハッシュに紐づき、asset が変わると再同意が必要になる。command asset は明示登録を扱える host 向けの資料であり、install だけで slash command として登録されることはない。
-
-pack の導入と確認は `rig-wb pack` で行う。
-
-```bash
-rig-wb pack install domain:sales --scope project
-rig-wb pack list                             # 何が入っているか、出所は、検証は通ったか
-rig-wb pack verify-sources --scope project   # 宣言済み git source に紐づく pack を突き合わせ直す
-```
-
-`verify-sources` が見るのは lock 上で git source を持つ pack である。そうした source を持たない pack——ツリー同梱の builtin など——はそもそも対象に入らないので、緑で終わってもその pack について何かを言ったことにはならない。
-
-pack は type を問わず `knowledge:` ブロック（ちょうど `scope` / `topics` / `owner` / `evidence` / `reviewed_at`）を宣言でき、宣言した pack は**問いに対する候補**として発見できるようになる。これは記述であって権限ではない。pack の `type` も、その asset に許されることも変わらない。
+用途別の機能はpackとして追加できます。
+内容と入手元を確認したものを、project、user、orgのいずれかの範囲へ導入します。
+導入だけで、ホストのスラッシュコマンドまで自動登録されるわけではありません。
 
 ```bash
+rig-wb pack list
+rig-wb pack verify-sources --scope project
 rig-wb pack knowledge --topic backup --scope product
 ```
 
-**選び出すが、決めない。**「バックアップは取っていますか」の正しい答えは、全社・単一プロダクト・その下の基盤で別々であり、問うた側がどれを指していたかはどの pack にも書かれていない。候補が複数の **knowledge scope** にまたがるとき、このコマンドは決めずに「またがっている」ことと候補名を返す。曖昧かどうかは scope の話であって、候補が何件一致したかではない。資料は `pack://<scope>/<id>/<relative>` の形で引き渡される。この先頭の segment は pack を**どこに導入したか**の scope（`--scope`: `project` / `user` / `org`）であって、pack が宣言する knowledge scope ではない。`evidence` が `sources` でないのは、`sources` が既に「pack をどこ**から**導入したか」を指しているためで、1つの語に2つの意味を持たせる defect を設計が避けた結果である。契約の詳細は [`docs/packs.md`](./docs/packs.md)。
+`verify-sources`はGitの入手元が記録されたpackを確認します。
+対象外のpackについて検証したことにはなりません。
 
-## 16. Implementation notes
+`pack knowledge`は質問に関連する資料の候補を探します。
+資料が指す範囲と、packの導入先の範囲は別です。
+候補が複数の知識範囲にまたがる場合は、曖昧であることを報告します。
+作成と導入は[packの手順](./docs/packs.md)、切り出しは[packの移行](./docs/pack-migration.md)を参照してください。
 
-上記の主張の裏付けを具体的に示す——「書いてあること」と「検証されていること」が静かに乖離しないための表：
+<a id="16-implementation-notes"></a>
 
-| 機能 | 根拠 |
+## 16. 実装と検証の対応
+
+| 確認するもの | 主な実装・検証経路 |
 |---|---|
-| recipe 解決・RESOLVE flag・size-aware ルーティング | `scripts/orchestrate.py selftest`（resolve/RESOLVE 区分） |
-| isolated worktree のライフサイクル（作成/合流/dirty時保全/エスカレーション時保全） | `scripts/orchestrate.py selftest`（isolate 区分） |
-| read-only verifier のサンドボックス強制（プロバイダ別 CLI flag） | `scripts/orchestrate.py probe` / `selftest`（probe 区分） |
-| queue の dispatch・状態遷移 | `scripts/orchestrate.py selftest`（queue 区分） |
-| recipe/persona/command のスキーマ、ブリック目録ドリフト、バージョン同期 | `scripts/validate.py` ＋ `scripts/validate.py selftest`（全 PR で CI 強制） |
-| オーケストレータの単体挙動（recipe 解決と trust gate・queueing・run-state・graph・CLI 表面） | `pytest -q -n auto` — `tests/` 配下のスイート。CPU 競合下でしか落ちないアサーションが落ちられるよう並列で回す。CI（`validate.yml`）が `ruff`（指摘0件）・validator・両 selftest とあわせて強制する |
-| acceptance-gate の基準、accept/discard の機構 | `scripts/workbench.py` — リリースごとに scratch git repo で検証（詳細は `CHANGELOG.md` の各エントリ） |
-| 文書化した要求と、その裏づけの対応 | `rig-wb coverage`（正本は `evals/coverage-map.json`。既定は地図とリポジトリの整合検証で CI 強制・`--run` で決定論証拠を実行） |
-| ホスト側の前提（コンテナ隔離・`permissions.deny`・実行状態の除外・`gh` の認証とトークンスコープ・インストール版 `rig-wb` がチェックアウト外から import できるか） | `rig-wb hostcheck`（検出と報告のみ。rig は強制しない——強制はホストの責務。**検証できなかった軸は OK ではなく MISS**。この環境に対象が無い軸は `applicable: false` として「満たした」ではなく「検査していない」と明示する。毎回走る。全文が出るのは最初の 1 回で、判定は `.rig/hostcheck.jsonl` に残る。同じリポジトリの 2 回目以降は動いた分だけ出る。全部見るなら `--full`） |
-| テストスイート側の検知力（ミューテーション） | `rig-wb mutation`（レポートの場所と形式は自分で判定する。`elements`＝Stryker / `mutmut`＝3.x の `export-cicd-stats` / `junit`＝2.x の `junitxml`。`--run` はプロジェクト側のツール実行から行う。スコアの劣化を warning-grade の基準に。ツール本体はプロジェクトが選ぶ） |
-| プロンプト面の変更と、その裏づけの承認済み評価ケース | `rig-wb eval affected --ratchet`（正本は `evals/prompt-surfaces.json` ＋ `evals/cases/`。全 PR で CI 強制——ケース未整備の面は `coverage_debt` として報告、既存カバレッジを外す変更は fail） |
-| ASVS の章と rig の検査面の対応 | `rig-wb asvs`（正本は `evals/asvs-map.json`。`--check` で参照先の実在を検証・CI 強制。**空の章＝rig では気づけない章**を明示する） |
-| その run が実際に取った形 | Mission Control の task detail が返す `rig.assurance-graph/v1`（`rig_workbench/workbench/graph.py`）——直列 step・並列レビュー fan-out・機械ゲート・人間の判断を node/edge で区別する。`steps.json` と Assurance Receipt の投影なので、gate/RBAC/承認のロジックを複製しない。run が記録していない構造は recipe から読むが、step id が一致する間だけで、ずれていれば `recipe-drifted` と申告する |
-| この変更を accept してよい理由を1枚で | `workbench.py receipt <task-id>`（`rig.assurance-receipt/v1` → `.rig/runs/<task-id>/assurance.json` と `.md`）——gate・来歴・承認の**投影**であって再判定はしない。rig が記録していないもの（producer の runtime/model、verifier の identity、両者の独立性）は空欄ではなく `{"observed": false, "reason": …}` として出る。`--verify` は投影元の digest を再計算し、変わっていれば `invalidated` を返す |
-| 何を頼まれたのかを、機械が突き合わせられる形で | `rig-wb wb intent <file>`（`rig.intent-contract/v1`）——ゴール、その要件、そして各要件を**何が検証するか**。生成はしない：文章を要件に落とすのは読解と判断であり、それは別の場所でやってペイロードとしてここに届く。rig が自分で導いた要件がユーザーの要求として記録されることはなく、突き合わせる先が無い基準は `unsatisfied` ではなく `unverifiable`（**見て満たされていない**と**見られない**は別の答え）。`rig-wb wb intent-derive <file> --against <catalog> --floor\|--target` は宣言された要件から、必要なワークフローの下限、または要求している assurance target を導く |
-| 要求した保証水準と、receipt が記録した実績の差 | `rig-wb wb assurance-target <task-id> <target>`（`rig.assurance-target/v1`）——receipt の「要求する側」の半分で、軸は `isolation` / `verification` / `provenance` / `approval` / `gate`。target が名指せるのは receipt が答えられる軸だけで、rig が観測できない軸は弱い `unmet` ではなく `unobservable`（`unmet` は「見た」、`unobservable` は「見られない」）。「プロダクション品質」は、渡されていない対応付けを rig が発明しないために**拒否**される。黙った格下げも無い——近似的な合格も、部分点も付けない。`rig-wb wb assurance-derive <target> --requires <map> --against <catalog>` は、あなたが宣言した対応表から target が必要とするワークフロー下限を導く。表が覆っていない軸と値の組は、飛ばさず拒否する |
-| rig が作っていない変更が、rig の境界を通るか | `workbench.py import --head <commit> --producer <name>` は外部 orchestrator の変更をふつうの task として登録する——task ブランチを**その commit の位置に**作るので、isolation もセンサーも gate も governance も同じものが効き、accept の第二経路は存在しない。producer 自身の申告（`--producer-claim tests=passed`）は `gate_effect: none` として記録されるだけで、どのゲートにも届かない。`workbench.py contract <task-id> --json`（`rig.assurance-contract/v1`）が機械向けの答えで、`acceptable` / `not-acceptable` / `pending` / `execution-error` にそれぞれ別の exit code を割り当てる——**拒否と障害を取り違えないため**。ブランチ名で検証した対象は、その名前が動いた時点で fresh でなくなる |
-| 次の queue タスクを始めてよいか | `queue add "…" --depends-on <id>`（`rig.queue-dependencies/v1`）——辺は**完了ではなく acceptance**。`done` になった依存は「ゲートが確定した」だけで「誰かが適用した」ではないので、workbench task が `accepted` を読むまで後続は待つ。保留は `waiting` / `blocked` として理由つきで**永続する**（フィルタにすると、`queued` が尽きるまで回る detached worker が空転する）。discarded / failed / 存在しない / cycle の依存は解放せず block する。**local backend 専用**——Issue ラベルに辺は置けず、黙って落とせば依存が無いものとして即実行されてしまう |
-| 実行テレメトリ | `.rig/runs.jsonl`（`scripts/orchestrate.py runs`）と `.rig/runs/<task-id>/*.json`（workbench の run state） |
-| 失敗モード分類 | ESCALATE/BLOCKED の run は `failure_mode`（`classify_failure` による MAST 系タキソノミコード）を `.rig/runs.jsonl` に記録する。コード→ゲート/ブリックの写像とダッシュボード panel は `skills/engine/patterns/failure-taxonomy.md` |
+| レシピ解決、worktree、プロバイダ引数、queue | `scripts/orchestrate.py selftest`、`tests/` |
+| 資産の形式、参照、バージョン整合 | `scripts/validate.py`とその`selftest` |
+| ゲート、accept、discard | `rig_workbench/workbench/`とライフサイクルのテスト |
+| レビュー拒否後のaccept | `tests/test_review_accept.py` |
+| 文書化した要求と証拠の対応 | `rig-wb coverage`、`evals/coverage-map.json` |
+| ホスト側の前提 | `rig-wb hostcheck`。確認できなかった項目はMISSとして報告 |
+| テストの欠陥検出力 | `rig-wb mutation`。プロジェクト側の測定ツールの結果を使用 |
+| プロンプト変更の証拠 | `rig-wb eval affected --ratchet`、`evals/prompt-surfaces.json` |
+| ASVSと検査の対応 | `rig-wb asvs`、`evals/asvs-map.json` |
+| 受け入れの根拠と来歴 | `rig-wb wb receipt <id>`、`--verify`による元データの再確認 |
+| 要件と確認方法 | `rig-wb wb intent`、`intent-derive` |
+| 要求した保証水準と観測結果 | `rig-wb wb assurance-target`、`assurance-derive` |
+| 外部で作った変更の登録 | `rig-wb wb import`、`contract` |
+
+未観測の情報は、受け入れの根拠として補いません。
+receiptは記録を表示するもので、ゲートを再判定しません。
+実装の構成は[アーキテクチャ](./docs/architecture.md)を参照してください。
 
 ## 17. FAQ
 
-**`/rig:go` は `/rig:dev` を置き換えるの？** いいえ——`/rig:go` は自動分類する既定の入口、`/rig:dev` は recipe/step/flag を明示したいときの同じエンジン。
+### 作業中、元の作業ツリーは変更されますか
 
-**作業中、自分の作業ツリーはどうなる？** 何も起きない。全作業は隔離 worktree/branch の中で行われる。作業ツリーが触られるのは `accept` のときだけで、それも staged（未コミット）差分としてのみ。
+通常の編集は専用worktreeで行います。実行記録は元のリポジトリの`.rig/`にも作成します。
+worktreeはプロセスのアクセス制限ではないため、ホスト側の権限も設定してください。
 
-**gate を無視して進めたい場合は？** `accept` の `--force` は判断が伴う criterion（`acceptance_gate_not_failed`/`no_unrelated_diff`）だけを上書きでき、`forced: true` として記録される＝サイレントではない。構造的な前提（`worktree_exists`/`base_branch_recorded`/`diff_summary_generated`）は上書き不可——真偽がそのまま結果になる。
+### ゲートを通れば、不具合がないと言えますか
 
-**reviewer/verifier がコードを書き換えることは？** ない。verifier はプロセスレベルで read-only 制限がかかっている（`Read,Grep,Glob`・サンドボックス shell）。`scripts/orchestrate.py probe` で確認できる。
+確認した条件を満たしたことが分かります。
+その条件に含まれない要件や、レビュアーが見逃した不具合は残り得ます。
+差分、テスト範囲、警告を確認して受け入れてください。
 
-**rig の状態はどこに置かれる？** `<repo>/.rig/runs/<task-id>/`（`.gitignore` への `.rig/` 追加は `/rig:init` が提案する）と、隔離タスクの場合はリポジトリ外の兄弟ディレクトリ `../rig-worktrees/<repo>/<task-id>/`。
+### ゲート通過後にacceptが止まるのはなぜですか
 
-**reviewer persona の質はどう分かる？** `/rig:drill` が既知のバグの種に対する検出率/誤検出率/severity精度/blocking精度/説明品質を採点する。`/rig:go stats` は5run以上でREJECTゼロの reviewer をゴム印疑いとして警告する。
+検証後にコミットが変わった、レビューに`REJECT`が残っている、承認や権限が不足している、といった理由があります。
+`accept_requirements`の表示を確認してください。
+検証対象が変わった場合は、現在のコミットで検証し直します。
 
-**複数タスクを同時に走らせたら？** それぞれ専用の worktree と branch（`rig/<task-id>`）を持つので衝突しない。`accept` はメイン作業ツリーに対して行うため、1つ accept してコミットしてから次を accept する（作業ツリーがクリーンでないと accept 自体が拒否されるので、この順序は安全側に強制される）。
+### 設定ファイルや組織ポリシーは必要ですか
 
-**ターミナルをいくつも開かずに、1セッションで複数タスクを並行開発できる？** できる——§6「isolated worktree → 複数タスクを並行で進める」を参照。`/rig:queue add` で積んで `/rig:queue go --provider rig --max-parallel N` で並列実行（各タスクは自動的に隔離される）、そのうえで `/rig:go board`（§11）を見れば、N個のターミナルの状態を頭の中で追う代わりに一箇所で全体を確認できる。
-
-**チームが複数ある。同じ品質基準をどう共有する？** §18。
+個人で基本機能を使うだけなら必須ではありません。
+プロジェクト共通の既定値は`/rig:init`、組織共通の規則は`rig-wb govern`で追加します。
 
 ## 18. 組織ガバナンス（v2）
 
-ここまでの全ては1人1リポジトリ向けに作られていて、その形では完成している。壊れるのは、同じものをチーム A・B・C に配った瞬間だけ。その4つが、運用の慣習ではなく**一級概念**になった。
+複数のリポジトリに共通のポリシーを適用できます。
+org、team、projectの順に設定を組み合わせ、下位の設定で上位の制約を緩めることを拒否します。
 
-```
-チーム A ─┐
-チーム B ─┼─→ 共通ポリシー ─→ 権限管理 → 承認フロー → 例外 → 監査
-チーム C ─┘        （下位層は締めることしかできない）
-```
-
-| 壊れること | 概念 | それを本物にしている性質 |
-|---|---|---|
-| `.rig/gates.json` はリポジトリ単位なので、A が足した基準は B に届かない | **policy**（`.rig/policy/*.json`） | **単調強化**——team/project 層は基準の追加・quorum の引き上げ・期限の短縮・role の絞り込みだけができ、削除・引き下げ・延長・権限追加はできない |
-| `.rig/access.json` は権限1個の名簿でしかない | **permission** | 固定11種の権限語彙を role 単位で配る。拒否は必ず「**誰が持っているか**」まで出す |
-| 「誰かがレビューした」は事後に検証できない | **approval** | quorum＋資格ロール＋**職務分離**（著者本人の承認は数えない）＋**鮮度**（**accept が squash する branch の先端**——main tree で解決したもの——に束縛。worktree の HEAD ではない。branch が動けばその承認は数えない）＋**台帳との突き合わせ**（`approvals.json` はただの書き込み可能なファイルなので、`approval.grant` が attest しない決定は数えない。効くのは `.rig/provenance.key` を持つリポジトリか、policy が `audit.chain_required` を立てたとき。鍵が無ければ、得られるのは耐性ではなく可視性である） |
-| `--force` の記録だけでは、承認された判断と疲れた夜の区別がつかない | **waiver** | 名前・理由・**期限**つきの例外。`non_waivable` の基準はどんな例外でも覆せない |
-| 追記型 JSONL はエディタで書き換えられる | **ledger**（`.rig/ledger.jsonl`） | ハッシュ連鎖＋HMAC 署名。編集・削除・並べ替え・偽造追記のすべてを検出 |
-| 「共通ポリシーでやっています」が主張のまま | **conformance** | リポジトリごとに9検査、チーム単位でロールアップ。中でも **force 率**が、ゲートが満たされているのか回避されているのかを分ける |
+| 機能 | 内容 |
+|---|---|
+| policy | 共通基準や承認条件を適用 |
+| permission | ロールごとに操作権限を設定 |
+| approval | 必要人数、承認者のロール、著者との分離、対象コミットを確認 |
+| waiver | 理由と期限を付けて例外を許可。`non_waivable`は例外不可 |
+| ledger | ハッシュ連鎖や署名で監査記録の整合性を確認 |
+| conformance | リポジトリの適合状況を検査・集計 |
 
 ```bash
-rig-wb govern init --org acme --team team-a   # リポジトリを束ね、雛形ポリシーを作る
-rig-wb govern policy show                     # 何層が届いているか
-rig-wb govern policy lint                     # 上位を緩めている層があれば exit 3
-rig-wb govern whoami                          # 自分のロールと権限
-rig-wb govern approve grant <task-id>         # 承認（自分の task への自分の承認は数えない）
-rig-wb govern waiver grant w-ci --criterion tests_pass_or_explained \
-    --reason "CI ランナー障害・OPS-12" --expires 2026-08-20
-rig-wb govern audit verify                    # 台帳が触られていれば exit 3
-rig-wb govern conformance                     # このリポジトリの適合性（FAIL があれば exit 3）
-rig-wb govern rollup --scan ~/work/acme       # チーム A/B/C の表
+rig-wb govern policy show
+rig-wb govern whoami
+rig-wb govern audit verify
+rig-wb govern conformance
 ```
 
-ポリシーは**コピーを配らず、1つを共有する**。共有チェックアウトを `$RIG_POLICY_HOME` に置き、各リポジトリの `.rig/org.json` には同じ相対パスを書く。コピーは必ずドリフトするが、参照はドリフトしない。
+導入は`rig-wb govern init --org <組織名> --team <チーム名>`から始めます。
+共有ポリシーの場所は`RIG_POLICY_HOME`で指定します。
+組織への所属を設定していないリポジトリでは、この組織ポリシー層は動きません。
 
-強制点は**増えない**。作業ツリーへの唯一の入口は元から `accept` だったので、squash merge の前に問いが4つ増えるだけ——accept 権限があるか、承認 quorum は満たされたか、force 権限はあるか、回避する各基準は生きた waiver に覆われているか。拒否されたとき作業ツリーは無傷のまま。承認は acceptance-gate の**上乗せであって代替ではない**（人間の承認で機械の検証を置き換えたら §6 の意味が消える）。
+承認はゲートに追加する条件です。通常の承認だけで、未達のゲートを通過扱いにはしません。
+監査の検証強度は、署名鍵の保護とポリシーに依存します。
+署名の確認と、実際に誰が操作したかの本人確認は区別してください。
 
-**個人開発は何も変わらない。** `.rig/org.json` が無ければこの層は完全に不活性——出力も検査もファイル生成も無い。`.rig/access.json` と `.rig/gates.json` はそのまま動き、ポリシーと**併存**する（置き換えではない）。準備ができたら `rig-wb govern migrate` がポリシー層へ畳む（原本は残る）。意図的に違うのは1点だけ：壊れた `.rig/access.json` は「無制限」に落ちる（1人なら安全側）が、**パースできないポリシー層は accept を止める**。カンマ1個で組織の規則が静かに消えるのが、この層で唯一許されない失敗だから。
+### ステージごとの承認
 
-`/rig:govern` は対話側の入口。上記コマンドの出力を読んで、散文で適合を宣言する代わりに**乖離を重い順に並べた適合性レポート**を返す。
+レシピの`actor`と`human_gate`で、承認を待つ段階を指定できます。
+承認待ちは保存され、後から再開できます。
+`actor`は担当ロールを示し、そのロール以外による実行自体を禁止する設定ではありません。
+承認時には必要なロール、人数、実行者との分離、対象の鮮度を確認します。
+組織ポリシーから`stage:<id>`に承認条件を追加することもできます。
 
-### accept だけでなく、任意のステージを統治する（v2.1）
-
-recipe スキーマは元から workflow DSL だった——`steps[]` はステージ別の `gate` と `acceptance`、リトライ上限、`needs`（DAG 並列）、`condition`、`checks`（決定論 shell センサー）を持ち、`orchestrate` がそれを状態機械として回す。できなかったのは run を**駐機**させること＝人が署名するまで名前つきのステージで止まることだけ。step の2フィールドがそれを足す。
-
-```yaml
-steps:
-  - id: architecture_review
-    instruction: design-vet
-    actor: architect            # このステージを所有する組織ロール
-    human_gate: true            # 資格ある人が署名するまでここで止まる
-    gate: acceptance-gate
-    acceptance: ["ADR が更新されている", "公開APIの破壊的変更が無い"]
-```
-
-```console
-$ rig-wb next
-▶ AWAIT_APPROVAL: step `architecture_review` passed its gate and awaits human
-  sign-off (0/1, from architect). Approve with `orchestrate approve architecture_review`.
-$ echo $?
-3                                    # 人待ち＝失敗でも成功でもない
-
-$ RIG_ACTOR=olivia rig-wb approve architecture_review --note "境界は妥当"
-▶ DONE: step `architecture_review` passed. All steps complete.
-```
-
-駐機状態は run-state に永続するので、run はプロセスもセッションもその日も跨いで生き残る。承認の算術は accept と同一実装——quorum・資格ロール・**職務分離**（そのステージを実行した本人は署名できない）・**鮮度**（承認したコミットに束縛）——で、決定は ledger に `stage.approve` / `stage.deny` として残る。
-
-組織側の半分はこちら。recipe が要求していないステージにも、ポリシーが承認を課せる：
-
-```json
-{ "approvals": { "stage:architecture_review": { "quorum": 1, "roles": ["architect"] } } }
-```
-
-recipe と policy は**厳しい方**に合成される（quorum は高い方・ロールは和集合・期限は短い方）ので、recipe が org を値切ることはできない。
-
-意図的に**実装しなかった**ことが1つある：`actor` は実行をブロックしない。rig が保証できるのは「アーキテクトが署名した」ことであって「アーキテクトが打鍵した」ことではないし、実行を拒めば安全性は上がらないまま CI のパイプラインだけが壊れる。所有ロール外の実行は WARN と履歴に残し、強制はゲート側に置いた。
+設定と操作の詳細は[`commands/govern.md`](./commands/govern.md)を参照してください。
 
 ## 19. 終了コード
 
-rig のコマンドを呼ぶのは、散文を読めないもの——CI のステップ・Makefile・別のエージェント——です。呼んだ側が受け取るのは終了コードが全部なので、次の3つのどれかを意味します。
+CLIを呼び出す側は、判定結果と実行上の問題を分けて扱ってください。
 
-| コード | 意味 |
+| コード | 主な意味 |
 |---|---|
-| `0` | rig が走って、答えは yes。gate 通過・スキャンで検出なし |
-| `1` | rig が走って判定し、答えは no。gate 未達・検出あり。**故障ではなく判定**なので、リトライではなく対処する |
-| `2` | rig が答えを出せなかった。usage 誤り・設定不備・状態が読めない・想定外の例外 |
+| `0` | 処理成功、ゲート通過、検出なし |
+| `1` | 判定による拒否、ゲート不合格、検出あり |
+| `2` | 引数・設定・状態の不備、想定外の例外 |
+| `3` | ゲート未判定や承認待ちなど。コマンド固有の意味を確認 |
 
-**クラッシュは `1` ではなく `2` です。** 未捕捉例外の既定は exit 1 ですが、それは「拒否」のコードであり、呼んだ側から区別できません。この曖昧さはどちらに読んでも逆向きに間違えます——`1` を拒否と読めばトレースバックが「誰も行っていないレビュー」になり、不安定さと読めば本物の拒否をリトライで踏み越えます。pyproject が install する全エントリポイントを包んで、クラッシュを `2` に落とします（`rig_workbench/exitcodes.py`）。
-
-`124` / `126` / `127` / `128+N` には rig の意味を一切与えません。GNU `timeout`・シェル・シグナル終了が既に所有しており、rig の provider 層自身が 124 と 127 をその意味のまま返しています。`timeout 60 rig-wb ...` を曖昧にしないためです。
+たとえば`wb gate`は、未判定の項目が残る場合や全項目がskippedの場合に`3`を返します。
+一部の既存コマンドには独自の終了コードがあるため、自動処理では各コマンドの契約も確認してください。
+`124`、`126`、`127`、`128+N`はタイムアウト、シェル、シグナルの意味を保持します。
 
 ## 20. JSON 出力
 
-終了コードは「rig が答えに到達したか」を、`--json` は「その答えが何だったか」を伝えます。新しい JSON 出力は**自分が何であるかを名乗る** envelope です。
+新しいJSON出力には、形式を表す`schema`、結果を表す`status`、内容を持つ`data`があります。
+たとえば`rig-wb wb gates --json`のschemaは`rig.gates/v1`です。
+読み手は対応するschemaを確認してから内容を解釈してください。
 
-```json
-{"schema": "rig.gates/v1", "status": "ok", "data": {"presets": {"standard": ["build_succeeds", "…"]}}}
-```
+既存の`--json`には固有の形式も残しています。
+全コマンドが同じ構造を返すとは限りません。
+形式の一覧は[`rig_workbench/jsonio.py`](./rig_workbench/jsonio.py)を参照してください。
 
-`schema` はバージョンを自分の名前に含むので、payload がコピーされても包み直されても一緒に付いていきます——兄弟フィールドの `version` は、消費側が最初に落とすものです。`/v2` を知らない読み手は、半分だけ理解する代わりに**拒否できます**。`status` は `ok` / `rejected` / `error` の3つで、終了コード（§19）と同じ表から引くため、stdout と `$?` が食い違えません。
+<a id="21-rig-&#12434;&#21628;&#12435;&#12384;&#12398;&#12399;&#35504;&#12363;"></a>
 
-**既存の `--json` は書き換えません。** それらには消費者がいます——このリポジトリ自身のテスト・`rig-mission-control`・`plan --json` を読む MCP アダプタ——契約を綺麗にするためにそれを壊すのは、実在するコストと見た目のコストを取り違えることです。`rig_workbench/jsonio.py` が独自形のままのコマンドを一覧し、テストがその**個数に上限**を持ちます（下げることしかできない＝prompt カバレッジのラチェットと同じ仕掛け）。最初の採用先は `rig-wb wb gates --json`——JSON 出力を**そもそも持っていなかった**ので、誰も壊しようがないためです。
+## 21. 呼び出し元の識別
 
-## 21. rig を呼んだのは誰か
+`--caller`または`RIG_CALLER`で、呼び出し元を明示できます。
+宣言は環境からの推測より優先され、結果にはどちらから得た情報かも記録します。
+自動検出はClaude Codeを対象とし、他のホストは明示的に指定します。
 
-rig は人よりも**別のハーネス**から起動されることが増えています。Claude Code セッションの中から headless Claude を起動すると同じハーネスに再入し、外側が既に抱えている問いに答えるためだけに1セッションを使い切ります。rig は呼び出し元を識別してこれを断ります（`rig_workbench/caller.py`。逃げ道は従来どおり `--allow-headless-in-cc`）。
-
-過大な hint は無い方がマシなので、性質を3つに絞っています。
-
-- **宣言は推測に勝ち、そのどちらだったかを伝える** — `--caller` / `RIG_CALLER` は操作者が述べたこと、環境変数は rig が推測したこと。結果は `source` と `declared` の両方を持つので、消費側は重み付けを変えられます。区別できない消費者は、推測を宣言と同じだけ信じてしまいます
-- **検出するのは Claude Code だけ** — その変数は実測から文書化されています（§ context 計測。Claude Code 2.1.224 / 2.1.227 で検証）。他のハーネスのマーカーは**推測しません**。誤ったセッションで発火するマーカーは悪く、カバレッジがあるように見えて黙って一度も発火しないマーカーはもっと悪い。そちらの呼び出し元は明示的に名乗ります
-- **深さには答えません** — Claude Code は subagent のシェルに親と同じ変数を渡すため、rig は「どのハーネスが呼んだか」は言えても「どの深さから呼んだか」は言えません。フィールド自体を置いていません。`rig-wb wb context` が dispatch 率を報告しないのと同じ理由です
-
-**これは hint です。** runtime と reviewer の選択には使ってよく、**品質ルールを分岐させることは決してありません**。あるハーネスに対してだけ緩むゲートはゲートではなく、しかも誰も見ていない場所で緩みます。ゲートや acceptance の経路がこれを読んでいないことを、テストが構造的に検査します。
+呼び出し元は実行方法の選択に使い、受け入れ基準を緩める理由には使いません。
+Claude Code内で同じハーネスを再起動する経路には制限があります。
+サブエージェントの深さまでは、この情報から判定できません。
 
 ## 3.0.0 への移行
 
-**3.0.0 は publisher 署名の仕組みをまるごと削除しました。** `pack sign`・`pack keygen`・署名検証・
-trust root・鍵生成・失効・`cryptography` 依存、そして install 時の署名必須とその逃げ道
-`--allow-unverified` は、すべて無くなっています。
+3.0.0では、packの発行者署名を削除しました。
+`pack sign`、`pack keygen`、発行者署名の検証、鍵の失効、`--allow-unverified`は使えません。
+accept時の来歴や監査記録の署名とは別の仕組みです。
 
-### この移行はあなたに影響するか
+### 既存の設定への影響
 
-4つの状況を、推論ではなくこのブランチで実測しました。効く区別は
-**大きく失敗する**（すぐ気づく）か、**黙って動く**（何も壊れず、何も知らされない）かです。
-
-| あなたの状況 | 3.0.0 の挙動 | 大きく失敗 / 黙って動く |
+| 2.xでの状態 | 3.xでの動作 | 対応 |
 |---|---|---|
-| 署名済み pack が install 済みで、`pack.lock.json` が `verified-publisher` と publisher 2列の両方を持つ | 従来どおり解決も install もできる。status は読み戻され `pack list` / `pack info` に出続けるが、それを検証するものはもう無い | **黙って動く** |
-| lock が `verified-publisher` なのに `publisher_key_id` と `signed_digest` が null | `PackError: pack lock drift: invalid publisher trust for <id>` が**解決経路から**上がり、`pack` 系コマンドに留まらず tier 全体が落ちる。ただし **2.x はこの組み合わせを書きません**——status と2列は一緒に作られるか、どちらも作られないかのどちらかなので、この状態の lock は手で編集されたもの | **大きく失敗する** |
-| スクリプトや CI ジョブの `--allow-unverified` | exit 2、`rig-wb pack: error: unrecognized arguments: --allow-unverified` | **大きく失敗する** |
-| パイプラインの `pack sign` / `pack keygen` | exit 2、`rig-wb pack: error: argument command: invalid choice: 'sign'` | **大きく失敗する** |
+| 有効な`verified-publisher`のlockと発行者情報が残っている | 読み込み可能。過去のラベルは表示されるが、発行者署名は再検証しない | 通常はlockの移行不要。表示を現在の署名検証結果と混同しない |
+| `verified-publisher`なのに必要な発行者情報が欠けたlock | `pack lock drift`で解決に失敗 | 手編集などで壊れたlockを確認。2.xの通常操作はこの組み合わせを作らない |
+| スクリプトに`--allow-unverified`がある | 未知の引数としてexit 2 | オプションを削除 |
+| `pack sign` / `pack keygen`を呼んでいる | 未知のコマンドとしてexit 2 | その手順を削除 |
 
-4つのうち3つは自分から名乗ります。名乗らない1つは、何も壊れていない場合です——pack は
-install でき、解決でき、記録したラベルを報告し続ける。だからこそ「見つけてもらう」のではなく
-ここに書いてあります。
+### 新しいインストールで記録する状態
 
-**やること。** スクリプトと CI から `--allow-unverified` を消す（「それでも install する」という
-意味の指定であり、それが今では唯一の挙動です）。`pack sign` / `pack keygen` の step を消す
-（作るものがもうありません）。`pack.lock.json` は触らなくて構いません——移行は不要です。
+`verification_status`は`verified-local`または`unverified`になります。
+プロンプト資産を持たないpackは`verified-local`です。
+持つ場合は、対象となる全評価ケースについて、現在の実プロバイダによる検証済み結果が必要です。
+`mock`や`command`の結果はこの条件を満たしません。
 
-### 新規 install が記録するもの
+古いlockを読み込むため、`verified-publisher`と発行者情報のフィールドは残しています。
+新しいインストールで発行者を認証するものではありません。
 
-install が書く `verification_status` は `verified-local` か `unverified` の2値で、pack 自身の
-証拠から決まります。prompt 資産を持たない pack はそれだけで `verified-local`。持つ pack が
-`verified-local` になるのは、所有する全 eval case について attest 済みの `current` 結果が
-ちょうど1本あり、その provider が `mock` / `command` ではない実 provider で、case に対する
-failure が無いときだけです。それ以外は `unverified`。3段目が無いのは、3段目が署名だったからです。
+### 引き続き確認すること
 
-`verification_status` と、受け付ける3値（`verified-publisher` を含む）と、publisher 2列は、
-**意図して** `pack.lock.json` に残してあります。解決経路は **fail-closed** です：`verified-publisher`
-を受理集合から外すと古い lock が `invalid metadata` で拒否され、2列のどちらかを落とすと
-**すべての** lock が `invalid entry` で拒否される。しかもその失敗は `pack` 系コマンドに留まらず、
-persona・recipe・wiki の解決が通る経路から出ます。死んだフィールドを3つ抱えるコストはゼロで、
-消せば pack と無関係な run で既存ユーザーが壊れます。
+初めて使うpackは、入手元と内容を確認してください。
+内容への同意とハッシュ照合により、承認後の変更や宣言の不整合を検出します。
+ハッシュだけでは、その内容を誰が公開したかまでは確認できません。
+発行者の鍵を失効させる仕組みも削除されています。
 
-### 何を手放したのか
+### その他の変更
 
-pack のバイトを著者に結びつけるものは、もう何もありません。その結びつきは、**最初の入手時**——
-見たことのない pack を手にして、走らせてよいか決める瞬間——に効く唯一の保護でした。ハッシュ鎖は
-その代わりにはなりません。ハッシュ鎖が証明するのは install の**あと**に何も変わっていないことで、
-問いが別だからです。最初に何を install したかについては何も言いません。失効に至っては、
-仕組みそのものが残っていません——失効させる鍵も、失効リストを参照する経路もありません。
-
-残っているものは、あった頃より少ないからこそ正確に名指しておきます。
-
-- **trust-on-first-use（初回使用時の同意）** — project / user tier の資産は、その command / recipe
-  の本文が走る前に同意される。資産ごと・tier ごと・内容ハッシュに紐づけて記録される
-  （`--allow-project-packs`、`RIG_ALLOW_PROJECT_PACKS=1`）。検証する署名ではなく、読める素材に対して
-  あなたが下す判断です
-- **ハッシュ鎖** — 各資産のハッシュを install 時に記録し解決時に再検査するので、承認したあとに
-  編集された pack は拒否される（`hash mismatch` / `lock drift`）
-- **宣言ドリフトの検証** — lock の構造・pack の同一性・manifest digest・宣言された資産ハッシュを、
-  解決のたびに構造的に検査する
-
-### そのほかの利用者から見える変更
-
-- **`rig-wb ja-lint` と `rig-wb wb scan-ja-prose` が増えました。** 前者は stdlib のみの
-  textlint-ja 相当センサーで日本語の散文を検査し、後者は acceptance gate が追加行に対して
-  見ている所見を表示します
-- **workbench の失敗は exit 1 ではなく exit 2 になりました。** `exitcodes.py` は以前から
-  `1 = rig が判定して否と言った` / `2 = rig が答えを出せなかった` と約束していましたが、
-  `wb …` の失敗はすべて 1 を返していました。実測：`wb route --type <未知>` と、壊れた
-  `.rig/gates.json` に対する `wb gates` が、いずれも 1 → 2 へ動いています。exit 1 は
-  **判定**（acceptance gate 不合格・ガバナンスのブロック・スキャナの所見）だけになりました。
-  **exit 1 を「rig が拒否した」として分岐していた CI ジョブは 2 を期待し直す必要があります。**
-  （壊れた `pack.yaml` に対する `rig-wb pack validate` は本リリース以前から exit 2 で、
-  これは動いていません）
-- **`govern policy show --json` に `schema` フィールドが増えました**（値は `rig.effective-policy/v1`）
-- **consent フラグは、本当にそのプロセス自身のオプションである場所でしか効かなくなりました。**
-  以前の判定は `"--allow-project-packs" in sys.argv` で、argv にはタスク題名・`--goal` の本文・
-  pack へ転送される引数までが載ります。`--allow-project-packs` を含むタスク題名は——裸の `--` の
-  後ろに置かれた同じフラグや、自由記述オプションの値として現れた同じフラグも——project tier の
-  資産に信頼を与えなくなりました
+- `rig-wb ja-lint`と`rig-wb wb scan-ja-prose`で日本語の散文を検査できます。
+- workbenchの引数や設定の不備はexit 2を返します。拒否のexit 1と分けてください。
+- `govern policy show --json`に`schema: rig.effective-policy/v1`が加わりました。
+- 同意フラグは、そのプロセス自身のオプションとして指定した場合だけ有効です。タスク本文に同じ文字列があっても同意にはなりません。
 
 ## ドキュメント
 
-- [`skills/engine/SKILL.md`](./skills/engine/SKILL.md) — エンジン本体（PARSE/RESOLVE/COMPOSE/RUN の全仕様・rationalization 表・red flags）
-- [`skills/engine/patterns/isolated-worktree.md`](./skills/engine/patterns/isolated-worktree.md) — worktree・run state の設計
-- [`docs/architecture.md`](./docs/architecture.md) — アーキテクチャの実証ポイント
-- [`docs/testing-scenarios.md`](./docs/testing-scenarios.md) — ディシプリン圧力シナリオ集
-- [`docs/remote-mcp.md`](./docs/remote-mcp.md) — client-neutralなremote/stdio MCP adapterと安全境界
-- [`docs/chatgpt-mcp.md`](./docs/chatgpt-mcp.md) — remote adapterをChatGPTへ接続する手順
-- [`docs/evidence-mission-control.md`](./docs/evidence-mission-control.md) — `rig-evidence`（実プロジェクトでのRIG-vs-bare実地エビデンス・本番アウトカム網羅率・Quality/Costフロンティア）と`rig-mission-control`（複数リポジトリ横断のfleetガバナンス集計とread-onlyのHTML/JSONダッシュボード）
-- [`docs/landscape.md`](./docs/landscape.md) — 機能ランドスケープと Architectural Non-goals。rig が意図的に競わない領域と、roadmap の項目を採る前に通す判断基準
-- [`docs/byo-orchestrator.md`](./docs/byo-orchestrator.md) — rig が作っていない変更の import と、外部 orchestrator が分岐するための機械契約（`acceptable` / `not-acceptable` / `pending` / `execution-error`）
-- [`docs/interactive-mission-control.md`](./docs/interactive-mission-control.md) — `rig-mission-control-live`：Mission Control v2のlocalhost限定インタラクティブUI（ブラウザ側はacceptance/ガバナンス/承認/queue/providerの規則を一切自前で実装しない）
-- [`docs/evaluation-cases.md`](./docs/evaluation-cases.md) — プロンプト評価ゲートの土台となる評価ケースのcapture/実行/比較/昇格の境界
-- [`docs/packs.md`](./docs/packs.md) — packの作り方（`pack.yaml`/`compatibility.yaml`）とinit/validate/doctor/install/testコマンド
-- [`docs/pack-migration.md`](./docs/pack-migration.md) — 同梱packを独自リポジトリへ切り出し、named source 経由で installし直すまでの移行手順（送り手・受け手の両側）
-- [`docs/v3-architecture-design-brief.ja.md`](./docs/v3-architecture-design-brief.ja.md) — V3 アーキテクチャ設計ブリーフ。合意済みの内部再構成（能力レジストリ・ポート化・来歴の型付け）と移行順序
-- [`docs/facet-order-measurement-plan.ja.md`](./docs/facet-order-measurement-plan.ja.md) — facet 配置順が効くのかを `/rig:drill` で測る計画。アーム・ベンチ既存の検出力法から導いたサンプルサイズ・事前宣言した帰無結果・実行を塞いでいるもの
-- [README.md](./README.md) — English version
+| 資料 | 内容 |
+|---|---|
+| [エンジンの手順](./skills/engine/SKILL.md) | 入力の解釈、レシピの解決、実行 |
+| [worktreeの設計](./skills/engine/patterns/isolated-worktree.md) | 作業場所と実行状態の管理 |
+| [アーキテクチャ](./docs/architecture.md) | 実装の構成と検証方法 |
+| [テストシナリオ](./docs/testing-scenarios.md) | 判断や手順を守れるかの確認 |
+| [remote MCP](./docs/remote-mcp.md) | MCPサーバの導入、ツール、権限の境界 |
+| [ChatGPTとの接続](./docs/chatgpt-mcp.md) | MCP接続の設定 |
+| [EvidenceとMission Control](./docs/evidence-mission-control.md) | 実プロジェクトでの測定と複数リポジトリの集計 |
+| [機能と設計方針](./docs/landscape.md) | 対応する領域と設計上の制約 |
+| [外部オーケストレータとの連携](./docs/byo-orchestrator.md) | 変更の登録と機械向けの受け入れ判定 |
+| [Mission ControlのUI](./docs/interactive-mission-control.md) | `rig-mission-control-live`による操作画面 |
+| [評価ケース](./docs/evaluation-cases.md) | 作成、実行、比較、基準への昇格 |
+| [packの手順](./docs/packs.md) | 作成、検証、導入、テスト |
+| [packの移行](./docs/pack-migration.md) | 独自リポジトリへの切り出しと再導入 |
+| [v3の設計](./docs/v3-architecture-design-brief.ja.md) | 内部構成の見直しと移行順序 |
+| [プロンプト配置順の測定計画](./docs/facet-order-measurement-plan.ja.md) | 比較条件、必要な試行数、実行上の課題 |
+| [Orca連携](./docs/orca.md) | 設定、復旧、他の開発環境との併用 |
+| [English README](./README.md) | 英語版 |
 
 ## License
 
