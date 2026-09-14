@@ -835,7 +835,7 @@ def cmd_note(args: argparse.Namespace) -> None:
 
 
 def cmd_review(args: argparse.Namespace) -> None:
-    """Record per-persona verdicts for review tasks (used by stats for rubber-stamp detection).
+    """Record per-persona verdicts for accept vetoes and rubber-stamp detection.
 
     The optional `--body <persona>=@<path>` additionally persists the reviewer's full
     text to `.rig/runs/<task_id>/reviews/<persona>.md` — that prose carries the

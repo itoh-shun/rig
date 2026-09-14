@@ -1,5 +1,17 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- `wb accept` now refuses unresolved `wb review` rejections, including those recorded
+  after a passing gate. Each rejecting persona must record a new verdict after re-review.
+  An explicit `--force` override follows governance permission and waiver rules for
+  `no_rejected_reviews`, and preserves the rejected verdicts in audit and signed provenance.
+  Missing reviews remain optional; malformed review records return exit 2.
+  Review-only completion gates continue to judge the review's quality independently
+  of whether its target changes were approved.
+
 ## [3.0.0] - 2026-09-12
 
 Rig 3.0.0 reorganizes execution and quality checks around common interfaces, tightens
