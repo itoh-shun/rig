@@ -1,0 +1,647 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Eval report — rig v3.0.1</title>
+</head>
+<body>
+<style>
+:root{--plane:#f9f9f7;--surface:#fcfcfb;--ink:#0b0b0b;--ink-2:#52514e;--ink-3:#6b6a64;--hairline:rgba(11,11,11,.10);--grid:#e1e0d9;--inset:rgba(11,11,11,.04);--accent:#2a78d6;--base-fill:#6b6a64;--delta-good:#006300;--good:#067d06;--warning:#8a6100;--critical:#d03b3b;
+  color-scheme:light dark;
+}
+@media (prefers-color-scheme:dark){:root{--plane:#0d0d0d;--surface:#1a1a19;--ink:#ffffff;--ink-2:#c3c2b7;--ink-3:#898781;--hairline:rgba(255,255,255,.10);--grid:#2c2c2a;--inset:rgba(255,255,255,.05);--accent:#3987e5;--base-fill:#898781;--delta-good:#0ca30c;--good:#0ca30c;--warning:#fab219;--critical:#e06c6c;color-scheme:dark}}
+:root[data-theme="dark"]{--plane:#0d0d0d;--surface:#1a1a19;--ink:#ffffff;--ink-2:#c3c2b7;--ink-3:#898781;--hairline:rgba(255,255,255,.10);--grid:#2c2c2a;--inset:rgba(255,255,255,.05);--accent:#3987e5;--base-fill:#898781;--delta-good:#0ca30c;--good:#0ca30c;--warning:#fab219;--critical:#e06c6c;color-scheme:dark}
+:root[data-theme="light"]{--plane:#f9f9f7;--surface:#fcfcfb;--ink:#0b0b0b;--ink-2:#52514e;--ink-3:#6b6a64;--hairline:rgba(11,11,11,.10);--grid:#e1e0d9;--inset:rgba(11,11,11,.04);--accent:#2a78d6;--base-fill:#6b6a64;--delta-good:#006300;--good:#067d06;--warning:#8a6100;--critical:#d03b3b;color-scheme:light}
+*{box-sizing:border-box}
+body{margin:0;background:var(--plane);color:var(--ink);
+  font:14px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif;
+  -webkit-text-size-adjust:100%}
+.wrap{max-width:880px;margin:0 auto;padding:40px 24px 64px;display:flex;flex-direction:column;gap:20px}
+.eyebrow{font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3)}
+header h1{margin:2px 0 0;font-size:24px;font-weight:600;line-height:1.25;text-wrap:balance}
+.meta{display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:8px;color:var(--ink-2);font-size:13px}
+.meta .num{font-variant-numeric:tabular-nums lining-nums}
+.banner{display:flex;align-items:center;gap:8px;padding:10px 14px;border-radius:8px;
+  border:1px solid var(--hairline);background:var(--surface);font-size:13px}
+.banner .chip-warn{color:var(--warning);font-weight:600}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+.tile{background:var(--surface);border:1px solid var(--hairline);border-radius:10px;padding:14px 16px;
+  display:flex;flex-direction:column;gap:4px}
+.tile .label{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3)}
+.tile .value{font-size:26px;font-weight:600;font-variant-numeric:tabular-nums lining-nums;line-height:1.1}
+.tile.hero .value{font-family:Georgia,"Times New Roman",serif;font-weight:400;font-size:48px}
+.tile .sub{font-size:12px;color:var(--ink-2);font-variant-numeric:tabular-nums}
+.tile .value.delta-pos{color:var(--delta-good)}
+.tile .value.delta-neg{color:var(--critical)}
+.toolbar{display:flex;gap:8px;justify-content:flex-end}
+.toolbar button{font:12px system-ui,-apple-system,"Segoe UI",sans-serif;color:var(--ink-2);
+  background:var(--surface);border:1px solid var(--hairline);border-radius:6px;padding:4px 10px;cursor:pointer}
+.toolbar button:hover{color:var(--ink)}
+.toolbar button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.case{background:var(--surface);border:1px solid var(--hairline);border-radius:10px;padding:18px 20px;
+  display:flex;flex-direction:column;gap:10px}
+.case-regressed{border-left:3px solid var(--critical)}
+.verdict{margin:6px 0 0;font-size:15px}
+.verdict .delta{font-size:15px}
+.flag{font-size:11px;font-weight:600;color:var(--warning);white-space:nowrap}
+.star{color:var(--warning);font-size:.45em;vertical-align:super;line-height:0;cursor:help}
+.legend summary{cursor:pointer;font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-2)}
+.legend-list{margin:8px 0 0;padding-left:20px;display:flex;flex-direction:column;gap:5px;font-size:13px;color:var(--ink-2)}
+.case-head{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.case-head h2{margin:0;font-size:16px;font-weight:600}
+.case-head .spacer{flex:1}
+.case-score{font-size:15px;font-weight:600}
+.mono{font:12px "SF Mono",ui-monospace,Menlo,Consolas,monospace}
+.num{font-variant-numeric:tabular-nums lining-nums}
+.muted{color:var(--ink-3);font-size:12px}
+.meter{display:inline-block;position:relative;width:120px;height:6px;border-radius:4px;background:var(--grid);
+  vertical-align:middle}
+.meter>span{display:block;height:100%;border-radius:4px;max-width:100%}
+.meter .tick{position:absolute;top:-2px;bottom:-2px;width:2px;background:var(--ink-3);border-radius:1px}
+.m-accent>span{background:var(--accent)}
+.m-base>span{background:var(--base-fill)}
+.delta{font-size:12px;font-weight:600;font-variant-numeric:tabular-nums}
+.delta-pos{color:var(--delta-good)}
+.delta-neg{color:var(--critical)}
+.delta-zero{color:var(--ink-3)}
+details.section{border-top:1px solid var(--grid);padding-top:10px}
+details.section>summary{cursor:pointer;font-size:12px;font-weight:600;letter-spacing:.04em;
+  text-transform:uppercase;color:var(--ink-2);list-style-position:outside;margin-left:2px}
+details.section>summary:hover{color:var(--ink)}
+details.section[open]>summary{margin-bottom:8px}
+.md{display:flex;flex-direction:column;gap:8px;background:var(--inset);border-radius:8px;
+  padding:12px 14px;overflow-wrap:break-word}
+.md>:first-child{margin-top:0}
+.md h1,.md h2,.md h3,.md h4,.md h5,.md h6{margin:4px 0 0;font-size:1em;font-weight:600;line-height:1.3}
+.md p,.md ul,.md ol,.md blockquote,.md table,.md pre,.md hr{margin:0}
+.md ul,.md ol{display:flex;flex-direction:column;gap:4px;padding-left:20px}
+.md blockquote{border-left:2px solid var(--hairline);padding-left:10px;color:var(--ink-2)}
+.md :not(pre)>code{background:var(--inset);padding:1px 4px;border-radius:4px;
+  font:.92em "SF Mono",ui-monospace,Menlo,Consolas,monospace}
+.md pre{background:var(--inset);border:1px solid var(--hairline);padding:10px 12px;border-radius:6px;
+  overflow-x:auto;font:12px/1.5 "SF Mono",ui-monospace,Menlo,Consolas,monospace}
+.md pre code{background:none;padding:0;font:inherit}
+.md table{width:100%;border-collapse:collapse}
+.md th,.md td{padding:5px 8px;text-align:left;vertical-align:top;border-bottom:1px solid var(--grid)}
+.md th{font-weight:600;color:var(--ink-2)}
+.md a{color:var(--accent);text-decoration:none}
+.md a:hover{text-decoration:underline}
+.grader-def{display:flex;flex-direction:column;gap:6px;padding:8px 0}
+.grader-def+.grader-def{border-top:1px solid var(--grid)}
+.grader-def-head{display:flex;align-items:baseline;gap:8px}
+.grader-name{font:13px "SF Mono",ui-monospace,Menlo,Consolas,monospace;font-weight:600}
+.badge{font-size:10px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-2);
+  border:1px solid var(--hairline);border-radius:999px;padding:1px 8px}
+.config{display:flex;flex-direction:column;gap:2px;background:var(--inset);border-radius:8px;padding:10px 14px}
+.config code{font:12px "SF Mono",ui-monospace,Menlo,Consolas,monospace;overflow-wrap:anywhere}
+.arm{display:flex;flex-direction:column;gap:8px;padding:6px 0}
+.arm+.arm{border-top:1px dashed var(--grid);margin-top:4px;padding-top:12px}
+.arm-head{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.arm-label{font-size:13px;font-weight:600}
+.run{border:1px solid var(--grid);border-radius:8px;padding:10px 12px;display:flex;flex-direction:column;gap:8px}
+.run-head{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.run-title{font-size:12px;font-weight:600;color:var(--ink-2)}
+.run-error .explanation{color:var(--ink-2)}
+.note{font-size:12px;color:var(--ink-2)}
+.graders{display:flex;flex-direction:column;gap:4px}
+details.grader{border-radius:6px}
+details.grader>summary{cursor:pointer;display:flex;align-items:baseline;gap:8px;padding:3px 4px;
+  border-radius:6px;list-style:none}
+details.grader>summary::-webkit-details-marker{display:none}
+details.grader>summary::before{content:'▸';font-size:10px;color:var(--ink-3);flex:none;
+  transition:transform .12s ease}
+details.grader[open]>summary::before{transform:rotate(90deg)}
+details.grader>summary:hover{background:var(--inset)}
+details.grader>summary:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.grader-body{padding:6px 8px 8px 24px;display:flex;flex-direction:column;gap:6px}
+.chip{font-size:11px;font-weight:600;border-radius:999px;padding:1px 8px;white-space:nowrap}
+.chip-pass{color:var(--good);border:1px solid currentColor}
+.chip-fail{color:var(--critical);border:1px solid currentColor}
+.chip.chip-warn{color:var(--warning);border:1px solid currentColor}
+.explanation{margin:0;font-size:13px;color:var(--ink-2);white-space:pre-wrap;overflow-wrap:break-word}
+.kv{display:flex;gap:8px;font-size:12px;color:var(--ink-3)}
+.votes{font-variant-numeric:tabular-nums;letter-spacing:.1em}
+pre.evidence{margin:0;background:var(--inset);border:1px solid var(--hairline);border-radius:6px;
+  padding:8px 10px;overflow-x:auto;max-height:320px;
+  font:12px/1.5 "SF Mono",ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap;overflow-wrap:break-word}
+footer{color:var(--ink-3);font-size:12px;text-align:center;padding-top:8px}
+@media (prefers-reduced-motion:no-preference){
+  details.grader>summary,.toolbar button{transition:background .12s ease,color .12s ease}
+}
+@media (prefers-reduced-motion:reduce){
+  details.grader>summary::before{transition:none}
+}
+@media print{
+  :root,:root[data-theme="dark"],:root[data-theme="light"]{--plane:#f9f9f7;--surface:#fcfcfb;--ink:#0b0b0b;--ink-2:#52514e;--ink-3:#6b6a64;--hairline:rgba(11,11,11,.10);--grid:#e1e0d9;--inset:rgba(11,11,11,.04);--accent:#2a78d6;--base-fill:#6b6a64;--delta-good:#006300;--good:#067d06;--warning:#8a6100;--critical:#d03b3b;color-scheme:light}
+  body{background:#fff}
+  .toolbar{display:none}
+  .case,.run,.grader-def{break-inside:avoid}
+  pre.evidence{max-height:none}
+}
+</style>
+<div class="wrap">
+<header>
+<div class="eyebrow">Plugin eval report</div>
+<h1>rig v3.0.1</h1>
+
+<div class="meta">
+<span class="mono">.</span>
+<span>Claude Code v2.1.273</span>
+<span class="num">2026-09-16 14:19 UTC</span>
+<span class="num">2m 31s</span>
+<span class="num">$0.66</span>
+<span class="num">3 runs</span>
+
+
+
+<span>judge sonnet</span>
+<span class="num">threshold 100%</span>
+<span>filtered: --case 02-fix-nan-total</span>
+</div>
+</header>
+
+<section class="tiles">
+<div class="tile hero"><span class="label">Suite score</span><span class="value">8.3%</span><span class="sub">mean of per-case scores</span></div>
+
+<div class="tile"><span class="label">Cases</span><span class="value num">1</span><span class="sub">0 of 1 ≥ 100% threshold</span></div>
+<div class="tile"><span class="label">Perfect runs</span><span class="value num">0%</span><span class="sub">runs where every grader passed</span></div>
+</section>
+<details class="section legend">
+<summary>How to read this report</summary>
+<ul class="legend-list">
+<li>A run's score is the weighted fraction of its graders that passed; a "perfect" run passed every grader.</li>
+<li>A case's score is the mean of its runs; a case passes when its score is at or above the 100% threshold (the tick on each case bar).</li>
+<li>The suite score is the mean of the per-case scores.</li>
+<li>Judge votes are independent samples of the LLM judge; the majority decides pass or fail.</li>
+<li><strong>No baseline arm was run</strong> (ablation off) — this report shows absolute scores only and cannot say whether the plugin caused them. Re-run with <code>--ablation with-without</code> to measure the plugin’s effect.</li>
+
+</ul>
+</details>
+<div class="toolbar"><button type="button" data-act="expand">Expand all</button><button type="button" data-act="collapse">Collapse all</button></div>
+<article class="case" id="case-1">
+<div class="case-head">
+<h2>02-fix-nan-total</h2>
+<span class="muted mono">evals-cc/02-fix-nan-total</span>
+<span class="spacer"></span>
+
+
+
+<span class="meter m-accent" aria-hidden="true"><span style="width:8.3%"></span><i class="tick" style="left:100.0%"></i></span>
+<span class="num case-score">8.3%</span>
+</div>
+
+<details class="section" open>
+<summary>Results</summary>
+<section class="arm">
+<div class="arm-head">
+<span class="arm-label">Runs</span>
+<span class="meter m-accent" aria-hidden="true"><span style="width:8.3%"></span></span>
+<span class="num">8.3%</span>
+<span class="muted num">0% of runs perfect</span>
+</div>
+<div class="run">
+<div class="run-head">
+<span class="run-title">Run 1</span>
+<span class="meter m-accent" aria-hidden="true"><span style="width:0.0%"></span></span>
+<span class="num">0%</span>
+<span class="muted num">3 turns · $0.20 · 14:19:45 UTC</span>
+</div>
+
+<div class="graders"><details class="grader" open>
+<summary><span class="chip chip-fail">✗ fail</span> <span class="grader-name">failing-test-precedes-fix</span>  </summary>
+<div class="grader-body">
+<p class="explanation">judge votes: FAIL FAIL FAIL</p>
+<div class="kv"><span>Judge votes</span><span class="votes">✗ ✗ ✗</span></div><div class="kv"><span>Evidence (what the judge was shown; for an image, a description of what was sent)</span></div><pre class="evidence">The working directory here is empty — no checkout code, no source files at all (`git status` shows only an untracked `.gitconfig`). So I can&apos;t point at the actual line. Here&apos;s how I&apos;d approach it, and what I need from you to actually do it.
+
+## Find where the NaN is born, not where it surfaces
+
+`NaN` propagates silently through every arithmetic op, so the render site is almost never the defect — it&apos;s just the first place it becomes visible. I&apos;d trace backward from the rendered total through each contributing term until I find the first expression that evaluates to `NaN` on an empty cart. In checkout code that&apos;s usually one of:
+
+- `items.reduce((a, i) =&gt; a + i.price * i.qty)` with no initial value — on an empty array that throws, on a one-item array it returns the *item object*, and the next arithmetic op turns it into `NaN`.
+- A term that&apos;s `undefined` when there are no items (`subtotal` never assigned, a missing `shipping` or `discount` field) and then multiplied by a tax rate.
+- A division by `items.length` — `0/0` is `NaN`. Common in per-item discount allocation or averaging.
+
+The distinction matters for your &quot;properly, not patched over&quot; requirement. The patch is `isNaN(total) ? 0 : total` at the render site; that hides a class of bug rather than fixing one instance. The proper fix is to make the empty case fall out of the code naturally — summation over a possibly-empty set has an identity element, and `0` should be it, supplied at the fold, not repaired afterward.
+
+## The test that would have caught it
+
+A render-level snapshot asserting `&quot;$0.00&quot;` passes but tests the wrong layer. I&apos;d want a unit test on the total calculation itself, table-driven over 0 / 1 / many items, with the empty case as an explicit named row. Then, separately, an assertion that the result is a finite number — `Number.isFinite`, not `!isNaN` — which catches the whole family (`Infinity` from a division, `NaN` from a missing field) rather than just this one.
+
+## What I need
+
+Where does the checkout code actually live? Point me at the repo or path and I&apos;ll trace it properly.
+
+Once I have that, I can run this through the rig flow — implement and review in an isolated worktree with the fix and test gated behind an acceptance check — or just do it directly. Your call; say which and I&apos;ll start.</pre>
+</div>
+</details>
+<details class="grader" open>
+<summary><span class="chip chip-fail">✗ fail</span> <span class="grader-name">fires-engine</span>  </summary>
+<div class="grader-body">
+<p class="explanation">Skill called 0x (expected 1..∞)</p>
+
+</div>
+</details>
+<details class="grader" open>
+<summary><span class="chip chip-fail">✗ fail</span> <span class="grader-name">gate-blocks-progression</span>  </summary>
+<div class="grader-body">
+<p class="explanation">judge votes: FAIL FAIL FAIL</p>
+<div class="kv"><span>Judge votes</span><span class="votes">✗ ✗ ✗</span></div><div class="kv"><span>Evidence (what the judge was shown; for an image, a description of what was sent)</span></div><pre class="evidence">The working directory here is empty — no checkout code, no source files at all (`git status` shows only an untracked `.gitconfig`). So I can&apos;t point at the actual line. Here&apos;s how I&apos;d approach it, and what I need from you to actually do it.
+
+## Find where the NaN is born, not where it surfaces
+
+`NaN` propagates silently through every arithmetic op, so the render site is almost never the defect — it&apos;s just the first place it becomes visible. I&apos;d trace backward from the rendered total through each contributing term until I find the first expression that evaluates to `NaN` on an empty cart. In checkout code that&apos;s usually one of:
+
+- `items.reduce((a, i) =&gt; a + i.price * i.qty)` with no initial value — on an empty array that throws, on a one-item array it returns the *item object*, and the next arithmetic op turns it into `NaN`.
+- A term that&apos;s `undefined` when there are no items (`subtotal` never assigned, a missing `shipping` or `discount` field) and then multiplied by a tax rate.
+- A division by `items.length` — `0/0` is `NaN`. Common in per-item discount allocation or averaging.
+
+The distinction matters for your &quot;properly, not patched over&quot; requirement. The patch is `isNaN(total) ? 0 : total` at the render site; that hides a class of bug rather than fixing one instance. The proper fix is to make the empty case fall out of the code naturally — summation over a possibly-empty set has an identity element, and `0` should be it, supplied at the fold, not repaired afterward.
+
+## The test that would have caught it
+
+A render-level snapshot asserting `&quot;$0.00&quot;` passes but tests the wrong layer. I&apos;d want a unit test on the total calculation itself, table-driven over 0 / 1 / many items, with the empty case as an explicit named row. Then, separately, an assertion that the result is a finite number — `Number.isFinite`, not `!isNaN` — which catches the whole family (`Infinity` from a division, `NaN` from a missing field) rather than just this one.
+
+## What I need
+
+Where does the checkout code actually live? Point me at the repo or path and I&apos;ll trace it properly.
+
+Once I have that, I can run this through the rig flow — implement and review in an isolated worktree with the fix and test gated behind an acceptance check — or just do it directly. Your call; say which and I&apos;ll start.</pre>
+</div>
+</details>
+<details class="grader" open>
+<summary><span class="chip chip-fail">✗ fail</span> <span class="grader-name">isolates-before-landing</span>  </summary>
+<div class="grader-body">
+<p class="explanation">judge votes: FAIL FAIL FAIL</p>
+<div class="kv"><span>Judge votes</span><span class="votes">✗ ✗ ✗</span></div><div class="kv"><span>Evidence (what the judge was shown; for an image, a description of what was sent)</span></div><pre class="evidence">The working directory here is empty — no checkout code, no source files at all (`git status` shows only an untracked `.gitconfig`). So I can&apos;t point at the actual line. Here&apos;s how I&apos;d approach it, and what I need from you to actually do it.
+
+## Find where the NaN is born, not where it surfaces
+
+`NaN` propagates silently through every arithmetic op, so the render site is almost never the defect — it&apos;s just the first place it becomes visible. I&apos;d trace backward from the rendered total through each contributing term until I find the first expression that evaluates to `NaN` on an empty cart. In checkout code that&apos;s usually one of:
+
+- `items.reduce((a, i) =&gt; a + i.price * i.qty)` with no initial value — on an empty array that throws, on a one-item array it returns the *item object*, and the next arithmetic op turns it into `NaN`.
+- A term that&apos;s `undefined` when there are no items (`subtotal` never assigned, a missing `shipping` or `discount` field) and then multiplied by a tax rate.
+- A division by `items.length` — `0/0` is `NaN`. Common in per-item discount allocation or averaging.
+
+The distinction matters for your &quot;properly, not patched over&quot; requirement. The patch is `isNaN(total) ? 0 : total` at the render site; that hides a class of bug rather than fixing one instance. The proper fix is to make the empty case fall out of the code naturally — summation over a possibly-empty set has an identity element, and `0` should be it, supplied at the fold, not repaired afterward.
+
+## The test that would have caught it
+
+A render-level snapshot asserting `&quot;$0.00&quot;` passes but tests the wrong layer. I&apos;d want a unit test on the total calculation itself, table-driven over 0 / 1 / many items, with the empty case as an explicit named row. Then, separately, an assertion that the result is a finite number — `Number.isFinite`, not `!isNaN` — which catches the whole family (`Infinity` from a division, `NaN` from a missing field) rather than just this one.
+
+## What I need
+
+Where does the checkout code actually live? Point me at the repo or path and I&apos;ll trace it properly.
+
+Once I have that, I can run this through the rig flow — implement and review in an isolated worktree with the fix and test gated behind an acceptance check — or just do it directly. Your call; say which and I&apos;ll start.</pre>
+</div>
+</details></div>
+</div>
+<div class="run">
+<div class="run-head">
+<span class="run-title">Run 2</span>
+<span class="meter m-accent" aria-hidden="true"><span style="width:0.0%"></span></span>
+<span class="num">0%</span>
+<span class="muted num">5 turns · $0.24 · 14:20:31 UTC</span>
+</div>
+
+<div class="graders"><details class="grader" open>
+<summary><span class="chip chip-fail">✗ fail</span> <span class="grader-name">failing-test-precedes-fix</span>  </summary>
+<div class="grader-body">
+<p class="explanation">judge votes: FAIL FAIL FAIL</p>
+<div class="kv"><span>Judge votes</span><span class="votes">✗ ✗ ✗</span></div><div class="kv"><span>Evidence (what the judge was shown; for an image, a description of what was sent)</span></div><pre class="evidence">The working directory is empty — no source files, just a `.git` dir. So I can&apos;t point at your actual checkout code yet. Here&apos;s how I&apos;d approach it, and where I&apos;d need you to point me.
+
+## Diagnosis first, not a fix
+
+`NaN` is a propagating value: it&apos;s produced once and then contaminates everything downstream. The render site is where you *see* it, which is almost never where it&apos;s *made*. So step one is finding the origin, not the symptom.
+
+The usual origins for an empty-cart total, roughly in order of likelihood:
+
+- **A division with zero denominator** — `discount / items.length`, or a weighted/proportional allocation across line items. `0/0` is `NaN`, and only on the empty case. This is the classic one, because it passes every non-empty test.
+- **`undefined` entering arithmetic** — `subtotal + tax` where `subtotal` came from `items[0].price` or a lookup that returns `undefined` for an empty collection. `undefined + 5` is `NaN`.
+- **A parse of nothing** — `parseFloat(&apos;&apos;)`, `Number(undefined)`, often at a form/API boundary that&apos;s empty rather than absent.
+
+(A `reduce` without a seed is the other famous empty-collection bug, but that throws a `TypeError` rather than yielding `NaN`, so your symptom rules it out.)
+
+I&apos;d find which by tracing backward from the render: log or breakpoint on the total, then each input to it, until you find the first value that&apos;s `NaN` — the operation that made it is the bug.
+
+## What &quot;properly&quot; means here
+
+The patch-over version is `isNaN(total) ? 0 : total` or `total || 0` at the render site. That&apos;s bad not because guards are bad, but because it makes the display correct while the domain layer still computes a meaningless number — and anything else consuming that total (analytics, payment payload, order record) keeps getting `NaN`.
+
+The proper fix has two parts:
+
+1. **Fix it at the layer that owns the invariant.** Money totals are a sum, and a sum over an empty collection is defined: it&apos;s the identity element, `0`. Whatever function computes the total should be *total* in the mathematical sense — defined for every valid input including the empty one — rather than defined for non-empty input and guarded at the edges. Concretely, if it&apos;s the division case, the fix is the empty/zero-denominator branch inside the allocation function, returning zero allocations. If it&apos;s `undefined` propagation, the fix is making the source return `0` for an empty cart rather than `undefined`.
+
+2. **Make the class of bug non-recurring.** Add a `Number.isFinite` assertion where money values are constructed or leave the domain layer. `NaN` should fail loudly at its origin instead of silently traveling to the UI. That&apos;s what converts &quot;we fixed this instance&quot; into &quot;this shape of bug can&apos;t reach the user again.&quot;
+
+## The test that would have caught it
+
+The honest version is a test at the **calculation** layer, not the render layer:
+
+```
+totalFor(emptyCart) === 0
+```
+
+But I&apos;d argue for slightly more than the one regression case, because the bug is really *&quot;the empty case was never considered&quot;*:
+
+- An empty-input case for **each** aggregate in checkout — subtotal, tax, shipping, discount — not just the top-level total. The bug lives in one of them; the others have the same gap.
+- A test that the total is a finite number, not just that it equals a value. `expect(Number.isFinite(total))` catches `NaN` and `Infinity` in cases where you don&apos;t want to hardcode the expected figure.
+- If you have property-based testing available, `total(a.concat(b)) === total(a) + total(b)` catches this structurally — the empty cart falls out as a free case, and so do several neighboring bugs.
+
+I&apos;d also add one render-level test asserting the displayed string is `$0.00`, since that&apos;s the reported symptom and it pins the formatting path too. But the calculation test is the one that matters; the render test alone would tempt the next person into the guard-at-the-edge fix.
+
+---
+
+Where does the checkout code actually live? Point me at the repo or path and I&apos;ll trace the real origin rather than guessing among the three candidates above.
+
+Once I can see it, I&apos;d suggest running this through `/rig:go` — it&apos;d do the fix and review in an isolated worktree, which suits a &quot;fix it properly&quot; request where the reviewers can check that the fix landed in the domain layer rather than the view. Say the word and I&apos;ll start it; otherwise I&apos;m happy to just do it directly.</pre>
+</div>
+</details>
+<details class="grader" open>
+<summary><span class="chip chip-fail">✗ fail</span> <span class="grader-name">fires-engine</span>  </summary>
+<div class="grader-body">
+<p class="explanation">Skill called 0x (expected 1..∞)</p>
+
+</div>
+</details>
+<details class="grader" open>
+<summary><span class="chip chip-fail">✗ fail</span> <span class="grader-name">gate-blocks-progression</span>  </summary>
+<div class="grader-body">
+<p class="explanation">judge votes: FAIL FAIL FAIL</p>
+<div class="kv"><span>Judge votes</span><span class="votes">✗ ✗ ✗</span></div><div class="kv"><span>Evidence (what the judge was shown; for an image, a description of what was sent)</span></div><pre class="evidence">The working directory is empty — no source files, just a `.git` dir. So I can&apos;t point at your actual checkout code yet. Here&apos;s how I&apos;d approach it, and where I&apos;d need you to point me.
+
+## Diagnosis first, not a fix
+
+`NaN` is a propagating value: it&apos;s produced once and then contaminates everything downstream. The render site is where you *see* it, which is almost never where it&apos;s *made*. So step one is finding the origin, not the symptom.
+
+The usual origins for an empty-cart total, roughly in order of likelihood:
+
+- **A division with zero denominator** — `discount / items.length`, or a weighted/proportional allocation across line items. `0/0` is `NaN`, and only on the empty case. This is the classic one, because it passes every non-empty test.
+- **`undefined` entering arithmetic** — `subtotal + tax` where `subtotal` came from `items[0].price` or a lookup that returns `undefined` for an empty collection. `undefined + 5` is `NaN`.
+- **A parse of nothing** — `parseFloat(&apos;&apos;)`, `Number(undefined)`, often at a form/API boundary that&apos;s empty rather than absent.
+
+(A `reduce` without a seed is the other famous empty-collection bug, but that throws a `TypeError` rather than yielding `NaN`, so your symptom rules it out.)
+
+I&apos;d find which by tracing backward from the render: log or breakpoint on the total, then each input to it, until you find the first value that&apos;s `NaN` — the operation that made it is the bug.
+
+## What &quot;properly&quot; means here
+
+The patch-over version is `isNaN(total) ? 0 : total` or `total || 0` at the render site. That&apos;s bad not because guards are bad, but because it makes the display correct while the domain layer still computes a meaningless number — and anything else consuming that total (analytics, payment payload, order record) keeps getting `NaN`.
+
+The proper fix has two parts:
+
+1. **Fix it at the layer that owns the invariant.** Money totals are a sum, and a sum over an empty collection is defined: it&apos;s the identity element, `0`. Whatever function computes the total should be *total* in the mathematical sense — defined for every valid input including the empty one — rather than defined for non-empty input and guarded at the edges. Concretely, if it&apos;s the division case, the fix is the empty/zero-denominator branch inside the allocation function, returning zero allocations. If it&apos;s `undefined` propagation, the fix is making the source return `0` for an empty cart rather than `undefined`.
+
+2. **Make the class of bug non-recurring.** Add a `Number.isFinite` assertion where money values are constructed or leave the domain layer. `NaN` should fail loudly at its origin instead of silently traveling to the UI. That&apos;s what converts &quot;we fixed this instance&quot; into &quot;this shape of bug can&apos;t reach the user again.&quot;
+
+## The test that would have caught it
+
+The honest version is a test at the **calculation** layer, not the render layer:
+
+```
+totalFor(emptyCart) === 0
+```
+
+But I&apos;d argue for slightly more than the one regression case, because the bug is really *&quot;the empty case was never considered&quot;*:
+
+- An empty-input case for **each** aggregate in checkout — subtotal, tax, shipping, discount — not just the top-level total. The bug lives in one of them; the others have the same gap.
+- A test that the total is a finite number, not just that it equals a value. `expect(Number.isFinite(total))` catches `NaN` and `Infinity` in cases where you don&apos;t want to hardcode the expected figure.
+- If you have property-based testing available, `total(a.concat(b)) === total(a) + total(b)` catches this structurally — the empty cart falls out as a free case, and so do several neighboring bugs.
+
+I&apos;d also add one render-level test asserting the displayed string is `$0.00`, since that&apos;s the reported symptom and it pins the formatting path too. But the calculation test is the one that matters; the render test alone would tempt the next person into the guard-at-the-edge fix.
+
+---
+
+Where does the checkout code actually live? Point me at the repo or path and I&apos;ll trace the real origin rather than guessing among the three candidates above.
+
+Once I can see it, I&apos;d suggest running this through `/rig:go` — it&apos;d do the fix and review in an isolated worktree, which suits a &quot;fix it properly&quot; request where the reviewers can check that the fix landed in the domain layer rather than the view. Say the word and I&apos;ll start it; otherwise I&apos;m happy to just do it directly.</pre>
+</div>
+</details>
+<details class="grader" open>
+<summary><span class="chip chip-fail">✗ fail</span> <span class="grader-name">isolates-before-landing</span>  </summary>
+<div class="grader-body">
+<p class="explanation">judge votes: FAIL FAIL FAIL</p>
+<div class="kv"><span>Judge votes</span><span class="votes">✗ ✗ ✗</span></div><div class="kv"><span>Evidence (what the judge was shown; for an image, a description of what was sent)</span></div><pre class="evidence">The working directory is empty — no source files, just a `.git` dir. So I can&apos;t point at your actual checkout code yet. Here&apos;s how I&apos;d approach it, and where I&apos;d need you to point me.
+
+## Diagnosis first, not a fix
+
+`NaN` is a propagating value: it&apos;s produced once and then contaminates everything downstream. The render site is where you *see* it, which is almost never where it&apos;s *made*. So step one is finding the origin, not the symptom.
+
+The usual origins for an empty-cart total, roughly in order of likelihood:
+
+- **A division with zero denominator** — `discount / items.length`, or a weighted/proportional allocation across line items. `0/0` is `NaN`, and only on the empty case. This is the classic one, because it passes every non-empty test.
+- **`undefined` entering arithmetic** — `subtotal + tax` where `subtotal` came from `items[0].price` or a lookup that returns `undefined` for an empty collection. `undefined + 5` is `NaN`.
+- **A parse of nothing** — `parseFloat(&apos;&apos;)`, `Number(undefined)`, often at a form/API boundary that&apos;s empty rather than absent.
+
+(A `reduce` without a seed is the other famous empty-collection bug, but that throws a `TypeError` rather than yielding `NaN`, so your symptom rules it out.)
+
+I&apos;d find which by tracing backward from the render: log or breakpoint on the total, then each input to it, until you find the first value that&apos;s `NaN` — the operation that made it is the bug.
+
+## What &quot;properly&quot; means here
+
+The patch-over version is `isNaN(total) ? 0 : total` or `total || 0` at the render site. That&apos;s bad not because guards are bad, but because it makes the display correct while the domain layer still computes a meaningless number — and anything else consuming that total (analytics, payment payload, order record) keeps getting `NaN`.
+
+The proper fix has two parts:
+
+1. **Fix it at the layer that owns the invariant.** Money totals are a sum, and a sum over an empty collection is defined: it&apos;s the identity element, `0`. Whatever function computes the total should be *total* in the mathematical sense — defined for every valid input including the empty one — rather than defined for non-empty input and guarded at the edges. Concretely, if it&apos;s the division case, the fix is the empty/zero-denominator branch inside the allocation function, returning zero allocations. If it&apos;s `undefined` propagation, the fix is making the source return `0` for an empty cart rather than `undefined`.
+
+2. **Make the class of bug non-recurring.** Add a `Number.isFinite` assertion where money values are constructed or leave the domain layer. `NaN` should fail loudly at its origin instead of silently traveling to the UI. That&apos;s what converts &quot;we fixed this instance&quot; into &quot;this shape of bug can&apos;t reach the user again.&quot;
+
+## The test that would have caught it
+
+The honest version is a test at the **calculation** layer, not the render layer:
+
+```
+totalFor(emptyCart) === 0
+```
+
+But I&apos;d argue for slightly more than the one regression case, because the bug is really *&quot;the empty case was never considered&quot;*:
+
+- An empty-input case for **each** aggregate in checkout — subtotal, tax, shipping, discount — not just the top-level total. The bug lives in one of them; the others have the same gap.
+- A test that the total is a finite number, not just that it equals a value. `expect(Number.isFinite(total))` catches `NaN` and `Infinity` in cases where you don&apos;t want to hardcode the expected figure.
+- If you have property-based testing available, `total(a.concat(b)) === total(a) + total(b)` catches this structurally — the empty cart falls out as a free case, and so do several neighboring bugs.
+
+I&apos;d also add one render-level test asserting the displayed string is `$0.00`, since that&apos;s the reported symptom and it pins the formatting path too. But the calculation test is the one that matters; the render test alone would tempt the next person into the guard-at-the-edge fix.
+
+---
+
+Where does the checkout code actually live? Point me at the repo or path and I&apos;ll trace the real origin rather than guessing among the three candidates above.
+
+Once I can see it, I&apos;d suggest running this through `/rig:go` — it&apos;d do the fix and review in an isolated worktree, which suits a &quot;fix it properly&quot; request where the reviewers can check that the fix landed in the domain layer rather than the view. Say the word and I&apos;ll start it; otherwise I&apos;m happy to just do it directly.</pre>
+</div>
+</details></div>
+</div>
+<div class="run">
+<div class="run-head">
+<span class="run-title">Run 3</span>
+<span class="meter m-accent" aria-hidden="true"><span style="width:25.0%"></span></span>
+<span class="num">25%</span>
+<span class="muted num">3 turns · $0.22 · 14:21:28 UTC</span>
+</div>
+
+<div class="graders"><details class="grader">
+<summary><span class="chip chip-pass">✓ pass</span> <span class="grader-name">failing-test-precedes-fix</span>  </summary>
+<div class="grader-body">
+<p class="explanation">judge votes: PASS PASS PASS</p>
+<div class="kv"><span>Judge votes</span><span class="votes">✓ ✓ ✓</span></div><div class="kv"><span>Evidence (what the judge was shown; for an image, a description of what was sent)</span></div><pre class="evidence">The working directory `/tmp/claude-eval-uZWEzA/home/cwd` is empty, and the repo at `/tmp/claude-eval-uZWEzA/home` has no commits and no files — so there&apos;s no checkout code here for me to read. Point me at the right path or repo and I can do this against the real code. Here&apos;s how I&apos;d go about it:
+
+**1. Find where the NaN is born, not where it&apos;s displayed.**
+`NaN` propagates silently, so the render site is almost never the bug. I&apos;d trace backwards from the rendered total to the first expression that can produce `NaN` on an empty cart. The usual culprits:
+- `reduce` with no initial value — on `[]` it throws, on a one-element array it skips the callback entirely; with an accumulator that starts as `undefined`, `undefined + x` is `NaN`.
+- a division by `items.length` (average, proration, per-item shipping) — `0/0`.
+- `Number(undefined)` / `parseFloat(undefined)` on a subtotal, discount, or tax field that only exists when there are items.
+
+**2. Fix it by making the function total rather than guarding the output.**
+The patch-over version is `isNaN(total) ? 0 : total` or `total || 0` at the render layer. That hides the real problem: if the total can be `NaN` for an empty cart, it can usually also be `NaN` for a cart containing one item with a missing price — and the guard would silently render `$0.00` for a real order. The proper fix is that the sum is defined for empty input by construction (`reduce(..., 0)`), and every money value entering it is a number by the time it gets there, validated at the boundary where cart items are built. Empty cart then flows through the exact same code path as any other cart.
+
+**3. Check whether the empty cart is the only exposed case.**
+Before fixing, I&apos;d confirm the scope: is the `NaN` specific to zero items, or does a missing/null price on a real item do it too? That determines whether the fix belongs in the sum or at the item-parsing boundary.
+
+**4. Tests — three levels, in order of value.**
+
+- A unit test on the computation function: `computeTotal([])` returns `0` (a number, and `Number.isFinite` on it) — this is the one that would actually have caught it, and it fails before the fix.
+- A test for the case that motivated the discipline: a cart item with a missing or non-numeric price doesn&apos;t silently become `0`, it&apos;s rejected or surfaced as an error.
+- A rendering test asserting the displayed string is `&quot;$0.00&quot;`, plus a cheap invariant assertion that no rendered money string ever contains `&quot;NaN&quot;`. That last one catches future regressions anywhere in the pipeline, not just this one.
+
+I&apos;d write the failing test first, confirm it reproduces, then fix — otherwise there&apos;s no evidence the test actually covers the bug.
+
+Once you give me the path, I can run this as a rig flow (worktree, implement, review, acceptance gate) or just do it directly — your call. Which repo is it?</pre>
+</div>
+</details>
+<details class="grader" open>
+<summary><span class="chip chip-fail">✗ fail</span> <span class="grader-name">fires-engine</span>  </summary>
+<div class="grader-body">
+<p class="explanation">Skill called 0x (expected 1..∞)</p>
+
+</div>
+</details>
+<details class="grader" open>
+<summary><span class="chip chip-fail">✗ fail</span> <span class="grader-name">gate-blocks-progression</span>  </summary>
+<div class="grader-body">
+<p class="explanation">judge votes: FAIL FAIL FAIL</p>
+<div class="kv"><span>Judge votes</span><span class="votes">✗ ✗ ✗</span></div><div class="kv"><span>Evidence (what the judge was shown; for an image, a description of what was sent)</span></div><pre class="evidence">The working directory `/tmp/claude-eval-uZWEzA/home/cwd` is empty, and the repo at `/tmp/claude-eval-uZWEzA/home` has no commits and no files — so there&apos;s no checkout code here for me to read. Point me at the right path or repo and I can do this against the real code. Here&apos;s how I&apos;d go about it:
+
+**1. Find where the NaN is born, not where it&apos;s displayed.**
+`NaN` propagates silently, so the render site is almost never the bug. I&apos;d trace backwards from the rendered total to the first expression that can produce `NaN` on an empty cart. The usual culprits:
+- `reduce` with no initial value — on `[]` it throws, on a one-element array it skips the callback entirely; with an accumulator that starts as `undefined`, `undefined + x` is `NaN`.
+- a division by `items.length` (average, proration, per-item shipping) — `0/0`.
+- `Number(undefined)` / `parseFloat(undefined)` on a subtotal, discount, or tax field that only exists when there are items.
+
+**2. Fix it by making the function total rather than guarding the output.**
+The patch-over version is `isNaN(total) ? 0 : total` or `total || 0` at the render layer. That hides the real problem: if the total can be `NaN` for an empty cart, it can usually also be `NaN` for a cart containing one item with a missing price — and the guard would silently render `$0.00` for a real order. The proper fix is that the sum is defined for empty input by construction (`reduce(..., 0)`), and every money value entering it is a number by the time it gets there, validated at the boundary where cart items are built. Empty cart then flows through the exact same code path as any other cart.
+
+**3. Check whether the empty cart is the only exposed case.**
+Before fixing, I&apos;d confirm the scope: is the `NaN` specific to zero items, or does a missing/null price on a real item do it too? That determines whether the fix belongs in the sum or at the item-parsing boundary.
+
+**4. Tests — three levels, in order of value.**
+
+- A unit test on the computation function: `computeTotal([])` returns `0` (a number, and `Number.isFinite` on it) — this is the one that would actually have caught it, and it fails before the fix.
+- A test for the case that motivated the discipline: a cart item with a missing or non-numeric price doesn&apos;t silently become `0`, it&apos;s rejected or surfaced as an error.
+- A rendering test asserting the displayed string is `&quot;$0.00&quot;`, plus a cheap invariant assertion that no rendered money string ever contains `&quot;NaN&quot;`. That last one catches future regressions anywhere in the pipeline, not just this one.
+
+I&apos;d write the failing test first, confirm it reproduces, then fix — otherwise there&apos;s no evidence the test actually covers the bug.
+
+Once you give me the path, I can run this as a rig flow (worktree, implement, review, acceptance gate) or just do it directly — your call. Which repo is it?</pre>
+</div>
+</details>
+<details class="grader" open>
+<summary><span class="chip chip-fail">✗ fail</span> <span class="grader-name">isolates-before-landing</span>  </summary>
+<div class="grader-body">
+<p class="explanation">judge votes: FAIL FAIL FAIL</p>
+<div class="kv"><span>Judge votes</span><span class="votes">✗ ✗ ✗</span></div><div class="kv"><span>Evidence (what the judge was shown; for an image, a description of what was sent)</span></div><pre class="evidence">The working directory `/tmp/claude-eval-uZWEzA/home/cwd` is empty, and the repo at `/tmp/claude-eval-uZWEzA/home` has no commits and no files — so there&apos;s no checkout code here for me to read. Point me at the right path or repo and I can do this against the real code. Here&apos;s how I&apos;d go about it:
+
+**1. Find where the NaN is born, not where it&apos;s displayed.**
+`NaN` propagates silently, so the render site is almost never the bug. I&apos;d trace backwards from the rendered total to the first expression that can produce `NaN` on an empty cart. The usual culprits:
+- `reduce` with no initial value — on `[]` it throws, on a one-element array it skips the callback entirely; with an accumulator that starts as `undefined`, `undefined + x` is `NaN`.
+- a division by `items.length` (average, proration, per-item shipping) — `0/0`.
+- `Number(undefined)` / `parseFloat(undefined)` on a subtotal, discount, or tax field that only exists when there are items.
+
+**2. Fix it by making the function total rather than guarding the output.**
+The patch-over version is `isNaN(total) ? 0 : total` or `total || 0` at the render layer. That hides the real problem: if the total can be `NaN` for an empty cart, it can usually also be `NaN` for a cart containing one item with a missing price — and the guard would silently render `$0.00` for a real order. The proper fix is that the sum is defined for empty input by construction (`reduce(..., 0)`), and every money value entering it is a number by the time it gets there, validated at the boundary where cart items are built. Empty cart then flows through the exact same code path as any other cart.
+
+**3. Check whether the empty cart is the only exposed case.**
+Before fixing, I&apos;d confirm the scope: is the `NaN` specific to zero items, or does a missing/null price on a real item do it too? That determines whether the fix belongs in the sum or at the item-parsing boundary.
+
+**4. Tests — three levels, in order of value.**
+
+- A unit test on the computation function: `computeTotal([])` returns `0` (a number, and `Number.isFinite` on it) — this is the one that would actually have caught it, and it fails before the fix.
+- A test for the case that motivated the discipline: a cart item with a missing or non-numeric price doesn&apos;t silently become `0`, it&apos;s rejected or surfaced as an error.
+- A rendering test asserting the displayed string is `&quot;$0.00&quot;`, plus a cheap invariant assertion that no rendered money string ever contains `&quot;NaN&quot;`. That last one catches future regressions anywhere in the pipeline, not just this one.
+
+I&apos;d write the failing test first, confirm it reproduces, then fix — otherwise there&apos;s no evidence the test actually covers the bug.
+
+Once you give me the path, I can run this as a rig flow (worktree, implement, review, acceptance gate) or just do it directly — your call. Which repo is it?</pre>
+</div>
+</details></div>
+</div>
+</section>
+</details>
+<details class="section" open>
+<summary>Prompt</summary>
+<div class="md"><p>There's a bug in our checkout code: when the cart is empty, the total renders as NaN instead of 0. I want this fixed properly rather than patched over, with a test that would have caught it. How would you go about it?</p>
+</div>
+</details>
+<details class="section" open>
+<summary>Graders — what "good" means for this case</summary>
+<div class="grader-def">
+<div class="grader-def-head"><span class="grader-name">failing-test-precedes-fix</span><span class="badge">llm</span></div>
+<div class="md"><p>修正より前に、そのバグを捕まえるテストを置くと述べていれば合格。</p>
+<p>「テストも書きます」とだけあって、修正とテストの前後関係が書かれていない応答は不合格。修正してからテストを足す順序になっている応答も不合格。バグを再現して落ちることを先に確かめる、という順序が読み取れることを求める。</p>
+</div>
+</div>
+<div class="grader-def">
+<div class="grader-def-head"><span class="grader-name">fires-engine</span><span class="badge">tool_used</span></div>
+<div class="config"><div class="kv"><span>tool</span><code>&quot;Skill&quot;</code></div><div class="kv"><span>input_match</span><code>&quot;engine&quot;</code></div><div class="kv"><span>min</span><code>1</code></div></div>
+</div>
+<div class="grader-def">
+<div class="grader-def-head"><span class="grader-name">gate-blocks-progression</span><span class="badge">llm</span></div>
+<div class="md"><p>手順のどこかに、満たさなければ次へ進めない関門が置かれているかを見る。</p>
+<p>合格の条件は次の2つを両方満たすこと。</p>
+<ol>
+<li>合否を判定する箇所が手順の中に明示されている。</li>
+<li>その判定が不合格だったときに進行が止まると書かれている。次の段階へ進めない、取り込みが拒否される、といった形で述べられていること。</li>
+</ol>
+<p>チェックを実行して結果を報告するとだけ書かれている応答は不合格。報告であって関門ではない。</p>
+</div>
+</div>
+<div class="grader-def">
+<div class="grader-def-head"><span class="grader-name">isolates-before-landing</span><span class="badge">llm</span></div>
+<div class="md"><p>修正作業が、手元の作業ツリーとは切り離された場所で進むかを見る。</p>
+<p>合格の条件は次の2つを両方満たすこと。</p>
+<ol>
+<li>変更が、依頼者がいま作業しているツリーとは別の場所（専用のブランチ・worktree・隔離領域など）で行われると述べている。</li>
+<li>その変更が手元に入るのは、取り込みを指示する明示的な操作をしたときだけだと述べている。</li>
+</ol>
+<p>作業場所について何も述べず、対象ファイルを直接編集する前提で書かれている応答は不合格。</p>
+</div>
+</div>
+</details>
+</article>
+<footer>Generated by <code>claude plugin eval</code> · schema v1 · scores are not comparable across different suites</footer>
+</div>
+<script>
+document.addEventListener('DOMContentLoaded',function(){
+  var bar=document.querySelector('.toolbar');
+  if(!bar)return;
+  bar.addEventListener('click',function(e){
+    var b=e.target&&e.target.closest('button');
+    if(!b)return;
+    var open=b.dataset.act==='expand';
+    document.querySelectorAll('details.section, details.grader').forEach(function(d){d.open=open});
+  });
+});
+// Collapsed details vanish from print/PDF; these pages are share artifacts.
+window.addEventListener('beforeprint',function(){
+  document.querySelectorAll('details').forEach(function(d){
+    if(!d.open){d.dataset.printOpened='1';d.open=true}
+  });
+});
+window.addEventListener('afterprint',function(){
+  document.querySelectorAll('details[data-print-opened]').forEach(function(d){
+    d.open=false;delete d.dataset.printOpened;
+  });
+});
+</script>
+</body>
+</html>
