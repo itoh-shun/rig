@@ -434,7 +434,9 @@ def test_every_process_entry_under_scripts_hardens_its_streams() -> None:
         "the package's own __main__ blocks are the recorded gap — a module that now calls "
         "harden_streams() should be named in rig_workbench/console.py instead of appearing "
         f"here: {hardened(package_entries)}")
-    assert len(script_entries) == 14, script_entries
+    # 15 since #624 added scripts/release_notes.py — the notes release.yml publishes
+    # moved out of a YAML `run:` block so a test could reach them.
+    assert len(script_entries) == 15, script_entries
     assert len(package_entries) == 17, package_entries
 
 
