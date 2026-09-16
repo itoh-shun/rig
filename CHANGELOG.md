@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+**The talk hook routes work and answers questions.** The SessionStart hook told every
+interactive session to "route every user turn through the rig:talk flow", and the model did
+exactly that — including on turns that asked only for an explanation and said outright that
+no code should change. Measured with `claude plugin eval` against the same prompts with no
+plugin installed, rig scored 0.50 to the bare model's 1.00 on both such prompts, and the kept
+traces show `Skill(rig:go)` called with `args: "talk: <the user's question>"`. The hook now
+routes turns that ask for work on the codebase, including deciding how that work will be
+carried out, and answers directly when a turn names nothing to change. A turn that names work
+stays work when it ends in a question ("there is a bug in X, I want it fixed properly, how
+would you go about it?"), and an empty or unfamiliar working directory is a reason to ask
+where the code lives from inside the flow rather than to stay out of it. Over eight prompts,
+work-shaped turns route 6 of 6 and explanation-only turns route 0 of 2, against 5 of 5 and
+2 of 2 before. Both counts come from `tool_used` graders, which no judge model scores.
+`hooks/preserve-rig-state.sh` now describes the directive with its carve-out, so the first
+compaction of a long session does not restate the old rule.
+
 ## [3.0.1] - 2026-09-14
 
 ### Fixed
