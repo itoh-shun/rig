@@ -33,6 +33,8 @@ import sys
 import traceback
 from typing import Callable, TypeVar
 
+from . import console
+
 #: rig ran and the answer is yes — gate passed, scan clean, nothing to report.
 OK = 0
 
@@ -66,6 +68,15 @@ def run_guarded(fn: Callable[[], T], *args, **kwargs):
     same functions and expect a return. Raising on success would make the guard the
     one thing that cannot be called normally.
     """
+    # Every installed console script reaches its `main` through here — a fact
+    # `tests/test_exit_code_contract.py::test_every_installed_entry_point_is_guarded`
+    # keeps true — which makes this the one place a process entry can be given something
+    # once. rig's words are not ASCII, and a console whose encoder cannot carry them
+    # makes `print` raise instead of print; hardening the streams here means every
+    # output site in the process degrades visibly rather than dying, `Presenter` calls
+    # and bare `print`s alike, including argparse's `--help`. It changes no byte on a
+    # console that can encode what rig prints: see `console.harden`.
+    console.harden_streams()
     try:
         return fn(*args, **kwargs)
     except SystemExit:

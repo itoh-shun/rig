@@ -373,4 +373,14 @@ def main():
 
 
 if __name__ == "__main__":
+    # Every process entry under `scripts/` hardens its output streams here — see
+    # `rig_workbench/console.py`, and `scripts/workbench.py` for the reasoning in full.
+    # The package import lives on the entry path rather than at module level: this file
+    # is a standalone program, and importing it as a module must not acquire rig.
+    import pathlib  # noqa: E402
+    import sys  # noqa: E402
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+    from rig_workbench.console import harden_streams  # noqa: E402
+
+    harden_streams()
     main()

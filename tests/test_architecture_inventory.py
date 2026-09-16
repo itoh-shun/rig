@@ -511,8 +511,16 @@ BASELINE_EFFECT_SITES: dict[str, dict[str, int]] = {
     # property that makes the sum exact rather than approximate.
     #
     # Measured, not derived — run the walk before editing either literal again.
+    # 348 -> 345: `state.py`'s three last-resort speech functions (`die`, `reject`,
+    # `warn`) write through `console.write_line` instead of `print`. Not a pillar moving
+    # behind a port — `workbench` is still unmigrated and the other 345 are untouched —
+    # but the ratchet does not care why a site left, only that the number follows it down
+    # in the same commit. The three moved because a console that cannot encode rig's prose
+    # makes `print` raise instead of print, and `warn` is the sentence that says a
+    # provenance key has already been renamed to `.unusable`; see `rig_workbench/console.py`.
+    # ruff 0.15.8 reads 345 too, with this pillar's `pyproject.toml` ledger line lifted.
     "workbench": {
-        "print": 348,
+        "print": 345,
         "subprocess": 7,
         "open_write": 4,
         "write_text": 7,

@@ -17,9 +17,13 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
+from rig_workbench.console import harden_streams  # noqa: E402
 from rig_workbench.mutation import cmd_mutation  # noqa: E402
 
 if __name__ == "__main__":
+    # Every process entry under `scripts/` hardens its output streams here — see
+    # `rig_workbench/console.py`, and `scripts/workbench.py` for the reasoning in full.
+    harden_streams()
     print("[note] scripts/mutation_adapter.py is deprecated — use `rig-wb mutation`.",
           file=sys.stderr)
     sys.exit(cmd_mutation(sys.argv[1:]))

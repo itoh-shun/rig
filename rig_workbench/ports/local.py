@@ -51,6 +51,16 @@ class ConsolePresenter:
         print(text, file=sys.stderr)
 
 
+#: The error handler a text-mode child is given when the operator named none. It is what
+#: CPython resolves to under `C`, `POSIX` and the C-locale-coercion targets (`C.utf8`), and
+#: it is **not** the universal default: under a generated `en_US.UTF-8` a child reports
+#: `utf-8 strict`. So this preserves the handler in the first case and overrides it in the
+#: second, deliberately — declaring `utf-8` alone would declare `strict` everywhere and take
+#: from a C-locale child the handler that lets it print a filename which is not valid UTF-8.
+#: `SubprocessRunner.run` carries the whole argument, including what the override costs.
+PIPE_ERRORS = "surrogateescape"
+
+
 class SubprocessRunner:
     """`subprocess.run(..., capture_output=True)`, decoded the way the call sites decode.
 
@@ -104,8 +114,49 @@ class SubprocessRunner:
         # bytes arm would undo the arm. `input=None` is what `subprocess.run` sees when a
         # caller omits it, so there is no second call shape for the no-stdin case.
         decoding: dict[str, str] = {"encoding": "utf-8", "errors": errors} if text else {}
+        # **Text mode tells the child what it has already decided about the pipe.** The line
+        # above pins this pipe to UTF-8 in both directions; the child, if it is a Python
+        # program, reads and writes it through `PYTHONIOENCODING`, which it inherits from
+        # whatever console the operator happens to have. Those two can disagree, and when
+        # they do it is rig's own bytes the child chokes on: with `PYTHONIOENCODING=ascii`
+        # set, a provider handed a prompt containing an em dash exits 1 on
+        # `sys.stdin.read()` before it has read a word, and the orchestrator records that
+        # as `generator failed (exit 1)` — a verdict about the work, reached because of the
+        # operator's terminal. One half of a UTF-8 pipe is not a decision anyone made.
+        #
+        # **The codec is pinned; the error handler is carried, never replaced.** Declaring
+        # a bare `utf-8` also declares `strict`, and that reintroduces the same class of
+        # failure through the other door: with nothing set, a child's stdio handler is
+        # `surrogateescape` (measured: `LANG=C` and `en_US.UTF-8` both give
+        # `utf-8 surrogateescape`), which is what lets it print a filename that is not
+        # valid UTF-8 — `os.fsdecode(b'weird-\xff.txt')` — instead of dying on it. So the
+        # handler the child would have had is kept: whatever the operator named in their
+        # own `PYTHONIOENCODING`, and `surrogateescape` when they named nothing. The
+        # child's *stderr* is untouched either way; CPython pins that one to
+        # `backslashreplace` and `PYTHONIOENCODING` does not move it.
+        #
+        # One case does change, and it is named rather than hidden: a child under a
+        # non-C UTF-8 locale whose handler would have resolved to `strict` now gets
+        # `surrogateescape`. That is the same direction as the rest of this — a child that
+        # would have died writing a lone surrogate now writes it and rig reads it through
+        # `errors=` above — and it is the price of not having to run the child's own locale
+        # resolution to find out what it would have picked.
+        #
+        # Bytes mode is deliberately left alone: there rig decodes nothing and claims
+        # nothing, so it has no encoding to declare on the child's behalf either.
+        #
+        # This does not hide a provider that genuinely failed. Nothing about the child's
+        # status, output or timeout changes; the only thing removed is rig telling it to
+        # read rig's own UTF-8 as something else.
+        child_env = env
+        if text:
+            source = os.environ if env is None else env
+            # `encodingname:errorhandler`, either half optionally empty — so the handler is
+            # what follows the first colon, and its absence is the operator naming none.
+            handler = (source.get("PYTHONIOENCODING") or "").partition(":")[2].strip()
+            child_env = dict(source, PYTHONIOENCODING=f"utf-8:{handler or PIPE_ERRORS}")
         return subprocess.run(list(argv), cwd=None if cwd is None else str(cwd),
-                              env=None if env is None else dict(env), timeout=timeout,
+                              env=None if child_env is None else dict(child_env), timeout=timeout,
                               input=input, capture_output=True, **decoding)
 
 

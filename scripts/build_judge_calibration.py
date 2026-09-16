@@ -34,6 +34,7 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from rig_workbench.console import harden_streams  # noqa: E402
 from rig_workbench.workbench.detection_corpus import (  # noqa: E402
     _case_ranges, _finding_claims, calibration_path, load_cases, scoreable_findings)
 from rig_workbench.workbench.findings import parse_findings  # noqa: E402
@@ -379,4 +380,7 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    # Every process entry under `scripts/` hardens its output streams here — see
+    # `rig_workbench/console.py`, and `scripts/workbench.py` for the reasoning in full.
+    harden_streams()
     raise SystemExit(main())
