@@ -1,0 +1,1073 @@
+{
+  "schemaVersion": 1,
+  "claudeVersion": "2.1.273",
+  "startedAt": "2026-09-16T11:41:56.202Z",
+  "durationSeconds": 786,
+  "costUsd": 5.196036749999999,
+  "partial": false,
+  "suite": {
+    "root": "/home/itoshun/works/rig-plugineval",
+    "ablation": "with-without",
+    "judgeModel": "sonnet",
+    "threshold": 1,
+    "concurrency": 1,
+    "plugins": [
+      {
+        "name": "rig",
+        "version": "3.0.1",
+        "path": "/home/itoshun/works/rig-plugineval"
+      }
+    ]
+  },
+  "cases": [
+    {
+      "name": "01-review-to-merge",
+      "dir": "evals-cc/01-review-to-merge",
+      "source": "prose",
+      "promptMarkdown": "これから書いたコードをレビューして、マージまで持っていきたい。レビュー観点の抜けが怖いので、どういう手順で進めることになるかを先に見せてほしい。",
+      "runsPerCase": 3,
+      "timeoutSeconds": 600,
+      "maxTurns": 20,
+      "graders": [
+        {
+          "name": "fires-engine",
+          "type": "tool_used",
+          "weight": 1,
+          "config": {
+            "tool": "Skill",
+            "input_match": "engine",
+            "min": 1
+          }
+        },
+        {
+          "name": "gate-blocks-progression",
+          "type": "llm",
+          "weight": 1,
+          "graderMarkdown": "手順のどこかに、満たさなければ次へ進めない関門が置かれているかを見る。\n\n合格の条件は次の2つを両方満たすこと。\n\n1. 合否を判定する箇所が手順の中に明示されている。\n2. その判定が不合格だったときに**進行が止まる**と書かれている。たとえば「通らなければ取り込みが拒否される」「REJECT が残っている間はマージしない」のように、次の段階へ進めないことが述べられている。\n\nチェックや検証を実行して**結果を報告する**とだけ書かれている応答は不合格。「テストを実行して結果を確認します」「落ちたら落ちたと報告します」は、報告であって関門ではない。実行結果が進行を止めるとは書かれていないため。",
+          "config": {
+            "criteria": "手順のどこかに、満たさなければ次へ進めない関門が置かれているかを見る。\n\n合格の条件は次の2つを両方満たすこと。\n\n1. 合否を判定する箇所が手順の中に明示されている。\n2. その判定が不合格だったときに**進行が止まる**と書かれている。たとえば「通らなければ取り込みが拒否される」「REJECT が残っている間はマージしない」のように、次の段階へ進めないことが述べられている。\n\nチェックや検証を実行して**結果を報告する**とだけ書かれている応答は不合格。「テストを実行して結果を確認します」「落ちたら落ちたと報告します」は、報告であって関門ではない。実行結果が進行を止めるとは書かれていないため。",
+            "focus": "last_message"
+          }
+        },
+        {
+          "name": "names-ordered-steps",
+          "type": "llm",
+          "weight": 1,
+          "graderMarkdown": "レビューからマージまでに実行される作業が、順序付きで並んでいれば合格。番号付きリスト・表・見出しのいずれでもよい。\n\n進め方をまったく示さずにいきなりコードの修正差分やパッチだけを出している応答は不合格。\n\n対象コードの所在を尋ねる質問や、任意の追加項目をどうするか尋ねる質問が含まれていること自体は減点しない。順序付きの手順が示されているかどうかだけを見る。",
+          "config": {
+            "criteria": "レビューからマージまでに実行される作業が、順序付きで並んでいれば合格。番号付きリスト・表・見出しのいずれでもよい。\n\n進め方をまったく示さずにいきなりコードの修正差分やパッチだけを出している応答は不合格。\n\n対象コードの所在を尋ねる質問や、任意の追加項目をどうするか尋ねる質問が含まれていること自体は減点しない。順序付きの手順が示されているかどうかだけを見る。",
+            "focus": "last_message"
+          }
+        },
+        {
+          "name": "review-split-and-reconciled",
+          "type": "llm",
+          "weight": 1,
+          "graderMarkdown": "レビューが1回の通し読みではなく、複数の担当に分けて行われ、その結果が突き合わされるかを見る。\n\n合格の条件は次の2つを両方満たすこと。\n\n1. レビューの観点が複数に分かれており、それぞれの観点が名指しされている。単に確認項目を列挙するのではなく、観点ごとに別々のレビューが走ると読めること。\n2. 分かれて出てきた所見が、取捨または統合される段階が手順の中にある。たとえば誤検知の切り分け、指摘の仕分け、合否判定への集約など。\n\n観点の一覧を挙げるだけで、それらが1回のレビューの確認項目として消費されている応答は不合格。",
+          "config": {
+            "criteria": "レビューが1回の通し読みではなく、複数の担当に分けて行われ、その結果が突き合わされるかを見る。\n\n合格の条件は次の2つを両方満たすこと。\n\n1. レビューの観点が複数に分かれており、それぞれの観点が名指しされている。単に確認項目を列挙するのではなく、観点ごとに別々のレビューが走ると読めること。\n2. 分かれて出てきた所見が、取捨または統合される段階が手順の中にある。たとえば誤検知の切り分け、指摘の仕分け、合否判定への集約など。\n\n観点の一覧を挙げるだけで、それらが1回のレビューの確認項目として消費されている応答は不合格。",
+            "focus": "last_message"
+          }
+        }
+      ],
+      "arms": {
+        "with": [
+          {
+            "score": 1,
+            "passed": true,
+            "turns": 16,
+            "costUsd": 1.0499524999999998,
+            "judgeCostUsd": 0.03294600000000001,
+            "durationSeconds": 119,
+            "startedAt": "2026-09-16T11:41:56.256Z",
+            "error": null,
+            "tracePath": "/tmp/claude-eval-mvlAdW/out/trace.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "fires-engine",
+                "passed": true,
+                "weight": 1,
+                "explanation": "Skill called 1x (expected 1..∞)",
+                "withOnly": true,
+                "scored": false
+              },
+              {
+                "name": "gate-blocks-progression",
+                "passed": true,
+                "weight": 1,
+                "explanation": "judge votes: PASS PASS PASS",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  true,
+                  true,
+                  true
+                ],
+                "evidence": "リグです。手順だけ先に出しますね。書き込みもレビュー実行もまだしません。\n\n```\n→ /rig:dev --recipe release-flow --from verify --review --adversarial --verify-findings --plan\n```\n\n## rig --plan\n\n```\nrecipe: release-flow | autonomy: interactive | backend: manual | review: on | adversarial: on | verify-findings: on\ndiff: 不明 → size: S（既定）\ndescription: 標準リリースフロー。intake→design?→implement→verify→review?→pr→merge の全工程。サイズ感に応じて design / review を自動 ON/OFF。\nflags: --review --adversarial --verify-findings\nslice: --from verify\n```\n\n| # | step | instruction | pattern | gate | personas | policies | output_contract | condition |\n|---|---|---|---|---|---|---|---|---|\n| 1 | verify | verify | serial | acceptance-gate | implementer | risk-based-testing, ci-cost | — | — |\n| 2 | review | parallel-review | parallel-fanout | acceptance-gate | security-reviewer [agent], design-reviewer [agent], test-reviewer [agent], behavioral-correctness-reviewer [agent] | pre-push-review | review-verdict | --review または size L+ [✓ 実行: --review 解決] |\n| 3 | adversarial | adversarial-review | parallel-fanout | acceptance-gate | lazy-senior [agent], cognitive-economist [agent] | — | review-verdict | --adversarial [✓ 実行] |\n| 4 | pr | pr | serial | — | orchestrator | pr-hygiene, branch-strategy | — | — |\n| 5 | merge | merge | serial | — | orchestrator | branch-strategy, ci-cost | — | — |\n\n### Gate: ゲート条件\n\n**step: verify**（acceptance-gate · max_retries: 2 [既定]）\n- [ ] build が成功\n- [ ] lint 0 件\n- [ ] 関連テスト green\n\n**step: review**（acceptance-gate · max_retries: 2 [既定]）\n- [ ] 4-way review に REJECT が無い\n- [ ] APPROVE_WITH_CONDITIONS のマージ前必須条件をすべて反映済み\n- [ ] （--verify-findings）REJECT の根拠を finding-verifier [agent] が反証 → REFUTED はゲートに通さない\n\n**step: adversarial**（acceptance-gate · max_retries: 2 [既定]）\n- [ ] AI-slop（自明コメント / 過剰防御 / 汎用命名 / 過抽象 / dead code）の指摘が無い\n- [ ] 人間可読性に REJECT が無い\n\n[既定] = 汎用既定値（2）\n\n### Knowledge: 注入予定ソース\n（knowledge なし — 汎用動作。manifest `.claude/rig.md` 未設置）\n\n### Reviewer Fan-out: レビュアー集合\n\n**step: review**（pattern: parallel-fanout）\n- security-reviewer [agent] / design-reviewer [agent] / test-reviewer [agent] / behavioral-correctness-reviewer [agent]\n\n**step: adversarial**（pattern: parallel-fanout）\n- lazy-senior [agent] / cognitive-economist [agent]\n\n```\nsteps: 5（うち condition 付き=2 / gate=3 / acceptance retries 上限: 6）| RUN はしない\n```\n\n**観点の抜けについて**：既定の 4-way に敵対レビュー 2枚を足して 6観点、さらに `--verify-findings` で REJECT の根拠を別エージェントに反証させて誤検知を落とします。差分の中身次第で `--persona api-compat-reviewer` / `docs-reviewer` / `observability-reviewer` / `performance-reviewer` / `migration-reviewer` を足せます。どれが要るかは差分を見てから決めたいです。\n\n**確認したいこと**：この作業ディレクトリ（`/tmp/claude-eval-mvlAdW/home/cwd`）にファイルが1つも見つかりません。レビュー対象はどこですか — 別リポジトリの作業ツリー、ブランチ、それとも既に開いている PR 番号でしょうか。それが決まれば `diff:` と size を実測して、この plan を確定版に直します。"
+              },
+              {
+                "name": "names-ordered-steps",
+                "passed": true,
+                "weight": 1,
+                "explanation": "judge votes: PASS PASS PASS",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  true,
+                  true,
+                  true
+                ],
+                "evidence": "リグです。手順だけ先に出しますね。書き込みもレビュー実行もまだしません。\n\n```\n→ /rig:dev --recipe release-flow --from verify --review --adversarial --verify-findings --plan\n```\n\n## rig --plan\n\n```\nrecipe: release-flow | autonomy: interactive | backend: manual | review: on | adversarial: on | verify-findings: on\ndiff: 不明 → size: S（既定）\ndescription: 標準リリースフロー。intake→design?→implement→verify→review?→pr→merge の全工程。サイズ感に応じて design / review を自動 ON/OFF。\nflags: --review --adversarial --verify-findings\nslice: --from verify\n```\n\n| # | step | instruction | pattern | gate | personas | policies | output_contract | condition |\n|---|---|---|---|---|---|---|---|---|\n| 1 | verify | verify | serial | acceptance-gate | implementer | risk-based-testing, ci-cost | — | — |\n| 2 | review | parallel-review | parallel-fanout | acceptance-gate | security-reviewer [agent], design-reviewer [agent], test-reviewer [agent], behavioral-correctness-reviewer [agent] | pre-push-review | review-verdict | --review または size L+ [✓ 実行: --review 解決] |\n| 3 | adversarial | adversarial-review | parallel-fanout | acceptance-gate | lazy-senior [agent], cognitive-economist [agent] | — | review-verdict | --adversarial [✓ 実行] |\n| 4 | pr | pr | serial | — | orchestrator | pr-hygiene, branch-strategy | — | — |\n| 5 | merge | merge | serial | — | orchestrator | branch-strategy, ci-cost | — | — |\n\n### Gate: ゲート条件\n\n**step: verify**（acceptance-gate · max_retries: 2 [既定]）\n- [ ] build が成功\n- [ ] lint 0 件\n- [ ] 関連テスト green\n\n**step: review**（acceptance-gate · max_retries: 2 [既定]）\n- [ ] 4-way review に REJECT が無い\n- [ ] APPROVE_WITH_CONDITIONS のマージ前必須条件をすべて反映済み\n- [ ] （--verify-findings）REJECT の根拠を finding-verifier [agent] が反証 → REFUTED はゲートに通さない\n\n**step: adversarial**（acceptance-gate · max_retries: 2 [既定]）\n- [ ] AI-slop（自明コメント / 過剰防御 / 汎用命名 / 過抽象 / dead code）の指摘が無い\n- [ ] 人間可読性に REJECT が無い\n\n[既定] = 汎用既定値（2）\n\n### Knowledge: 注入予定ソース\n（knowledge なし — 汎用動作。manifest `.claude/rig.md` 未設置）\n\n### Reviewer Fan-out: レビュアー集合\n\n**step: review**（pattern: parallel-fanout）\n- security-reviewer [agent] / design-reviewer [agent] / test-reviewer [agent] / behavioral-correctness-reviewer [agent]\n\n**step: adversarial**（pattern: parallel-fanout）\n- lazy-senior [agent] / cognitive-economist [agent]\n\n```\nsteps: 5（うち condition 付き=2 / gate=3 / acceptance retries 上限: 6）| RUN はしない\n```\n\n**観点の抜けについて**：既定の 4-way に敵対レビュー 2枚を足して 6観点、さらに `--verify-findings` で REJECT の根拠を別エージェントに反証させて誤検知を落とします。差分の中身次第で `--persona api-compat-reviewer` / `docs-reviewer` / `observability-reviewer` / `performance-reviewer` / `migration-reviewer` を足せます。どれが要るかは差分を見てから決めたいです。\n\n**確認したいこと**：この作業ディレクトリ（`/tmp/claude-eval-mvlAdW/home/cwd`）にファイルが1つも見つかりません。レビュー対象はどこですか — 別リポジトリの作業ツリー、ブランチ、それとも既に開いている PR 番号でしょうか。それが決まれば `diff:` と size を実測して、この plan を確定版に直します。"
+              },
+              {
+                "name": "review-split-and-reconciled",
+                "passed": true,
+                "weight": 1,
+                "explanation": "judge votes: PASS PASS PASS",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  true,
+                  true,
+                  true
+                ],
+                "evidence": "リグです。手順だけ先に出しますね。書き込みもレビュー実行もまだしません。\n\n```\n→ /rig:dev --recipe release-flow --from verify --review --adversarial --verify-findings --plan\n```\n\n## rig --plan\n\n```\nrecipe: release-flow | autonomy: interactive | backend: manual | review: on | adversarial: on | verify-findings: on\ndiff: 不明 → size: S（既定）\ndescription: 標準リリースフロー。intake→design?→implement→verify→review?→pr→merge の全工程。サイズ感に応じて design / review を自動 ON/OFF。\nflags: --review --adversarial --verify-findings\nslice: --from verify\n```\n\n| # | step | instruction | pattern | gate | personas | policies | output_contract | condition |\n|---|---|---|---|---|---|---|---|---|\n| 1 | verify | verify | serial | acceptance-gate | implementer | risk-based-testing, ci-cost | — | — |\n| 2 | review | parallel-review | parallel-fanout | acceptance-gate | security-reviewer [agent], design-reviewer [agent], test-reviewer [agent], behavioral-correctness-reviewer [agent] | pre-push-review | review-verdict | --review または size L+ [✓ 実行: --review 解決] |\n| 3 | adversarial | adversarial-review | parallel-fanout | acceptance-gate | lazy-senior [agent], cognitive-economist [agent] | — | review-verdict | --adversarial [✓ 実行] |\n| 4 | pr | pr | serial | — | orchestrator | pr-hygiene, branch-strategy | — | — |\n| 5 | merge | merge | serial | — | orchestrator | branch-strategy, ci-cost | — | — |\n\n### Gate: ゲート条件\n\n**step: verify**（acceptance-gate · max_retries: 2 [既定]）\n- [ ] build が成功\n- [ ] lint 0 件\n- [ ] 関連テスト green\n\n**step: review**（acceptance-gate · max_retries: 2 [既定]）\n- [ ] 4-way review に REJECT が無い\n- [ ] APPROVE_WITH_CONDITIONS のマージ前必須条件をすべて反映済み\n- [ ] （--verify-findings）REJECT の根拠を finding-verifier [agent] が反証 → REFUTED はゲートに通さない\n\n**step: adversarial**（acceptance-gate · max_retries: 2 [既定]）\n- [ ] AI-slop（自明コメント / 過剰防御 / 汎用命名 / 過抽象 / dead code）の指摘が無い\n- [ ] 人間可読性に REJECT が無い\n\n[既定] = 汎用既定値（2）\n\n### Knowledge: 注入予定ソース\n（knowledge なし — 汎用動作。manifest `.claude/rig.md` 未設置）\n\n### Reviewer Fan-out: レビュアー集合\n\n**step: review**（pattern: parallel-fanout）\n- security-reviewer [agent] / design-reviewer [agent] / test-reviewer [agent] / behavioral-correctness-reviewer [agent]\n\n**step: adversarial**（pattern: parallel-fanout）\n- lazy-senior [agent] / cognitive-economist [agent]\n\n```\nsteps: 5（うち condition 付き=2 / gate=3 / acceptance retries 上限: 6）| RUN はしない\n```\n\n**観点の抜けについて**：既定の 4-way に敵対レビュー 2枚を足して 6観点、さらに `--verify-findings` で REJECT の根拠を別エージェントに反証させて誤検知を落とします。差分の中身次第で `--persona api-compat-reviewer` / `docs-reviewer` / `observability-reviewer` / `performance-reviewer` / `migration-reviewer` を足せます。どれが要るかは差分を見てから決めたいです。\n\n**確認したいこと**：この作業ディレクトリ（`/tmp/claude-eval-mvlAdW/home/cwd`）にファイルが1つも見つかりません。レビュー対象はどこですか — 別リポジトリの作業ツリー、ブランチ、それとも既に開いている PR 番号でしょうか。それが決まれば `diff:` と size を実測して、この plan を確定版に直します。"
+              }
+            ]
+          }
+        ],
+        "without": [
+          {
+            "score": 0.3333333333333333,
+            "passed": false,
+            "turns": 3,
+            "costUsd": 0.148942,
+            "judgeCostUsd": 0.025518,
+            "durationSeconds": 52,
+            "startedAt": "2026-09-16T11:43:55.495Z",
+            "error": null,
+            "tracePath": "/tmp/claude-eval-26strv/out/trace.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "gate-blocks-progression",
+                "passed": false,
+                "weight": 1,
+                "explanation": "judge votes: FAIL FAIL FAIL",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  false,
+                  false,
+                  false
+                ],
+                "evidence": "作業ディレクトリ (`/tmp/claude-eval-26strv/home/cwd`) を見たところファイルが 1 つもなく、コミット履歴も空でした。レビュー対象のコードがまだここには無い状態です。場所を教えてもらう前提で、進め方の全体像を先に出します。\n\n## 進め方（案）\n\n**1. レビュー対象の確定**\n- 未コミットの作業ツリーか / `main` との差分ブランチか / 既存 PR 番号か、のどれかを決める\n- ここを決めないと「何が新しく書いたコードか」が曖昧になり、レビューの抜けの最大要因になります\n\n**2. 足元の確認（レビュー前）**\n- ビルド・テスト・lint が通る状態か\n- 壊れたまま人力レビューに入ると指摘が表面的な話に流れるので、先に緑にしておきます\n\n**3. `/code-review` を実行**\n- 正確性バグ（ロジック、境界条件、エラー処理、並行性）と、再利用・簡素化・効率の観点をカバー\n- effort は最初 `high` を推奨。差分が小さければ `medium` で十分\n- `--fix` で自動適用もできますが、初回は指摘を読んでから判断する方をおすすめします\n\n**4. `/security-review` を実行**\n- 入力検証、認証・認可、機密情報の混入、インジェクション系\n- `/code-review` とは観点が別なので、両方かけるのが「抜けが怖い」への回答になります\n\n**5. 自動レビューが弱い領域を手動で潰す**\n- ここが一番抜けやすいところなので、チェックリストとして明示します:\n  - 仕様・チケットの受け入れ条件と実装が一致しているか\n  - 後方互換性（API・DB スキーマ・設定ファイル）\n  - マイグレーションとロールバック手順\n  - テストが「書かれている」だけでなく、失敗すべきケースで実際に落ちるか\n  - ログ・メトリクスなど運用時に必要な観測性\n  - パフォーマンス上の懸念は実測が必要か、レビューで足りるか\n\n**6. 指摘の仕分け**\n- 「直す / 別 Issue に切る / 対応不要」を一緒に判断します。全部直すのが正解とは限らないので、ここは相談させてください\n\n**7. 修正 → 再テスト**\n- 修正を当てて、2 で通した確認をもう一度\n\n**8. コミット整理 → PR → マージ**\n- コミットを読める単位にまとめ、PR 説明（背景・変更点・検証方法）を用意\n- CI 緑を確認してからマージ\n- PR 作成・マージは外向きの操作なので、実行前に必ず内容を見せて確認を取ります\n\n## 確認したいこと\n\n1. コードはどこにありますか（別のディレクトリ / 別ブランチ / 既存 PR）\n2. 変更の規模感（ファイル数、ざっくりの行数）と、何をする変更か\n3. マージ先は `main` で合っていますか\n\n1 が分かればすぐ 1〜4 に着手できます。"
+              },
+              {
+                "name": "names-ordered-steps",
+                "passed": true,
+                "weight": 1,
+                "explanation": "judge votes: PASS PASS PASS",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  true,
+                  true,
+                  true
+                ],
+                "evidence": "作業ディレクトリ (`/tmp/claude-eval-26strv/home/cwd`) を見たところファイルが 1 つもなく、コミット履歴も空でした。レビュー対象のコードがまだここには無い状態です。場所を教えてもらう前提で、進め方の全体像を先に出します。\n\n## 進め方（案）\n\n**1. レビュー対象の確定**\n- 未コミットの作業ツリーか / `main` との差分ブランチか / 既存 PR 番号か、のどれかを決める\n- ここを決めないと「何が新しく書いたコードか」が曖昧になり、レビューの抜けの最大要因になります\n\n**2. 足元の確認（レビュー前）**\n- ビルド・テスト・lint が通る状態か\n- 壊れたまま人力レビューに入ると指摘が表面的な話に流れるので、先に緑にしておきます\n\n**3. `/code-review` を実行**\n- 正確性バグ（ロジック、境界条件、エラー処理、並行性）と、再利用・簡素化・効率の観点をカバー\n- effort は最初 `high` を推奨。差分が小さければ `medium` で十分\n- `--fix` で自動適用もできますが、初回は指摘を読んでから判断する方をおすすめします\n\n**4. `/security-review` を実行**\n- 入力検証、認証・認可、機密情報の混入、インジェクション系\n- `/code-review` とは観点が別なので、両方かけるのが「抜けが怖い」への回答になります\n\n**5. 自動レビューが弱い領域を手動で潰す**\n- ここが一番抜けやすいところなので、チェックリストとして明示します:\n  - 仕様・チケットの受け入れ条件と実装が一致しているか\n  - 後方互換性（API・DB スキーマ・設定ファイル）\n  - マイグレーションとロールバック手順\n  - テストが「書かれている」だけでなく、失敗すべきケースで実際に落ちるか\n  - ログ・メトリクスなど運用時に必要な観測性\n  - パフォーマンス上の懸念は実測が必要か、レビューで足りるか\n\n**6. 指摘の仕分け**\n- 「直す / 別 Issue に切る / 対応不要」を一緒に判断します。全部直すのが正解とは限らないので、ここは相談させてください\n\n**7. 修正 → 再テスト**\n- 修正を当てて、2 で通した確認をもう一度\n\n**8. コミット整理 → PR → マージ**\n- コミットを読める単位にまとめ、PR 説明（背景・変更点・検証方法）を用意\n- CI 緑を確認してからマージ\n- PR 作成・マージは外向きの操作なので、実行前に必ず内容を見せて確認を取ります\n\n## 確認したいこと\n\n1. コードはどこにありますか（別のディレクトリ / 別ブランチ / 既存 PR）\n2. 変更の規模感（ファイル数、ざっくりの行数）と、何をする変更か\n3. マージ先は `main` で合っていますか\n\n1 が分かればすぐ 1〜4 に着手できます。"
+              },
+              {
+                "name": "review-split-and-reconciled",
+                "passed": false,
+                "weight": 1,
+                "explanation": "judge votes: FAIL FAIL FAIL",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  false,
+                  false,
+                  false
+                ],
+                "evidence": "作業ディレクトリ (`/tmp/claude-eval-26strv/home/cwd`) を見たところファイルが 1 つもなく、コミット履歴も空でした。レビュー対象のコードがまだここには無い状態です。場所を教えてもらう前提で、進め方の全体像を先に出します。\n\n## 進め方（案）\n\n**1. レビュー対象の確定**\n- 未コミットの作業ツリーか / `main` との差分ブランチか / 既存 PR 番号か、のどれかを決める\n- ここを決めないと「何が新しく書いたコードか」が曖昧になり、レビューの抜けの最大要因になります\n\n**2. 足元の確認（レビュー前）**\n- ビルド・テスト・lint が通る状態か\n- 壊れたまま人力レビューに入ると指摘が表面的な話に流れるので、先に緑にしておきます\n\n**3. `/code-review` を実行**\n- 正確性バグ（ロジック、境界条件、エラー処理、並行性）と、再利用・簡素化・効率の観点をカバー\n- effort は最初 `high` を推奨。差分が小さければ `medium` で十分\n- `--fix` で自動適用もできますが、初回は指摘を読んでから判断する方をおすすめします\n\n**4. `/security-review` を実行**\n- 入力検証、認証・認可、機密情報の混入、インジェクション系\n- `/code-review` とは観点が別なので、両方かけるのが「抜けが怖い」への回答になります\n\n**5. 自動レビューが弱い領域を手動で潰す**\n- ここが一番抜けやすいところなので、チェックリストとして明示します:\n  - 仕様・チケットの受け入れ条件と実装が一致しているか\n  - 後方互換性（API・DB スキーマ・設定ファイル）\n  - マイグレーションとロールバック手順\n  - テストが「書かれている」だけでなく、失敗すべきケースで実際に落ちるか\n  - ログ・メトリクスなど運用時に必要な観測性\n  - パフォーマンス上の懸念は実測が必要か、レビューで足りるか\n\n**6. 指摘の仕分け**\n- 「直す / 別 Issue に切る / 対応不要」を一緒に判断します。全部直すのが正解とは限らないので、ここは相談させてください\n\n**7. 修正 → 再テスト**\n- 修正を当てて、2 で通した確認をもう一度\n\n**8. コミット整理 → PR → マージ**\n- コミットを読める単位にまとめ、PR 説明（背景・変更点・検証方法）を用意\n- CI 緑を確認してからマージ\n- PR 作成・マージは外向きの操作なので、実行前に必ず内容を見せて確認を取ります\n\n## 確認したいこと\n\n1. コードはどこにありますか（別のディレクトリ / 別ブランチ / 既存 PR）\n2. 変更の規模感（ファイル数、ざっくりの行数）と、何をする変更か\n3. マージ先は `main` で合っていますか\n\n1 が分かればすぐ 1〜4 に着手できます。"
+              }
+            ]
+          }
+        ]
+      },
+      "aggregates": {
+        "score": 1,
+        "passRate": 1,
+        "scoreWithout": 0.3333333333333333,
+        "passRateWithout": 0,
+        "delta": 0.6666666666666667
+      }
+    },
+    {
+      "name": "02-fix-nan-total",
+      "dir": "evals-cc/02-fix-nan-total",
+      "source": "prose",
+      "promptMarkdown": "There's a bug in our checkout code: when the cart is empty, the total renders as NaN instead of 0. I want this fixed properly rather than patched over, with a test that would have caught it. How would you go about it?",
+      "runsPerCase": 3,
+      "timeoutSeconds": 600,
+      "maxTurns": 20,
+      "graders": [
+        {
+          "name": "failing-test-precedes-fix",
+          "type": "llm",
+          "weight": 1,
+          "graderMarkdown": "修正より前に、そのバグを捕まえるテストを置くと述べていれば合格。\n\n「テストも書きます」とだけあって、修正とテストの前後関係が書かれていない応答は不合格。修正してからテストを足す順序になっている応答も不合格。バグを再現して落ちることを先に確かめる、という順序が読み取れることを求める。",
+          "config": {
+            "criteria": "修正より前に、そのバグを捕まえるテストを置くと述べていれば合格。\n\n「テストも書きます」とだけあって、修正とテストの前後関係が書かれていない応答は不合格。修正してからテストを足す順序になっている応答も不合格。バグを再現して落ちることを先に確かめる、という順序が読み取れることを求める。",
+            "focus": "last_message"
+          }
+        },
+        {
+          "name": "fires-engine",
+          "type": "tool_used",
+          "weight": 1,
+          "config": {
+            "tool": "Skill",
+            "input_match": "engine",
+            "min": 1
+          }
+        },
+        {
+          "name": "gate-blocks-progression",
+          "type": "llm",
+          "weight": 1,
+          "graderMarkdown": "手順のどこかに、満たさなければ次へ進めない関門が置かれているかを見る。\n\n合格の条件は次の2つを両方満たすこと。\n\n1. 合否を判定する箇所が手順の中に明示されている。\n2. その判定が不合格だったときに進行が止まると書かれている。次の段階へ進めない、取り込みが拒否される、といった形で述べられていること。\n\nチェックを実行して結果を報告するとだけ書かれている応答は不合格。報告であって関門ではない。",
+          "config": {
+            "criteria": "手順のどこかに、満たさなければ次へ進めない関門が置かれているかを見る。\n\n合格の条件は次の2つを両方満たすこと。\n\n1. 合否を判定する箇所が手順の中に明示されている。\n2. その判定が不合格だったときに進行が止まると書かれている。次の段階へ進めない、取り込みが拒否される、といった形で述べられていること。\n\nチェックを実行して結果を報告するとだけ書かれている応答は不合格。報告であって関門ではない。",
+            "focus": "last_message"
+          }
+        },
+        {
+          "name": "isolates-before-landing",
+          "type": "llm",
+          "weight": 1,
+          "graderMarkdown": "修正作業が、手元の作業ツリーとは切り離された場所で進むかを見る。\n\n合格の条件は次の2つを両方満たすこと。\n\n1. 変更が、依頼者がいま作業しているツリーとは別の場所（専用のブランチ・worktree・隔離領域など）で行われると述べている。\n2. その変更が手元に入るのは、取り込みを指示する明示的な操作をしたときだけだと述べている。\n\n作業場所について何も述べず、対象ファイルを直接編集する前提で書かれている応答は不合格。",
+          "config": {
+            "criteria": "修正作業が、手元の作業ツリーとは切り離された場所で進むかを見る。\n\n合格の条件は次の2つを両方満たすこと。\n\n1. 変更が、依頼者がいま作業しているツリーとは別の場所（専用のブランチ・worktree・隔離領域など）で行われると述べている。\n2. その変更が手元に入るのは、取り込みを指示する明示的な操作をしたときだけだと述べている。\n\n作業場所について何も述べず、対象ファイルを直接編集する前提で書かれている応答は不合格。",
+            "focus": "last_message"
+          }
+        }
+      ],
+      "arms": {
+        "with": [
+          {
+            "score": 0.3333333333333333,
+            "passed": false,
+            "turns": 8,
+            "costUsd": 0.5325759999999999,
+            "judgeCostUsd": 0.01690199999999998,
+            "durationSeconds": 47,
+            "startedAt": "2026-09-16T11:44:47.887Z",
+            "error": null,
+            "tracePath": "/tmp/claude-eval-oxo7gE/out/trace.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "failing-test-precedes-fix",
+                "passed": true,
+                "weight": 1,
+                "explanation": "judge votes: PASS PASS PASS",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  true,
+                  true,
+                  true
+                ],
+                "evidence": "The working directory here (`/tmp/claude-eval-oxo7gE/home/cwd`) is empty — no checkout or cart code in it, so I can't point at your actual bug yet. Where does the code live?\n\nHere's how I'd approach it once I can see it:\n\n**1. Reproduce before fixing.** Write the failing test first, at the level where the number goes wrong — the total calculation, not the rendered string. `calculateTotal([])` → expect `0`. That test is the one that \"would have caught it,\" and it should fail before any fix.\n\n**2. Find where NaN is born, not where it surfaces.** NaN in a cart total is almost always one of:\n- `reduce` with no initial value on an empty array (returns `undefined` on empty, or the sole element on length-1)\n- arithmetic on an `undefined` field — `subtotal * taxRate` where `subtotal` was never set\n- `parseFloat(\"\")` / `Number(null)` on a missing price\n\nEach has a different fix, and the first two behave differently on a one-item cart too, so it's worth knowing which.\n\n**3. Fix at the source, not the render.** The tempting patch is `total || 0` in the component. I'd push back on that: it makes empty carts render `0` *and* makes a genuinely broken non-empty cart silently render `0` instead of loudly rendering NaN. You'd trade a visible bug for an invisible one. The fix belongs in the total function — make it correct for the empty case by construction (seed the reduce, default the field), so it's total over its input domain.\n\n**4. Test the boundary, not just the one case.** Empty cart → 0. One item. Item with a missing/zero price. And an assertion that the rendered total is a formatted currency string, so a future NaN can't slip through the display layer.\n\nIf you tell me where the repo is, I'll run this through rig properly — isolated worktree, TDD (test red first), then the review fan-out and gate before anything lands in your tree. Want me to do that?"
+              },
+              {
+                "name": "fires-engine",
+                "passed": true,
+                "weight": 1,
+                "explanation": "Skill called 1x (expected 1..∞)",
+                "withOnly": true,
+                "scored": false
+              },
+              {
+                "name": "gate-blocks-progression",
+                "passed": false,
+                "weight": 1,
+                "explanation": "judge votes: FAIL FAIL FAIL",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  false,
+                  false,
+                  false
+                ],
+                "evidence": "The working directory here (`/tmp/claude-eval-oxo7gE/home/cwd`) is empty — no checkout or cart code in it, so I can't point at your actual bug yet. Where does the code live?\n\nHere's how I'd approach it once I can see it:\n\n**1. Reproduce before fixing.** Write the failing test first, at the level where the number goes wrong — the total calculation, not the rendered string. `calculateTotal([])` → expect `0`. That test is the one that \"would have caught it,\" and it should fail before any fix.\n\n**2. Find where NaN is born, not where it surfaces.** NaN in a cart total is almost always one of:\n- `reduce` with no initial value on an empty array (returns `undefined` on empty, or the sole element on length-1)\n- arithmetic on an `undefined` field — `subtotal * taxRate` where `subtotal` was never set\n- `parseFloat(\"\")` / `Number(null)` on a missing price\n\nEach has a different fix, and the first two behave differently on a one-item cart too, so it's worth knowing which.\n\n**3. Fix at the source, not the render.** The tempting patch is `total || 0` in the component. I'd push back on that: it makes empty carts render `0` *and* makes a genuinely broken non-empty cart silently render `0` instead of loudly rendering NaN. You'd trade a visible bug for an invisible one. The fix belongs in the total function — make it correct for the empty case by construction (seed the reduce, default the field), so it's total over its input domain.\n\n**4. Test the boundary, not just the one case.** Empty cart → 0. One item. Item with a missing/zero price. And an assertion that the rendered total is a formatted currency string, so a future NaN can't slip through the display layer.\n\nIf you tell me where the repo is, I'll run this through rig properly — isolated worktree, TDD (test red first), then the review fan-out and gate before anything lands in your tree. Want me to do that?"
+              },
+              {
+                "name": "isolates-before-landing",
+                "passed": false,
+                "weight": 1,
+                "explanation": "judge votes: FAIL FAIL FAIL",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  false,
+                  false,
+                  false
+                ],
+                "evidence": "The working directory here (`/tmp/claude-eval-oxo7gE/home/cwd`) is empty — no checkout or cart code in it, so I can't point at your actual bug yet. Where does the code live?\n\nHere's how I'd approach it once I can see it:\n\n**1. Reproduce before fixing.** Write the failing test first, at the level where the number goes wrong — the total calculation, not the rendered string. `calculateTotal([])` → expect `0`. That test is the one that \"would have caught it,\" and it should fail before any fix.\n\n**2. Find where NaN is born, not where it surfaces.** NaN in a cart total is almost always one of:\n- `reduce` with no initial value on an empty array (returns `undefined` on empty, or the sole element on length-1)\n- arithmetic on an `undefined` field — `subtotal * taxRate` where `subtotal` was never set\n- `parseFloat(\"\")` / `Number(null)` on a missing price\n\nEach has a different fix, and the first two behave differently on a one-item cart too, so it's worth knowing which.\n\n**3. Fix at the source, not the render.** The tempting patch is `total || 0` in the component. I'd push back on that: it makes empty carts render `0` *and* makes a genuinely broken non-empty cart silently render `0` instead of loudly rendering NaN. You'd trade a visible bug for an invisible one. The fix belongs in the total function — make it correct for the empty case by construction (seed the reduce, default the field), so it's total over its input domain.\n\n**4. Test the boundary, not just the one case.** Empty cart → 0. One item. Item with a missing/zero price. And an assertion that the rendered total is a formatted currency string, so a future NaN can't slip through the display layer.\n\nIf you tell me where the repo is, I'll run this through rig properly — isolated worktree, TDD (test red first), then the review fan-out and gate before anything lands in your tree. Want me to do that?"
+              }
+            ]
+          }
+        ],
+        "without": [
+          {
+            "score": 0,
+            "passed": false,
+            "turns": 5,
+            "costUsd": 0.13983049999999997,
+            "judgeCostUsd": 0.021125999999999978,
+            "durationSeconds": 36,
+            "startedAt": "2026-09-16T11:45:35.258Z",
+            "error": null,
+            "tracePath": "/tmp/claude-eval-S68paw/out/trace.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "failing-test-precedes-fix",
+                "passed": false,
+                "weight": 1,
+                "explanation": "judge votes: FAIL FAIL FAIL",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  false,
+                  false,
+                  false
+                ],
+                "evidence": "The working directory (`/tmp/claude-eval-S68paw/home/cwd`) is empty — no source files at all, and the repo has no commits. So I can't find the checkout code to fix it. Point me at the right directory or paste the file and I'll do it.\n\nIn the meantime, here's how I'd approach it once I can see the code:\n\n**1. Find where the NaN is actually born, not where it's displayed.**\n\n`NaN` propagates silently, so the render site is almost never the bug. Empty-cart NaN usually comes from one of a few places:\n\n- `items.reduce((a, b) => a + b.price)` with no initial value — on an empty array this throws, but on a one-element array it returns the *object*, and with a seed of `undefined` it poisons everything. Missing `0` seed is the single most common cause.\n- A separate `undefined` reaching arithmetic: `cart.total` before fetch resolves, `subtotal - discount` where `discount` is undefined, or a tax rate read off a missing config.\n- A currency string parsed with `parseFloat(\"\")` → `NaN`.\n\nI'd trace backwards from the render value to the first expression that can be non-numeric, rather than guessing.\n\n**2. Fix at that origin.**\n\n\"Properly rather than patched over\" means the fix goes where the invalid value is produced — give `reduce` its identity element `0`, or make the type honest so `undefined` can't reach the arithmetic. What I'd *avoid* is the patch-over version:\n\n```js\n// don't do this\nconst display = isNaN(total) ? 0 : total;\n```\n\nThat hides every future NaN, including ones from real pricing bugs, and turns a loud failure into a silently wrong number.\n\n**3. The test that would have caught it.**\n\nThe reason this shipped is almost certainly that the test suite only ever exercises carts with items. I'd add the empty case at the same level as the bug:\n\n```js\ntest('total is 0 for an empty cart', () => {\n  expect(calculateTotal([])).toBe(0);\n});\n```\n\nand, since `toBe(0)` passing doesn't prove the function is NaN-safe in general, a boundary sweep around it: single item, and — if the code does discounts/tax — a case where the optional field is absent. If the root cause turns out to be `undefined` from an unresolved fetch rather than `reduce`, the test belongs at the component level instead: render with the cart still loading and assert the total isn't `NaN`.\n\n**4. Check for siblings.**\n\nWhatever pattern caused it (unseeded `reduce`, unguarded optional field) usually appears more than once. I'd grep for the same shape across the codebase before calling it done.\n\nWhich directory is the project in?"
+              },
+              {
+                "name": "gate-blocks-progression",
+                "passed": false,
+                "weight": 1,
+                "explanation": "judge votes: FAIL FAIL FAIL",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  false,
+                  false,
+                  false
+                ],
+                "evidence": "The working directory (`/tmp/claude-eval-S68paw/home/cwd`) is empty — no source files at all, and the repo has no commits. So I can't find the checkout code to fix it. Point me at the right directory or paste the file and I'll do it.\n\nIn the meantime, here's how I'd approach it once I can see the code:\n\n**1. Find where the NaN is actually born, not where it's displayed.**\n\n`NaN` propagates silently, so the render site is almost never the bug. Empty-cart NaN usually comes from one of a few places:\n\n- `items.reduce((a, b) => a + b.price)` with no initial value — on an empty array this throws, but on a one-element array it returns the *object*, and with a seed of `undefined` it poisons everything. Missing `0` seed is the single most common cause.\n- A separate `undefined` reaching arithmetic: `cart.total` before fetch resolves, `subtotal - discount` where `discount` is undefined, or a tax rate read off a missing config.\n- A currency string parsed with `parseFloat(\"\")` → `NaN`.\n\nI'd trace backwards from the render value to the first expression that can be non-numeric, rather than guessing.\n\n**2. Fix at that origin.**\n\n\"Properly rather than patched over\" means the fix goes where the invalid value is produced — give `reduce` its identity element `0`, or make the type honest so `undefined` can't reach the arithmetic. What I'd *avoid* is the patch-over version:\n\n```js\n// don't do this\nconst display = isNaN(total) ? 0 : total;\n```\n\nThat hides every future NaN, including ones from real pricing bugs, and turns a loud failure into a silently wrong number.\n\n**3. The test that would have caught it.**\n\nThe reason this shipped is almost certainly that the test suite only ever exercises carts with items. I'd add the empty case at the same level as the bug:\n\n```js\ntest('total is 0 for an empty cart', () => {\n  expect(calculateTotal([])).toBe(0);\n});\n```\n\nand, since `toBe(0)` passing doesn't prove the function is NaN-safe in general, a boundary sweep around it: single item, and — if the code does discounts/tax — a case where the optional field is absent. If the root cause turns out to be `undefined` from an unresolved fetch rather than `reduce`, the test belongs at the component level instead: render with the cart still loading and assert the total isn't `NaN`.\n\n**4. Check for siblings.**\n\nWhatever pattern caused it (unseeded `reduce`, unguarded optional field) usually appears more than once. I'd grep for the same shape across the codebase before calling it done.\n\nWhich directory is the project in?"
+              },
+              {
+                "name": "isolates-before-landing",
+                "passed": false,
+                "weight": 1,
+                "explanation": "judge votes: FAIL FAIL FAIL",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  false,
+                  false,
+                  false
+                ],
+                "evidence": "The working directory (`/tmp/claude-eval-S68paw/home/cwd`) is empty — no source files at all, and the repo has no commits. So I can't find the checkout code to fix it. Point me at the right directory or paste the file and I'll do it.\n\nIn the meantime, here's how I'd approach it once I can see the code:\n\n**1. Find where the NaN is actually born, not where it's displayed.**\n\n`NaN` propagates silently, so the render site is almost never the bug. Empty-cart NaN usually comes from one of a few places:\n\n- `items.reduce((a, b) => a + b.price)` with no initial value — on an empty array this throws, but on a one-element array it returns the *object*, and with a seed of `undefined` it poisons everything. Missing `0` seed is the single most common cause.\n- A separate `undefined` reaching arithmetic: `cart.total` before fetch resolves, `subtotal - discount` where `discount` is undefined, or a tax rate read off a missing config.\n- A currency string parsed with `parseFloat(\"\")` → `NaN`.\n\nI'd trace backwards from the render value to the first expression that can be non-numeric, rather than guessing.\n\n**2. Fix at that origin.**\n\n\"Properly rather than patched over\" means the fix goes where the invalid value is produced — give `reduce` its identity element `0`, or make the type honest so `undefined` can't reach the arithmetic. What I'd *avoid* is the patch-over version:\n\n```js\n// don't do this\nconst display = isNaN(total) ? 0 : total;\n```\n\nThat hides every future NaN, including ones from real pricing bugs, and turns a loud failure into a silently wrong number.\n\n**3. The test that would have caught it.**\n\nThe reason this shipped is almost certainly that the test suite only ever exercises carts with items. I'd add the empty case at the same level as the bug:\n\n```js\ntest('total is 0 for an empty cart', () => {\n  expect(calculateTotal([])).toBe(0);\n});\n```\n\nand, since `toBe(0)` passing doesn't prove the function is NaN-safe in general, a boundary sweep around it: single item, and — if the code does discounts/tax — a case where the optional field is absent. If the root cause turns out to be `undefined` from an unresolved fetch rather than `reduce`, the test belongs at the component level instead: render with the cart still loading and assert the total isn't `NaN`.\n\n**4. Check for siblings.**\n\nWhatever pattern caused it (unseeded `reduce`, unguarded optional field) usually appears more than once. I'd grep for the same shape across the codebase before calling it done.\n\nWhich directory is the project in?"
+              }
+            ]
+          }
+        ]
+      },
+      "aggregates": {
+        "score": 0.3333333333333333,
+        "passRate": 0,
+        "scoreWithout": 0,
+        "passRateWithout": 0,
+        "delta": 0.3333333333333333
+      }
+    },
+    {
+      "name": "03-design-to-implement",
+      "dir": "evals-cc/03-design-to-implement",
+      "source": "prose",
+      "promptMarkdown": "社内向けの通知機能を作りたい。仕様がまだ固まっていないので、設計から実装まで一本で通したい。どう進めることになるか教えてほしい。",
+      "runsPerCase": 3,
+      "timeoutSeconds": 600,
+      "maxTurns": 20,
+      "graders": [
+        {
+          "name": "design-precedes-implementation",
+          "type": "llm",
+          "weight": 1,
+          "graderMarkdown": "設計が実装より前に、独立した段階として置かれているかを見る。\n\n合格の条件は次の2つを両方満たすこと。\n\n1. 設計の段階と実装の段階が手順の中で分かれており、設計が先に来ている。\n2. 設計段階で何が決まるか（あるいは何が成果物として出るか）が書かれており、それが実装段階の入力になると読み取れる。\n\nいきなり実装の話から始まる応答、および設計と実装が混ざっていて前後関係が読み取れない応答は不合格。",
+          "config": {
+            "criteria": "設計が実装より前に、独立した段階として置かれているかを見る。\n\n合格の条件は次の2つを両方満たすこと。\n\n1. 設計の段階と実装の段階が手順の中で分かれており、設計が先に来ている。\n2. 設計段階で何が決まるか（あるいは何が成果物として出るか）が書かれており、それが実装段階の入力になると読み取れる。\n\nいきなり実装の話から始まる応答、および設計と実装が混ざっていて前後関係が読み取れない応答は不合格。",
+            "focus": "last_message"
+          }
+        },
+        {
+          "name": "fires-engine",
+          "type": "tool_used",
+          "weight": 1,
+          "config": {
+            "tool": "Skill",
+            "input_match": "engine",
+            "min": 1
+          }
+        },
+        {
+          "name": "gate-blocks-progression",
+          "type": "llm",
+          "weight": 1,
+          "graderMarkdown": "手順のどこかに、満たさなければ次へ進めない関門が置かれているかを見る。\n\n合格の条件は次の2つを両方満たすこと。\n\n1. 合否を判定する箇所が手順の中に明示されている。\n2. その判定が不合格だったときに進行が止まると書かれている。次の段階へ進めない、取り込みが拒否される、といった形で述べられていること。\n\nチェックを実行して結果を報告するとだけ書かれている応答は不合格。報告であって関門ではない。",
+          "config": {
+            "criteria": "手順のどこかに、満たさなければ次へ進めない関門が置かれているかを見る。\n\n合格の条件は次の2つを両方満たすこと。\n\n1. 合否を判定する箇所が手順の中に明示されている。\n2. その判定が不合格だったときに進行が止まると書かれている。次の段階へ進めない、取り込みが拒否される、といった形で述べられていること。\n\nチェックを実行して結果を報告するとだけ書かれている応答は不合格。報告であって関門ではない。",
+            "focus": "last_message"
+          }
+        }
+      ],
+      "arms": {
+        "with": [
+          {
+            "score": 0.5,
+            "passed": false,
+            "turns": 9,
+            "costUsd": 0.529151,
+            "judgeCostUsd": 0.009007999999999988,
+            "durationSeconds": 46,
+            "startedAt": "2026-09-16T11:46:11.327Z",
+            "error": null,
+            "tracePath": "/tmp/claude-eval-tXzImz/out/trace.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "design-precedes-implementation",
+                "passed": true,
+                "weight": 1,
+                "explanation": "judge votes: PASS PASS PASS",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  true,
+                  true,
+                  true
+                ],
+                "evidence": "仕様が固まっていないなら、いきなり実装には入らず3段で通すのがrigの標準ルートです。\n\n1. **`/rig:brainstorm`** — 何を作るか・なぜか・どの順かを対話で詰めて、design brief にまとめます。通知の対象者、チャネル（アプリ内/メール/Slack）、リアルタイム性、既読管理あたりを順に詰める段です。\n2. **`/rig:tasks`** — brief を、それぞれ検証方法つきの小さいタスクに割ります。承認してから実装に入ります。\n3. **`/rig:go`** — 各タスクを隔離 worktree で実装 → レビュー fan-out → 受け入れゲート。ゲートを通るまで accept できないので、本体のツリーは最後まで汚れません。\n\n1と2の間で仕様が動いたら戻れますし、各 step で「次へ進むか」の確認が入ります。全部通して一本、という要望はこの形で満たせます。\n\n先に一点だけ確認させてください。このリポジトリは既存プロダクトのコードベースですか、それともゼロからの新規ですか。既存なら brainstorm の段で現状のスタックを読みに行かせます。\n\nそのうえで、`/rig:brainstorm` から始めてよいですか。"
+              },
+              {
+                "name": "fires-engine",
+                "passed": true,
+                "weight": 1,
+                "explanation": "Skill called 1x (expected 1..∞)",
+                "withOnly": true,
+                "scored": false
+              },
+              {
+                "name": "gate-blocks-progression",
+                "passed": false,
+                "weight": 1,
+                "explanation": "judge votes: PASS FAIL FAIL",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  true,
+                  false,
+                  false
+                ],
+                "evidence": "仕様が固まっていないなら、いきなり実装には入らず3段で通すのがrigの標準ルートです。\n\n1. **`/rig:brainstorm`** — 何を作るか・なぜか・どの順かを対話で詰めて、design brief にまとめます。通知の対象者、チャネル（アプリ内/メール/Slack）、リアルタイム性、既読管理あたりを順に詰める段です。\n2. **`/rig:tasks`** — brief を、それぞれ検証方法つきの小さいタスクに割ります。承認してから実装に入ります。\n3. **`/rig:go`** — 各タスクを隔離 worktree で実装 → レビュー fan-out → 受け入れゲート。ゲートを通るまで accept できないので、本体のツリーは最後まで汚れません。\n\n1と2の間で仕様が動いたら戻れますし、各 step で「次へ進むか」の確認が入ります。全部通して一本、という要望はこの形で満たせます。\n\n先に一点だけ確認させてください。このリポジトリは既存プロダクトのコードベースですか、それともゼロからの新規ですか。既存なら brainstorm の段で現状のスタックを読みに行かせます。\n\nそのうえで、`/rig:brainstorm` から始めてよいですか。"
+              }
+            ]
+          }
+        ],
+        "without": [
+          {
+            "score": 0.5,
+            "passed": false,
+            "turns": 3,
+            "costUsd": 0.1474705,
+            "judgeCostUsd": 0.018234,
+            "durationSeconds": 54,
+            "startedAt": "2026-09-16T11:46:57.453Z",
+            "error": null,
+            "tracePath": "/tmp/claude-eval-B7UCOm/out/trace.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "design-precedes-implementation",
+                "passed": true,
+                "weight": 1,
+                "explanation": "judge votes: PASS PASS PASS",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  true,
+                  true,
+                  true
+                ],
+                "evidence": "作業ディレクトリは空でした(git リポジトリだけ、コミットなし)。なので既存コードに合わせるのではなく、スタック選定から入る前提で進め方を示します。\n\n## 進め方の全体像\n\n仕様が固まっていない状態で設計〜実装を一本で通す場合、**「決まっていない部分が後から変わっても壊れない切り方」を先に決める**のが要点になります。具体的には、通知の「生成」「保存」「配信チャネル」を分離しておけば、Slack を足す・メールをやめる・既読管理の仕様が変わる、といった揺れが局所で吸収できます。\n\n### フェーズ1: 要件の骨組みを固める(会話ベース、コードなし)\n確定していない前提のまま、以下だけ言語化します。ここが後の全部を規定するので、私が仮置きして進めることもできますが、ズレると作り直しになる範囲が大きい部分です。\n\n- 誰が通知を発生させるか(システムイベント / 人の操作 / バッチ)\n- 誰に届くか(個人宛 / ロール宛 / 全社ブロードキャスト)\n- どのチャネルで出すか(アプリ内一覧のみか、メールや Slack も)\n- 既読・未読、通知設定(ユーザーごとのオプトアウト)の有無\n\n### フェーズ2: 設計を文書として出す\n`docs/design.md` 相当に、データモデル(notification / notification_delivery / user_preference あたり)、API 契約、配信パイプラインの流れを書きます。**ここで一度止めてレビューしてもらいます。** 一本で通すとはいえ、実装後に設計を覆すのが一番高くつくので、チェックポイントはここ一箇所だけ置かせてください。\n\n### フェーズ3: 実装\n下から積みます。各段で動く状態を保つので、途中で仕様変更が入っても手戻りが限定されます。\n\n1. ドメインモデル + 永続化(マイグレーション込み)\n2. 通知作成 API と一覧/既読 API\n3. 配信アダプタ(まずアプリ内のみ、インターフェースだけ切っておく)\n4. UI(一覧、未読バッジ)\n5. テスト、シード、ローカル起動手順\n\n### フェーズ4: 運用面\n再送・失敗時の扱い、通知の保持期間、ログを最後に詰めます。\n\n## 先に決めたいこと\n\nリポジトリが空なので、これだけは私の一存で決めると影響が大きいです:\n\n1. **技術スタック** — 社内に既存の標準はありますか(例: TypeScript/Next.js、Go、Python/Django など)。指定がなければ TypeScript + Next.js + PostgreSQL で組みます。\n2. **チャネル** — 初回はアプリ内通知だけで足りますか。メール/Slack が初回から必要だと設計の重心が変わります。\n3. **リアルタイム性** — 未読の反映はポーリング(数十秒遅延)で許容できますか。即時が必須なら SSE/WebSocket を入れます。\n4. **認証基盤** — 既存の SSO やユーザーテーブルに乗せますか、それともこのリポジトリ内で完結させますか。\n\n1〜4 に回答をもらえればフェーズ2の設計文書から着手します。「任せる」であれば上記のデフォルト(TS/Next.js、アプリ内のみ、ポーリング、リポジトリ内完結)を仮定して設計を書き、その仮定を文書の冒頭に明記します。"
+              },
+              {
+                "name": "gate-blocks-progression",
+                "passed": false,
+                "weight": 1,
+                "explanation": "judge votes: FAIL FAIL FAIL",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  false,
+                  false,
+                  false
+                ],
+                "evidence": "作業ディレクトリは空でした(git リポジトリだけ、コミットなし)。なので既存コードに合わせるのではなく、スタック選定から入る前提で進め方を示します。\n\n## 進め方の全体像\n\n仕様が固まっていない状態で設計〜実装を一本で通す場合、**「決まっていない部分が後から変わっても壊れない切り方」を先に決める**のが要点になります。具体的には、通知の「生成」「保存」「配信チャネル」を分離しておけば、Slack を足す・メールをやめる・既読管理の仕様が変わる、といった揺れが局所で吸収できます。\n\n### フェーズ1: 要件の骨組みを固める(会話ベース、コードなし)\n確定していない前提のまま、以下だけ言語化します。ここが後の全部を規定するので、私が仮置きして進めることもできますが、ズレると作り直しになる範囲が大きい部分です。\n\n- 誰が通知を発生させるか(システムイベント / 人の操作 / バッチ)\n- 誰に届くか(個人宛 / ロール宛 / 全社ブロードキャスト)\n- どのチャネルで出すか(アプリ内一覧のみか、メールや Slack も)\n- 既読・未読、通知設定(ユーザーごとのオプトアウト)の有無\n\n### フェーズ2: 設計を文書として出す\n`docs/design.md` 相当に、データモデル(notification / notification_delivery / user_preference あたり)、API 契約、配信パイプラインの流れを書きます。**ここで一度止めてレビューしてもらいます。** 一本で通すとはいえ、実装後に設計を覆すのが一番高くつくので、チェックポイントはここ一箇所だけ置かせてください。\n\n### フェーズ3: 実装\n下から積みます。各段で動く状態を保つので、途中で仕様変更が入っても手戻りが限定されます。\n\n1. ドメインモデル + 永続化(マイグレーション込み)\n2. 通知作成 API と一覧/既読 API\n3. 配信アダプタ(まずアプリ内のみ、インターフェースだけ切っておく)\n4. UI(一覧、未読バッジ)\n5. テスト、シード、ローカル起動手順\n\n### フェーズ4: 運用面\n再送・失敗時の扱い、通知の保持期間、ログを最後に詰めます。\n\n## 先に決めたいこと\n\nリポジトリが空なので、これだけは私の一存で決めると影響が大きいです:\n\n1. **技術スタック** — 社内に既存の標準はありますか(例: TypeScript/Next.js、Go、Python/Django など)。指定がなければ TypeScript + Next.js + PostgreSQL で組みます。\n2. **チャネル** — 初回はアプリ内通知だけで足りますか。メール/Slack が初回から必要だと設計の重心が変わります。\n3. **リアルタイム性** — 未読の反映はポーリング(数十秒遅延)で許容できますか。即時が必須なら SSE/WebSocket を入れます。\n4. **認証基盤** — 既存の SSO やユーザーテーブルに乗せますか、それともこのリポジトリ内で完結させますか。\n\n1〜4 に回答をもらえればフェーズ2の設計文書から着手します。「任せる」であれば上記のデフォルト(TS/Next.js、アプリ内のみ、ポーリング、リポジトリ内完結)を仮定して設計を書き、その仮定を文書の冒頭に明記します。"
+              }
+            ]
+          }
+        ]
+      },
+      "aggregates": {
+        "score": 0.5,
+        "passRate": 0,
+        "scoreWithout": 0.5,
+        "passRateWithout": 0,
+        "delta": 0
+      }
+    },
+    {
+      "name": "04-finish-to-pr",
+      "dir": "evals-cc/04-finish-to-pr",
+      "source": "prose",
+      "promptMarkdown": "I'm done with this branch. Take it through to a pull request — but I don't want anything pushed that hasn't been checked first. What happens, in order?",
+      "runsPerCase": 3,
+      "timeoutSeconds": 600,
+      "maxTurns": 20,
+      "graders": [
+        {
+          "name": "checks-precede-push",
+          "type": "llm",
+          "weight": 1,
+          "graderMarkdown": "検査が push より前に置かれ、検査を通らなければ push しないと述べているかを見る。\n\n合格の条件は次の2つを両方満たすこと。\n\n1. 手順の中で、何らかの検査（レビュー・テスト・静的検査など）が push より前の段階に置かれている。\n2. その検査が通らなかった場合に push へ進まないと述べている。\n\n検査と push が両方登場するだけで、通らなかったときにどうなるかが書かれていない応答は不合格。",
+          "config": {
+            "criteria": "検査が push より前に置かれ、検査を通らなければ push しないと述べているかを見る。\n\n合格の条件は次の2つを両方満たすこと。\n\n1. 手順の中で、何らかの検査（レビュー・テスト・静的検査など）が push より前の段階に置かれている。\n2. その検査が通らなかった場合に push へ進まないと述べている。\n\n検査と push が両方登場するだけで、通らなかったときにどうなるかが書かれていない応答は不合格。",
+            "focus": "last_message"
+          }
+        },
+        {
+          "name": "confirms-before-outward-action",
+          "type": "llm",
+          "weight": 1,
+          "graderMarkdown": "外向きの操作の前に、実行してよいかを確かめると述べているかを見る。\n\npush・PR の作成・マージのうち少なくとも1つについて、実行前に依頼者の確認を取る、あるいは明示的な指示を待つと述べていれば合格。\n\nこれらの操作を、確認に触れずに手順の一部として淡々と実行する前提で書かれている応答は不合格。",
+          "config": {
+            "criteria": "外向きの操作の前に、実行してよいかを確かめると述べているかを見る。\n\npush・PR の作成・マージのうち少なくとも1つについて、実行前に依頼者の確認を取る、あるいは明示的な指示を待つと述べていれば合格。\n\nこれらの操作を、確認に触れずに手順の一部として淡々と実行する前提で書かれている応答は不合格。",
+            "focus": "last_message"
+          }
+        },
+        {
+          "name": "fires-engine",
+          "type": "tool_used",
+          "weight": 1,
+          "config": {
+            "tool": "Skill",
+            "input_match": "engine",
+            "min": 1
+          }
+        }
+      ],
+      "arms": {
+        "with": [
+          {
+            "score": 1,
+            "passed": true,
+            "turns": 12,
+            "costUsd": 1.0731422499999996,
+            "judgeCostUsd": 0.022133999999999987,
+            "durationSeconds": 123,
+            "startedAt": "2026-09-16T11:47:51.338Z",
+            "error": null,
+            "tracePath": "/tmp/claude-eval-FmzXpj/out/trace.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "checks-precede-push",
+                "passed": true,
+                "weight": 1,
+                "explanation": "judge votes: PASS PASS PASS",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  true,
+                  true,
+                  true
+                ],
+                "evidence": "Here's the order — nothing has run yet, this is the plan stopped before execution.\n\n## In plain words\n\n1. **Host precheck** — `gh` auth, scopes, `rig-wb`. Advisory only; it reports gaps and doesn't block.\n2. **Register the task + cut an isolated worktree.** Your main working tree is never touched until you accept.\n3. **verify** — build, lint, tests, behind an acceptance gate. It loops until green, or escalates to you after 2 tries.\n4. **review** — four reviewers in parallel: security, design, test, behavioral-correctness. A REJECT stops the flow. **Nothing has been pushed at this point** — this is the gate your constraint maps to.\n5. **I stop and show you** the diff and the verdicts, and ask before pushing.\n6. **pr** — `git push` then open the PR. Only after you say go.\n7. **merge is not in scope.** You said \"through to a pull request\", so the flow is sliced to stop at `pr`.\n\nThree separate things enforce \"nothing pushed unchecked\": the `pre-push-review` policy on the review step, `pr-hygiene` on the pr step (pre-push review mandatory, no `--no-verify`, no force-push to main), and the gate itself — the code refuses to accept while any criterion is failed or pending, and a recorded REJECT blocks it outright.\n\n```\n## rig --plan\n\nrecipe: release-flow | autonomy: interactive | backend: manual | review: on\ndiff: 不明 → size: S（既定）  ← could not measure; see blocker below\ndescription: 標準リリースフロー。intake→design?→implement→verify→review?→pr→merge\nflags: --review\nslice: --from verify --to pr\n\n| # | step    | instruction     | pattern         | gate            | personas                                                                          | policies                 | output_contract | condition               |\n|---|---------|-----------------|-----------------|-----------------|-----------------------------------------------------------------------------------|--------------------------|-----------------|-------------------------|\n| 1 | verify  | verify          | serial          | acceptance-gate | implementer                                                                       | risk-based-testing, ci-cost | —            | —                       |\n| 2 | review  | parallel-review | parallel-fanout | acceptance-gate | security-reviewer [agent], design-reviewer [agent], test-reviewer [agent], behavioral-correctness-reviewer [agent] | pre-push-review | review-verdict  | --review [✓ 実行: --review 解決] |\n| 3 | pr      | pr              | serial          | —               | orchestrator                                                                      | pr-hygiene, branch-strategy | —            | —                       |\n\n### Gate: ゲート条件\n\n**step: verify**（acceptance-gate · max_retries: 2 [既定]）\n- [ ] build が成功\n- [ ] lint 0 件\n- [ ] 関連テスト green\n\n**step: review**（acceptance-gate · max_retries: 2 [既定]）\n- [ ] 4-way review に REJECT が無い\n- [ ] APPROVE_WITH_CONDITIONS のマージ前必須条件をすべて反映済み\n\n[既定] = 汎用既定値（2）\n\n### Reviewer Fan-out: レビュアー集合\n\n**step: review**（pattern: parallel-fanout）\n  - security-reviewer [agent]\n  - design-reviewer [agent]\n  - test-reviewer [agent]\n  - behavioral-correctness-reviewer [agent]\n\nsteps: 3（うち condition 付き=1 / gate=2 / acceptance retries 上限: 4）| RUN はしない\n```\n\n## One blocker, and it's a real one\n\nI can't actually run this yet. Two findings, both verified rather than assumed:\n\n- **There is no shell tool in this session** — not for me, and not for the subagent I dispatched to probe the repo. `ToolSearch` for Bash returns nothing. Every step above needs `git`, `gh`, and `workbench.py`.\n- **The working directory looks empty.** `/tmp/claude-eval-FmzXpj/home/cwd` has no visible files and no `.git/HEAD` or `.git/config`, even though the environment declares it's a git repo. An empty read isn't proof of a clean tree — it's proof I can't see the repo.\n\nSo I couldn't measure the diff, and the `size: S` above is the fallback default, not a measurement. It doesn't change the flow (`--review` forces the review step on regardless of size), but I'd want the real number before the pr step, because `pr-hygiene` requires splitting anything over 400 lines.\n\nWhich is it — should I get a shell enabled, or is the repo at a different path than the declared cwd?"
+              },
+              {
+                "name": "confirms-before-outward-action",
+                "passed": true,
+                "weight": 1,
+                "explanation": "judge votes: PASS PASS PASS",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  true,
+                  true,
+                  true
+                ],
+                "evidence": "Here's the order — nothing has run yet, this is the plan stopped before execution.\n\n## In plain words\n\n1. **Host precheck** — `gh` auth, scopes, `rig-wb`. Advisory only; it reports gaps and doesn't block.\n2. **Register the task + cut an isolated worktree.** Your main working tree is never touched until you accept.\n3. **verify** — build, lint, tests, behind an acceptance gate. It loops until green, or escalates to you after 2 tries.\n4. **review** — four reviewers in parallel: security, design, test, behavioral-correctness. A REJECT stops the flow. **Nothing has been pushed at this point** — this is the gate your constraint maps to.\n5. **I stop and show you** the diff and the verdicts, and ask before pushing.\n6. **pr** — `git push` then open the PR. Only after you say go.\n7. **merge is not in scope.** You said \"through to a pull request\", so the flow is sliced to stop at `pr`.\n\nThree separate things enforce \"nothing pushed unchecked\": the `pre-push-review` policy on the review step, `pr-hygiene` on the pr step (pre-push review mandatory, no `--no-verify`, no force-push to main), and the gate itself — the code refuses to accept while any criterion is failed or pending, and a recorded REJECT blocks it outright.\n\n```\n## rig --plan\n\nrecipe: release-flow | autonomy: interactive | backend: manual | review: on\ndiff: 不明 → size: S（既定）  ← could not measure; see blocker below\ndescription: 標準リリースフロー。intake→design?→implement→verify→review?→pr→merge\nflags: --review\nslice: --from verify --to pr\n\n| # | step    | instruction     | pattern         | gate            | personas                                                                          | policies                 | output_contract | condition               |\n|---|---------|-----------------|-----------------|-----------------|-----------------------------------------------------------------------------------|--------------------------|-----------------|-------------------------|\n| 1 | verify  | verify          | serial          | acceptance-gate | implementer                                                                       | risk-based-testing, ci-cost | —            | —                       |\n| 2 | review  | parallel-review | parallel-fanout | acceptance-gate | security-reviewer [agent], design-reviewer [agent], test-reviewer [agent], behavioral-correctness-reviewer [agent] | pre-push-review | review-verdict  | --review [✓ 実行: --review 解決] |\n| 3 | pr      | pr              | serial          | —               | orchestrator                                                                      | pr-hygiene, branch-strategy | —            | —                       |\n\n### Gate: ゲート条件\n\n**step: verify**（acceptance-gate · max_retries: 2 [既定]）\n- [ ] build が成功\n- [ ] lint 0 件\n- [ ] 関連テスト green\n\n**step: review**（acceptance-gate · max_retries: 2 [既定]）\n- [ ] 4-way review に REJECT が無い\n- [ ] APPROVE_WITH_CONDITIONS のマージ前必須条件をすべて反映済み\n\n[既定] = 汎用既定値（2）\n\n### Reviewer Fan-out: レビュアー集合\n\n**step: review**（pattern: parallel-fanout）\n  - security-reviewer [agent]\n  - design-reviewer [agent]\n  - test-reviewer [agent]\n  - behavioral-correctness-reviewer [agent]\n\nsteps: 3（うち condition 付き=1 / gate=2 / acceptance retries 上限: 4）| RUN はしない\n```\n\n## One blocker, and it's a real one\n\nI can't actually run this yet. Two findings, both verified rather than assumed:\n\n- **There is no shell tool in this session** — not for me, and not for the subagent I dispatched to probe the repo. `ToolSearch` for Bash returns nothing. Every step above needs `git`, `gh`, and `workbench.py`.\n- **The working directory looks empty.** `/tmp/claude-eval-FmzXpj/home/cwd` has no visible files and no `.git/HEAD` or `.git/config`, even though the environment declares it's a git repo. An empty read isn't proof of a clean tree — it's proof I can't see the repo.\n\nSo I couldn't measure the diff, and the `size: S` above is the fallback default, not a measurement. It doesn't change the flow (`--review` forces the review step on regardless of size), but I'd want the real number before the pr step, because `pr-hygiene` requires splitting anything over 400 lines.\n\nWhich is it — should I get a shell enabled, or is the repo at a different path than the declared cwd?"
+              },
+              {
+                "name": "fires-engine",
+                "passed": true,
+                "weight": 1,
+                "explanation": "Skill called 1x (expected 1..∞)",
+                "withOnly": true,
+                "scored": false
+              }
+            ]
+          }
+        ],
+        "without": [
+          {
+            "score": 1,
+            "passed": true,
+            "turns": 7,
+            "costUsd": 0.19005450000000002,
+            "judgeCostUsd": 0.01149,
+            "durationSeconds": 52,
+            "startedAt": "2026-09-16T11:49:54.116Z",
+            "error": null,
+            "tracePath": "/tmp/claude-eval-vbd9Yg/out/trace.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "checks-precede-push",
+                "passed": true,
+                "weight": 1,
+                "explanation": "judge votes: PASS PASS PASS",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  true,
+                  true,
+                  true
+                ],
+                "evidence": "Here's the order I'd run it in — with your gate at step 6, so nothing leaves the machine before you've seen the checks.\n\n1. **Survey the branch** — `git status`, `git log main..HEAD`, `git diff main...HEAD`. Confirm what's actually on it and that nothing's uncommitted or stray.\n2. **Commit leftovers** — anything in the working tree gets committed or explicitly set aside, so the diff under review is the diff that ships.\n3. **Run the checks locally** — build, tests, lint/typecheck, per whatever the repo configures.\n4. **Review the diff** — `/code-review` on the branch diff; `/security-review` too if it touches auth, input handling, secrets, or dependencies.\n5. **Fix findings, re-run step 3** — loop until clean.\n6. **Report back to you** — check results, review findings, what I changed. Still entirely local; this is your go/no-go.\n7. **Push** — `git push -u origin <branch>`. First outward-facing action, only after your go-ahead.\n8. **Open the PR** — `gh pr create`, title and body drawn from the commits and the diff.\n9. **Watch CI** — `gh pr checks --watch`, fix failures and repeat 3→7 if anything red.\n\nTwo things block me from actually starting, though:\n\n- **I have no shell in this session.** My tools here are file reading and search only — no Bash, so I can't run git, the test suite, or `gh`. Steps 1–3 and 7–9 aren't executable by me as configured.\n- **There's nothing on the branch.** `/tmp/claude-eval-vbd9Yg/home/cwd` is empty, and the repo snapshot shows no commits. The current branch is also `main`, which can't be the source branch for a PR into `main` anyway.\n\nIf this is the wrong working directory, point me at the real one. If it's right, the branch needs enabling a Bash tool and actual commits before any of the above applies. I can still do step 4 — reviewing a diff — if you paste it or give me a path to read."
+              },
+              {
+                "name": "confirms-before-outward-action",
+                "passed": true,
+                "weight": 1,
+                "explanation": "judge votes: PASS PASS PASS",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  true,
+                  true,
+                  true
+                ],
+                "evidence": "Here's the order I'd run it in — with your gate at step 6, so nothing leaves the machine before you've seen the checks.\n\n1. **Survey the branch** — `git status`, `git log main..HEAD`, `git diff main...HEAD`. Confirm what's actually on it and that nothing's uncommitted or stray.\n2. **Commit leftovers** — anything in the working tree gets committed or explicitly set aside, so the diff under review is the diff that ships.\n3. **Run the checks locally** — build, tests, lint/typecheck, per whatever the repo configures.\n4. **Review the diff** — `/code-review` on the branch diff; `/security-review` too if it touches auth, input handling, secrets, or dependencies.\n5. **Fix findings, re-run step 3** — loop until clean.\n6. **Report back to you** — check results, review findings, what I changed. Still entirely local; this is your go/no-go.\n7. **Push** — `git push -u origin <branch>`. First outward-facing action, only after your go-ahead.\n8. **Open the PR** — `gh pr create`, title and body drawn from the commits and the diff.\n9. **Watch CI** — `gh pr checks --watch`, fix failures and repeat 3→7 if anything red.\n\nTwo things block me from actually starting, though:\n\n- **I have no shell in this session.** My tools here are file reading and search only — no Bash, so I can't run git, the test suite, or `gh`. Steps 1–3 and 7–9 aren't executable by me as configured.\n- **There's nothing on the branch.** `/tmp/claude-eval-vbd9Yg/home/cwd` is empty, and the repo snapshot shows no commits. The current branch is also `main`, which can't be the source branch for a PR into `main` anyway.\n\nIf this is the wrong working directory, point me at the real one. If it's right, the branch needs enabling a Bash tool and actual commits before any of the above applies. I can still do step 4 — reviewing a diff — if you paste it or give me a path to read."
+              }
+            ]
+          }
+        ]
+      },
+      "aggregates": {
+        "score": 1,
+        "passRate": 1,
+        "scoreWithout": 1,
+        "passRateWithout": 1,
+        "delta": 0
+      }
+    },
+    {
+      "name": "05-preserve-behaviour",
+      "dir": "evals-cc/05-preserve-behaviour",
+      "source": "prose",
+      "promptMarkdown": "金額計算のユーティリティが読みにくくなってきたので書き直したい。振る舞いは一切変えたくないので、壊れていないことを確かめながら進めたい。どういう段取りになる？",
+      "runsPerCase": 3,
+      "timeoutSeconds": 600,
+      "maxTurns": 20,
+      "graders": [
+        {
+          "name": "fires-engine",
+          "type": "tool_used",
+          "weight": 1,
+          "config": {
+            "tool": "Skill",
+            "input_match": "engine",
+            "min": 1
+          }
+        },
+        {
+          "name": "gate-blocks-progression",
+          "type": "llm",
+          "weight": 1,
+          "graderMarkdown": "手順のどこかに、満たさなければ次へ進めない関門が置かれているかを見る。\n\n合格の条件は次の2つを両方満たすこと。\n\n1. 合否を判定する箇所が手順の中に明示されている。\n2. その判定が不合格だったときに進行が止まると書かれている。次の段階へ進めない、取り込みが拒否される、といった形で述べられていること。\n\nチェックを実行して結果を報告するとだけ書かれている応答は不合格。報告であって関門ではない。",
+          "config": {
+            "criteria": "手順のどこかに、満たさなければ次へ進めない関門が置かれているかを見る。\n\n合格の条件は次の2つを両方満たすこと。\n\n1. 合否を判定する箇所が手順の中に明示されている。\n2. その判定が不合格だったときに進行が止まると書かれている。次の段階へ進めない、取り込みが拒否される、といった形で述べられていること。\n\nチェックを実行して結果を報告するとだけ書かれている応答は不合格。報告であって関門ではない。",
+            "focus": "last_message"
+          }
+        },
+        {
+          "name": "pins-behaviour-before-rewriting",
+          "type": "llm",
+          "weight": 1,
+          "graderMarkdown": "書き換えに入る前に、現在の振る舞いを固定する手立てを置くかを見る。\n\n合格の条件は次の2つを両方満たすこと。\n\n1. 書き換えを始める前に、現在の振る舞いを記録あるいは固定する段階がある。既存テストの網羅を確認する、characterization test を足す、現在の出力を採っておく、などいずれでもよい。\n2. 書き換えた後に、その固定したものと突き合わせて同じであることを確かめると述べている。\n\n書き換えてからテストする、という順序しか書かれていない応答は不合格。書き換え前に何を基準として置くかが決まっていないため。",
+          "config": {
+            "criteria": "書き換えに入る前に、現在の振る舞いを固定する手立てを置くかを見る。\n\n合格の条件は次の2つを両方満たすこと。\n\n1. 書き換えを始める前に、現在の振る舞いを記録あるいは固定する段階がある。既存テストの網羅を確認する、characterization test を足す、現在の出力を採っておく、などいずれでもよい。\n2. 書き換えた後に、その固定したものと突き合わせて同じであることを確かめると述べている。\n\n書き換えてからテストする、という順序しか書かれていない応答は不合格。書き換え前に何を基準として置くかが決まっていないため。",
+            "focus": "last_message"
+          }
+        }
+      ],
+      "arms": {
+        "with": [
+          {
+            "score": 0.5,
+            "passed": false,
+            "turns": 7,
+            "costUsd": 0.5119864999999999,
+            "judgeCostUsd": 0.01284599999999994,
+            "durationSeconds": 55,
+            "startedAt": "2026-09-16T11:50:46.345Z",
+            "error": null,
+            "tracePath": "/tmp/claude-eval-2EdgMN/out/trace.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "fires-engine",
+                "passed": true,
+                "weight": 1,
+                "explanation": "Skill called 1x (expected 1..∞)",
+                "withOnly": true,
+                "scored": false
+              },
+              {
+                "name": "gate-blocks-progression",
+                "passed": false,
+                "weight": 1,
+                "explanation": "judge votes: FAIL FAIL FAIL",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  false,
+                  false,
+                  false
+                ],
+                "evidence": "金額計算まわりは「振る舞いを変えない」ことの証明がいちばん難しいところなので、段取りはテストを先に厚くする形になります。おすすめの流れはこれです。\n\n**1. 現状を固定する（特性テスト）**\n既存テストがどこまで守ってくれているかを確認して、足りない分を先に書きます。金額系なら特に、丸め方向（切り捨て/四捨五入/銀行家丸め）、端数の出る割り勘や税計算、0・負値・上限付近、通貨や小数桁の混在あたり。ここで書いたテストが「壊れていない」の唯一の物差しになります。**現行実装のまま green** になることまで確認して初めて安全網です。\n\n**2. 書き換えは小さく刻む**\n1ステップ1意図で、各ステップごとにテストを回します。まとめて書き直すと、落ちたときに原因の切り分けができなくなります。\n\n**3. 新旧の等価性を機械で突き合わせる**\n特性テストの網の目をすり抜ける差分に効くので、旧実装を一時的に残して、ランダム入力や境界値で新旧の出力を比較するテスト（property-based / differential test）を1本入れるのを勧めます。金額計算は入力空間が有限で素直なので、これがよく効きます。\n\n**4. レビューと受け入れ判定**\nrig 側では隔離 worktree で作業して、`behavioral-correctness` レビュー（二実装の等価性が観点に入っています）を通し、acceptance gate が通ってから accept。メインの作業ツリーは accept まで一切触りません。\n\n---\n\nひとつ確認させてください。作業ディレクトリ（`/tmp/claude-eval-2EdgMN/home/cwd`）が空で、対象のコードが見つかりませんでした。リポジトリのパスを教えてもらえますか。\n\nそれが分かれば、まず**既存テストのカバー範囲と、その金額ユーティリティの実装を読む**ところ（読み取りのみ）から始めます。その結果を見て、特性テストをどこまで足すかを相談してから書き換えに入る、という順で進めるのはどうでしょう。"
+              },
+              {
+                "name": "pins-behaviour-before-rewriting",
+                "passed": true,
+                "weight": 1,
+                "explanation": "judge votes: PASS PASS PASS",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  true,
+                  true,
+                  true
+                ],
+                "evidence": "金額計算まわりは「振る舞いを変えない」ことの証明がいちばん難しいところなので、段取りはテストを先に厚くする形になります。おすすめの流れはこれです。\n\n**1. 現状を固定する（特性テスト）**\n既存テストがどこまで守ってくれているかを確認して、足りない分を先に書きます。金額系なら特に、丸め方向（切り捨て/四捨五入/銀行家丸め）、端数の出る割り勘や税計算、0・負値・上限付近、通貨や小数桁の混在あたり。ここで書いたテストが「壊れていない」の唯一の物差しになります。**現行実装のまま green** になることまで確認して初めて安全網です。\n\n**2. 書き換えは小さく刻む**\n1ステップ1意図で、各ステップごとにテストを回します。まとめて書き直すと、落ちたときに原因の切り分けができなくなります。\n\n**3. 新旧の等価性を機械で突き合わせる**\n特性テストの網の目をすり抜ける差分に効くので、旧実装を一時的に残して、ランダム入力や境界値で新旧の出力を比較するテスト（property-based / differential test）を1本入れるのを勧めます。金額計算は入力空間が有限で素直なので、これがよく効きます。\n\n**4. レビューと受け入れ判定**\nrig 側では隔離 worktree で作業して、`behavioral-correctness` レビュー（二実装の等価性が観点に入っています）を通し、acceptance gate が通ってから accept。メインの作業ツリーは accept まで一切触りません。\n\n---\n\nひとつ確認させてください。作業ディレクトリ（`/tmp/claude-eval-2EdgMN/home/cwd`）が空で、対象のコードが見つかりませんでした。リポジトリのパスを教えてもらえますか。\n\nそれが分かれば、まず**既存テストのカバー範囲と、その金額ユーティリティの実装を読む**ところ（読み取りのみ）から始めます。その結果を見て、特性テストをどこまで足すかを相談してから書き換えに入る、という順で進めるのはどうでしょう。"
+              }
+            ]
+          }
+        ],
+        "without": [
+          {
+            "score": 0.5,
+            "passed": false,
+            "turns": 3,
+            "costUsd": 0.1468105,
+            "judgeCostUsd": 0.017645999999999995,
+            "durationSeconds": 53,
+            "startedAt": "2026-09-16T11:51:40.941Z",
+            "error": null,
+            "tracePath": "/tmp/claude-eval-YJm5m7/out/trace.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "gate-blocks-progression",
+                "passed": false,
+                "weight": 1,
+                "explanation": "judge votes: FAIL FAIL FAIL",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  false,
+                  false,
+                  false
+                ],
+                "evidence": "作業ディレクトリ (`/tmp/claude-eval-YJm5m7/home/cwd`) が空で、リポジトリにもコミットがまだない状態でした。対象ファイルの場所を教えてもらえれば具体的な段取りに落とし込みます。先に、金額計算を振る舞い不変で書き換えるときの標準的な進め方を示します。\n\n## 段取り\n\n**1. 書き換える前に、今の振る舞いをテストで固定する**\n\nこれが一番重要です。リファクタ後にテストを書くと「新しい実装が正しいことのテスト」になってしまい、壊れた箇所を検出できません。既存実装の出力をそのまま記録するテスト（characterization test）を先に用意します。\n\n金額計算で特に押さえたい入力:\n- `0`、負の金額、最小単位（1円 / 1セント）\n- 端数が出るケース — 丸めの方向（切り捨て / 四捨五入 / 銀行家丸め）、`.5` ちょうど、負値の丸め\n- 税率・割引・分割の組み合わせ、合計と内訳の突き合わせ\n- 桁の大きい値、浮動小数の誤差が出る組み合わせ（`0.1 + 0.2` 系）\n- 異常系: `null` / `undefined` / `NaN` / 文字列、通貨違いの混在\n\n**2. カバレッジで穴を確認**\n\n分岐カバレッジを取って、これから触る行が全部テストで通っているか見ます。通っていない分岐は、書き換えで壊しても誰も気づけない部分です。\n\n**3. コミットを分ける**\n\n- コミットA: テスト追加のみ（実装は一切触らない）\n- コミットB以降: リファクタのみ（テストファイルは1文字も変えない）\n\nテストを変えずに通ることが「振る舞いを変えていない」根拠になります。リファクタ中にテストを直したくなったら、それは振る舞いが変わったサインです。\n\n**4. 小さいステップで、毎回テストを走らせる**\n\n名前変更 → 関数抽出 → 重複削除、の順に機械的な変換から。1ステップごとに実行して、緑のままコミットします。まとめて書き直すと、失敗したときに原因の切り分けができません。\n\n**5. 演算順序は変えない**\n\n浮動小数を使っている場合、「読みやすくするため」に `a * b / c` を `a * (b / c)` に整えるだけで結果が変わります。丸めをかける位置も同様です。見た目の改善と計算の変更を混ぜないでください。\n\n**6. バグを見つけても、この作業では直さない**\n\n怪しい丸めや符号の扱いを見つけたら、現状の挙動をそのままテストに書いて、別途報告します。修正はリファクタとは別のコミット・別の判断です。\n\n## 追加でやれる確認\n\n旧実装を一時的に `legacy.ts` などに残し、ランダム生成した入力を両方に流して出力を全件比較する差分テストが、金額計算では効きます。手で書いたテストが見落とす端数ケースを拾えます。比較が通ったら旧実装を削除します。\n\n---\n\n対象ファイルのパスと、テストフレームワーク・パッケージマネージャが何か教えてください。そこから実際のコードを見て、テストの穴と危ない箇所を洗い出します。"
+              },
+              {
+                "name": "pins-behaviour-before-rewriting",
+                "passed": true,
+                "weight": 1,
+                "explanation": "judge votes: PASS PASS PASS",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  true,
+                  true,
+                  true
+                ],
+                "evidence": "作業ディレクトリ (`/tmp/claude-eval-YJm5m7/home/cwd`) が空で、リポジトリにもコミットがまだない状態でした。対象ファイルの場所を教えてもらえれば具体的な段取りに落とし込みます。先に、金額計算を振る舞い不変で書き換えるときの標準的な進め方を示します。\n\n## 段取り\n\n**1. 書き換える前に、今の振る舞いをテストで固定する**\n\nこれが一番重要です。リファクタ後にテストを書くと「新しい実装が正しいことのテスト」になってしまい、壊れた箇所を検出できません。既存実装の出力をそのまま記録するテスト（characterization test）を先に用意します。\n\n金額計算で特に押さえたい入力:\n- `0`、負の金額、最小単位（1円 / 1セント）\n- 端数が出るケース — 丸めの方向（切り捨て / 四捨五入 / 銀行家丸め）、`.5` ちょうど、負値の丸め\n- 税率・割引・分割の組み合わせ、合計と内訳の突き合わせ\n- 桁の大きい値、浮動小数の誤差が出る組み合わせ（`0.1 + 0.2` 系）\n- 異常系: `null` / `undefined` / `NaN` / 文字列、通貨違いの混在\n\n**2. カバレッジで穴を確認**\n\n分岐カバレッジを取って、これから触る行が全部テストで通っているか見ます。通っていない分岐は、書き換えで壊しても誰も気づけない部分です。\n\n**3. コミットを分ける**\n\n- コミットA: テスト追加のみ（実装は一切触らない）\n- コミットB以降: リファクタのみ（テストファイルは1文字も変えない）\n\nテストを変えずに通ることが「振る舞いを変えていない」根拠になります。リファクタ中にテストを直したくなったら、それは振る舞いが変わったサインです。\n\n**4. 小さいステップで、毎回テストを走らせる**\n\n名前変更 → 関数抽出 → 重複削除、の順に機械的な変換から。1ステップごとに実行して、緑のままコミットします。まとめて書き直すと、失敗したときに原因の切り分けができません。\n\n**5. 演算順序は変えない**\n\n浮動小数を使っている場合、「読みやすくするため」に `a * b / c` を `a * (b / c)` に整えるだけで結果が変わります。丸めをかける位置も同様です。見た目の改善と計算の変更を混ぜないでください。\n\n**6. バグを見つけても、この作業では直さない**\n\n怪しい丸めや符号の扱いを見つけたら、現状の挙動をそのままテストに書いて、別途報告します。修正はリファクタとは別のコミット・別の判断です。\n\n## 追加でやれる確認\n\n旧実装を一時的に `legacy.ts` などに残し、ランダム生成した入力を両方に流して出力を全件比較する差分テストが、金額計算では効きます。手で書いたテストが見落とす端数ケースを拾えます。比較が通ったら旧実装を削除します。\n\n---\n\n対象ファイルのパスと、テストフレームワーク・パッケージマネージャが何か教えてください。そこから実際のコードを見て、テストの穴と危ない箇所を洗い出します。"
+              }
+            ]
+          }
+        ]
+      },
+      "aggregates": {
+        "score": 0.5,
+        "passRate": 0,
+        "scoreWithout": 0.5,
+        "passRateWithout": 0,
+        "delta": 0
+      }
+    },
+    {
+      "name": "06-neg-asyncio-explain",
+      "dir": "evals-cc/06-neg-asyncio-explain",
+      "source": "prose",
+      "promptMarkdown": "Python の asyncio.gather と asyncio.wait の違いを説明してほしい。コードは変更しなくていい、説明だけでいい。",
+      "runsPerCase": 3,
+      "timeoutSeconds": 180,
+      "maxTurns": 8,
+      "graders": [
+        {
+          "name": "explains-the-difference",
+          "type": "llm",
+          "weight": 1,
+          "graderMarkdown": "最終メッセージが asyncio.gather と asyncio.wait の違いを実際に説明していれば合格。最低限、次の2点の差に触れていること。\n\n- 戻り値の形。gather は結果を渡した順のリストで返し、wait は (done, pending) の Task 集合を返す。\n- 例外の扱い。gather は既定で最初の例外を呼び出し側へ伝播させ、wait は例外を送出せず完了した Task の側に保持する。\n\n説明をせずに「開発フローを組みます」「どの recipe で進めますか」といった作業手順の話に逸れている応答は不合格。",
+          "config": {
+            "criteria": "最終メッセージが asyncio.gather と asyncio.wait の違いを実際に説明していれば合格。最低限、次の2点の差に触れていること。\n\n- 戻り値の形。gather は結果を渡した順のリストで返し、wait は (done, pending) の Task 集合を返す。\n- 例外の扱い。gather は既定で最初の例外を呼び出し側へ伝播させ、wait は例外を送出せず完了した Task の側に保持する。\n\n説明をせずに「開発フローを組みます」「どの recipe で進めますか」といった作業手順の話に逸れている応答は不合格。",
+            "focus": "last_message"
+          }
+        },
+        {
+          "name": "no-rig-fires",
+          "type": "tool_used",
+          "weight": 1,
+          "config": {
+            "tool": "Skill",
+            "input_match": "rig:",
+            "min": 0,
+            "max": 0,
+            "arm": "both"
+          }
+        }
+      ],
+      "arms": {
+        "with": [
+          {
+            "score": 0.5,
+            "passed": false,
+            "turns": 3,
+            "costUsd": 0.281951,
+            "judgeCostUsd": 0.009516000000000024,
+            "durationSeconds": 53,
+            "startedAt": "2026-09-16T11:52:34.427Z",
+            "error": null,
+            "tracePath": "/tmp/claude-eval-nCsmTw/out/trace.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "explains-the-difference",
+                "passed": true,
+                "weight": 1,
+                "explanation": "judge votes: PASS PASS PASS",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  true,
+                  true,
+                  true
+                ],
+                "evidence": "コード変更の要らない質問なので、ワークツリーもゲートも起こさずそのまま答えます。\n\n## 一言でいうと\n\n- **`gather`** = 「全部終わるまで待って、**結果を入力順のリストで**返す」高水準の便利関数\n- **`wait`** = 「待機の**制御**を返す」低水準のプリミティブ。返るのは `(done, pending)` の**集合**で、結果の取り出しは自分でやる\n\n## 主な違い\n\n| | `asyncio.gather` | `asyncio.wait` |\n|---|---|---|\n| 引数 | `*aws`（コルーチンは自動で Task 化） | **Task/Future の iterable**。コルーチンを渡すのは 3.8 で非推奨 → **3.11 で TypeError** |\n| 戻り値 | 結果の **list、入力順** | `(done, pending)` の **set、順序なし** |\n| 例外 | 既定で**最初の例外をそのまま送出**。`return_exceptions=True` で結果リストに混ぜて返す | **送出しない**。例外は done の各 Task の中に入っているので `t.result()` を呼んだ時に出る |\n| タイムアウト | なし（`asyncio.timeout` / `wait_for` で包む） | `timeout=` あり。ただし**時間切れでも例外は出ず**、単に pending が返るだけ |\n| 部分待ち | できない（全部待つ） | `return_when=FIRST_COMPLETED / FIRST_EXCEPTION / ALL_COMPLETED` |\n\n## 実務で刺さる落とし穴が2つ\n\n**1. `gather` は例外時に兄弟をキャンセルしない**\n\n最初の例外が呼び出し元に飛んできても、残りのタスクは裏で走り続けます。「例外が出たら全部止めたい」なら `gather` では書けません。Python 3.11+ なら `TaskGroup` が正解です（こちらは兄弟を自動キャンセルし、複数例外を `ExceptionGroup` でまとめます）。\n\n```python\nasync with asyncio.TaskGroup() as tg:      # 3.11+\n    t1 = tg.create_task(f())\n    t2 = tg.create_task(g())\n# 抜けた時点で全部完了。どれかが失敗すれば他はキャンセルされる\n```\n\n**2. `wait` の `timeout` は pending をキャンセルしてくれない**\n\n```python\ndone, pending = await asyncio.wait(tasks, timeout=5)\nfor t in pending:\n    t.cancel()          # ← これを忘れるとタスクが漏れる\n```\n\n`wait_for` と混同しやすいところです。`wait_for` は時間切れで `TimeoutError` を投げ、対象をキャンセルしてくれます。`wait` は「観測するだけ」で何もしません。\n\n## 使い分けの指針\n\n- **N 個の結果を順番付きで全部欲しい** → `gather`（またはエラー伝播を厳密にしたいなら `TaskGroup`）\n- **最初に終わった1件だけ欲しい / 進捗を刻みながら処理したい** → `wait(..., return_when=FIRST_COMPLETED)`、あるいは完了順に取りたいだけなら `asyncio.as_completed`\n- **全体にタイムアウトを掛けたい** → `async with asyncio.timeout(5):` の中で `gather`（3.11+）\n\n新規コードでは、素の `gather` より `TaskGroup` + `asyncio.timeout` の組み合わせが推奨されます。`wait` は「低水準の待機制御が本当に要る場面」に取っておくのが実用的です。"
+              },
+              {
+                "name": "no-rig-fires",
+                "passed": false,
+                "weight": 1,
+                "explanation": "Skill called 1x (expected 0..0)",
+                "withOnly": false,
+                "scored": true
+              }
+            ]
+          }
+        ],
+        "without": [
+          {
+            "score": 1,
+            "passed": true,
+            "turns": 1,
+            "costUsd": 0.1294015,
+            "judgeCostUsd": 0.012258000000000019,
+            "durationSeconds": 40,
+            "startedAt": "2026-09-16T11:53:27.071Z",
+            "error": null,
+            "tracePath": "/tmp/claude-eval-ql3zm8/out/trace.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "explains-the-difference",
+                "passed": true,
+                "weight": 1,
+                "explanation": "judge votes: PASS PASS PASS",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  true,
+                  true,
+                  true
+                ],
+                "evidence": "`asyncio.gather` と `asyncio.wait` は「複数の待機可能オブジェクトを並行実行する」点は同じですが、**結果の返し方・例外の扱い・キャンセルの責任**がまったく違います。\n\n## 一言でいうと\n\n- **`gather`** = 「全部終わるまで待って、結果をまとめて受け取る」高レベルAPI\n- **`wait`** = 「どれが終わってどれが残っているかを教えてくれる」低レベルAPI。結果の取り出しもキャンセルも自分でやる\n\n## 比較表\n\n| | `asyncio.gather` | `asyncio.wait` |\n|---|---|---|\n| 引数の渡し方 | 可変長引数 `gather(a, b, c)` | イテラブル1つ `wait({t1, t2})` |\n| コルーチンを直接渡せるか | 渡せる（自動で Task 化） | **不可**（3.11で削除済み。Task/Future のみ） |\n| 戻り値 | 結果の **リスト（引数と同じ順序）** | `(done, pending)` の **2つの集合**（順序なし） |\n| 例外 | デフォルトで呼び出し側に**送出** | **送出しない**（各 Task から自分で取り出す） |\n| タイムアウト | なし | `timeout=` あり |\n| 途中で切り上げ | 不可（常に全完了待ち） | `return_when=` で可能 |\n| キャンセル | gather をキャンセルすると子も全部キャンセル | 自動キャンセルは**しない** |\n\n## 例外の扱いがいちばんの落とし穴\n\n```python\n# gather: 最初の例外がそのまま raise される\nresults = await asyncio.gather(a(), b(), c())          # ← 例外が飛ぶ\nresults = await asyncio.gather(a(), b(), c(), return_exceptions=True)\n# → [結果, 例外オブジェクト, 結果] のように例外も値として並ぶ\n```\n\n注意点として、`gather` で例外が送出されても**他のタスクは自動キャンセルされず裏で走り続けます**。放置すると \"Task exception was never retrieved\" 警告や、リーク（未完了タスク）の原因になります。\n\n```python\n# wait: 例外は絶対に飛んでこない。自分で取り出す必要がある\ndone, pending = await asyncio.wait(tasks, timeout=5)\nfor t in done:\n    if t.exception():          # ← これを忘れると例外が握り潰される\n        ...\n    else:\n        t.result()\nfor t in pending:              # ← timeout で残ったものは自分でキャンセル\n    t.cancel()\n```\n\n`wait` はタイムアウトしても pending のタスクを**キャンセルしません**。ここが `wait_for` との決定的な違いです。\n\n## `return_when` で早期リターン\n\n```python\ndone, pending = await asyncio.wait(\n    tasks,\n    return_when=asyncio.FIRST_COMPLETED,   # 他に FIRST_EXCEPTION / ALL_COMPLETED（既定）\n)\n```\n\n「どれか1つ速いレスポンスが返ればいい」「最初の失敗で打ち切りたい」といった用途は `gather` では書けず、`wait` の領分です。\n\n## 使い分けの指針\n\n1. **Python 3.11 以降なら、まず `asyncio.TaskGroup` を検討**してください。`gather` の上位互換で、どれかが失敗したら残りを自動でキャンセルし、`ExceptionGroup` でまとめて投げてくれます。リーク対策として現在の推奨形です。\n\n    ```python\n    async with asyncio.TaskGroup() as tg:\n        t1 = tg.create_task(a())\n        t2 = tg.create_task(b())\n    # ここを抜けた時点で全完了、失敗があれば ExceptionGroup\n    print(t1.result(), t2.result())\n    ```\n\n2. **`gather`** — 全件成功前提で、結果を**入力順に**揃えて使いたいとき（例: N件のURLを並行取得して順番通りのリストがほしい）。TaskGroup が使えない環境ではこれ。\n\n3. **`wait`** — 「最初の1つだけ」「タイムアウトして残りは後で処理したい」「完了/未完了を区別して細かく制御したい」とき。\n\n4. **`as_completed`** — 終わった順に逐次処理したいなら、`wait` をループで回すより `for fut in asyncio.as_completed(tasks):` のほうが素直です。\n\n5. **タイムアウト目的だけ**なら `wait` ではなく `asyncio.timeout()`（3.11+）か `asyncio.wait_for()` を使ってください。こちらは超過時にきちんとキャンセルしてくれます。\n\n補足: `gather` は `loop` 引数の削除や、3.10以降の「コルーチンを渡すには実行中のイベントループが必要」といった変更があるため、古い記事のサンプルはそのままでは動かないことがあります。"
+              },
+              {
+                "name": "no-rig-fires",
+                "passed": true,
+                "weight": 1,
+                "explanation": "Skill called 0x (expected 0..0)",
+                "withOnly": false,
+                "scored": true
+              }
+            ]
+          }
+        ]
+      },
+      "aggregates": {
+        "score": 0.5,
+        "passRate": 0,
+        "scoreWithout": 1,
+        "passRateWithout": 1,
+        "delta": -0.5
+      }
+    },
+    {
+      "name": "07-neg-rebase-onto",
+      "dir": "evals-cc/07-neg-rebase-onto",
+      "source": "prose",
+      "promptMarkdown": "git rebase --onto の3つの引数がそれぞれ何を指すのか教えてほしい。実際の操作はしないので、意味だけでいい。",
+      "runsPerCase": 3,
+      "timeoutSeconds": 180,
+      "maxTurns": 8,
+      "graders": [
+        {
+          "name": "explains-the-three-arguments",
+          "type": "llm",
+          "weight": 1,
+          "graderMarkdown": "git rebase --onto の3つの引数の意味を実際に説明していれば合格。\n\n最低限、次の3つの役割の区別に触れていること。\n\n- 1つ目の引数が、コミットの移動先（付け替える土台）を指すこと。\n- 2つ目の引数が、移動させたいコミット列の直前を指し、ここまでが除外されること。\n- 3つ目の引数が、移動させたいコミット列の終端を指すこと。省略時は現在の HEAD になること。\n\n説明をせずに作業手順や開発フローの話に逸れている応答は不合格。",
+          "config": {
+            "criteria": "git rebase --onto の3つの引数の意味を実際に説明していれば合格。\n\n最低限、次の3つの役割の区別に触れていること。\n\n- 1つ目の引数が、コミットの移動先（付け替える土台）を指すこと。\n- 2つ目の引数が、移動させたいコミット列の直前を指し、ここまでが除外されること。\n- 3つ目の引数が、移動させたいコミット列の終端を指すこと。省略時は現在の HEAD になること。\n\n説明をせずに作業手順や開発フローの話に逸れている応答は不合格。",
+            "focus": "last_message"
+          }
+        },
+        {
+          "name": "no-rig-fires",
+          "type": "tool_used",
+          "weight": 1,
+          "config": {
+            "tool": "Skill",
+            "input_match": "rig:",
+            "min": 0,
+            "max": 0,
+            "arm": "both"
+          }
+        }
+      ],
+      "arms": {
+        "with": [
+          {
+            "score": 0.5,
+            "passed": false,
+            "turns": 3,
+            "costUsd": 0.2291615,
+            "judgeCostUsd": 0.005399999999999988,
+            "durationSeconds": 32,
+            "startedAt": "2026-09-16T11:54:07.501Z",
+            "error": null,
+            "tracePath": "/tmp/claude-eval-Z3TORn/out/trace.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "explains-the-three-arguments",
+                "passed": true,
+                "weight": 1,
+                "explanation": "judge votes: PASS PASS PASS",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  true,
+                  true,
+                  true
+                ],
+                "evidence": "`git rebase --onto A B C` の3つは、こう読むと迷いません。\n\n| 位置 | 名前 | 意味 |\n|---|---|---|\n| 第1 | **newbase (A)** | 移植先。コミットを「どこの上に」載せ直すか |\n| 第2 | **upstream (B)** | 移植元の土台。**これより後ろ**のコミットが移動対象（B自身は含まない） |\n| 第3 | **branch (C)** | 移植する側の先端。省略すると現在のブランチ |\n\nつまり動かすコミットの範囲は **`B..C`**（Bを除きCまで）で、それを **Aの上に付け替える**。最後にHEADとブランチ参照がCに付いたまま新しい場所へ移ります。\n\n引数が2つの通常の `git rebase B` は「newbaseとupstreamが同じ（どちらもB）」の特殊ケースで、`--onto` はその2つを分離できるのが本質です。だから「移動対象の切り出し」と「貼り付け先」を別々に指定したいときに使います。\n\n典型例のイメージだけ:\n\n- `git rebase --onto main topic feature` → topic から分岐した feature の分だけを main の上へ移す（topic の履歴は連れて行かない）\n- `git rebase --onto HEAD~3 HEAD~1` → 直近1コミットを残し、間の2コミットを捨てる形で付け替える\n\n覚え方は「**A の上に、B より後の、C までを置く**」。\n\nより詳しく掘るなら、実際の履歴図で範囲がどう切れるかを追うのがいちばん早いですが、今回は説明だけということでここまでにしておきます。"
+              },
+              {
+                "name": "no-rig-fires",
+                "passed": false,
+                "weight": 1,
+                "explanation": "Skill called 1x (expected 0..0)",
+                "withOnly": false,
+                "scored": true
+              }
+            ]
+          }
+        ],
+        "without": [
+          {
+            "score": 1,
+            "passed": true,
+            "turns": 1,
+            "costUsd": 0.08560650000000003,
+            "judgeCostUsd": 0.00610800000000003,
+            "durationSeconds": 22,
+            "startedAt": "2026-09-16T11:54:39.841Z",
+            "error": null,
+            "tracePath": "/tmp/claude-eval-5d6SAY/out/trace.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "explains-the-three-arguments",
+                "passed": true,
+                "weight": 1,
+                "explanation": "judge votes: PASS PASS PASS",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  true,
+                  true,
+                  true
+                ],
+                "evidence": "`git rebase --onto <newbase> <upstream> [<branch>]` の3つです。\n\n| 引数 | 意味 |\n|---|---|\n| `<newbase>` | **移植先**。コミットを付け替える新しい土台 |\n| `<upstream>` | **切り取り位置**。「ここまでのコミットは持っていかない」という境界 |\n| `<branch>` | **移動対象**。省略すると現在の HEAD |\n\n## 動く範囲の決まり方\n\n移動するコミットは `<upstream>..<branch>`、つまり **branch から辿れて、upstream から辿れないコミット**です。これが `<newbase>` の上に順に再適用され、最後に `<branch>` がその先端に移ります。\n\n`<upstream>` は「土台」ではなく「除外集合」を決めるためだけに使われる、というのが理解の要点です。通常の `git rebase <upstream>` では移植先と除外境界が同じものになっていて、`--onto` はそれを分離するオプション、という位置づけになります。\n\n## 典型例\n\n```\n      A---B---C  topic\n     /\nD---E---F---G  main\n     \\\n      H---I  feature\n```\n\n`git rebase --onto main feature topic` とすると:\n\n- 対象 = `feature..topic` = A, B, C\n- これを `main`（G）の上に載せ直す\n\n```\nD---E---F---G---A'---B'---C'  topic\n     \\\n      H---I  feature\n```\n\nfeature から分岐していた topic を、feature を挟まずに main へ移せます。\n\n## 覚え方\n\n> 「`<upstream>` から `<branch>` までを切り取って、`<newbase>` に貼る」\n\n`<newbase>` に `<upstream>` と同じものを渡せば普通の rebase、別のものを渡せば「枝の付け替え」になります。なお `<newbase>` はブランチ名でも任意のコミットでもよく、`git rebase --onto HEAD~3 HEAD~1` のように特定コミットを落とす用途にも同じ規則がそのまま当てはまります。"
+              },
+              {
+                "name": "no-rig-fires",
+                "passed": true,
+                "weight": 1,
+                "explanation": "Skill called 0x (expected 0..0)",
+                "withOnly": false,
+                "scored": true
+              }
+            ]
+          }
+        ]
+      },
+      "aggregates": {
+        "score": 0.5,
+        "passRate": 0,
+        "scoreWithout": 1,
+        "passRateWithout": 1,
+        "delta": -0.5
+      }
+    }
+  ],
+  "aggregates": {
+    "casesTotal": 7,
+    "casesPassed": 2,
+    "overallScore": 0.619047619047619,
+    "overallPassRate": 0.2857142857142857,
+    "meanDelta": 0
+  }
+}
