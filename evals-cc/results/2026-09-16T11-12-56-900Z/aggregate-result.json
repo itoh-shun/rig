@@ -1,0 +1,257 @@
+{
+  "schemaVersion": 1,
+  "claudeVersion": "2.1.273",
+  "startedAt": "2026-09-16T11:12:56.900Z",
+  "durationSeconds": 268,
+  "costUsd": 1.3808470000000002,
+  "partial": false,
+  "suite": {
+    "root": "/home/itoshun/works/rig-plugineval",
+    "ablation": "with-without",
+    "judgeModel": "sonnet",
+    "threshold": 1,
+    "concurrency": 1,
+    "plugins": [
+      {
+        "name": "rig",
+        "version": "3.0.1",
+        "path": "/home/itoshun/works/rig-plugineval"
+      }
+    ]
+  },
+  "cases": [
+    {
+      "name": "01-review-to-merge",
+      "dir": "evals-cc/01-review-to-merge",
+      "source": "prose",
+      "promptMarkdown": "これから書いたコードをレビューして、マージまで持っていきたい。レビュー観点の抜けが怖いので、どういう手順で進めることになるかを先に見せてほしい。",
+      "runsPerCase": 3,
+      "timeoutSeconds": 600,
+      "maxTurns": 20,
+      "graders": [
+        {
+          "name": "commits-to-a-flow",
+          "type": "llm",
+          "weight": 1,
+          "graderMarkdown": "最終メッセージが次の4点をすべて満たすとき合格。1つでも欠けたら不合格。\n\n1. 進め方を具体的に1つに決めている。recipe 名を挙げるか、実行される step を順序付きで列挙している。選択肢を並べたまま「どれにしますか」で終わっていない。\n2. 受け入れゲート（acceptance gate / review gate、あるいは「何を満たせば次へ進めるか」）がどこに掛かるかに触れている。\n3. 確認の問いかけだけで終わっていない。「レビューのフローを実行しますか？」と尋ねて止まっているだけの応答は不合格。\n4. 手順を示さずにいきなりコードの修正差分やパッチだけを出している応答は不合格。",
+          "config": {
+            "criteria": "最終メッセージが次の4点をすべて満たすとき合格。1つでも欠けたら不合格。\n\n1. 進め方を具体的に1つに決めている。recipe 名を挙げるか、実行される step を順序付きで列挙している。選択肢を並べたまま「どれにしますか」で終わっていない。\n2. 受け入れゲート（acceptance gate / review gate、あるいは「何を満たせば次へ進めるか」）がどこに掛かるかに触れている。\n3. 確認の問いかけだけで終わっていない。「レビューのフローを実行しますか？」と尋ねて止まっているだけの応答は不合格。\n4. 手順を示さずにいきなりコードの修正差分やパッチだけを出している応答は不合格。",
+            "focus": "last_message"
+          }
+        },
+        {
+          "name": "fires-engine",
+          "type": "tool_used",
+          "weight": 1,
+          "config": {
+            "tool": "Skill",
+            "input_match": "engine",
+            "min": 1
+          }
+        }
+      ],
+      "arms": {
+        "with": [
+          {
+            "score": 0,
+            "passed": false,
+            "turns": 8,
+            "costUsd": 0.83509,
+            "judgeCostUsd": 0.00963,
+            "durationSeconds": 126,
+            "startedAt": "2026-09-16T11:12:56.939Z",
+            "error": null,
+            "tracePath": "/tmp/claude-eval-jTjLVR/out/trace.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "commits-to-a-flow",
+                "passed": false,
+                "weight": 1,
+                "explanation": "judge votes: FAIL FAIL FAIL",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  false,
+                  false,
+                  false
+                ],
+                "evidence": "手順の前に、2点だけ先に共有します（どちらも進め方に影響します）。\n\n- **このセッションにシェル（Bash）がありません。** `git diff` も `rig-wb` も親から直接は叩けません。実行は Bash を持つサブエージェント経由になります。\n- **レビュー対象の変更が見つかりません。** `/tmp/claude-eval-jTjLVR/home/cwd` は空で、隣の `.git` はコミットも ref も無いスケルトンです。「書いたコード」が別の場所にあるなら、パスを教えてください。\n\nその上で、想定している手順です。\n\n## 手順（`/rig:go` workbench ルート）\n\n| # | ステップ | 中身 | ゲート |\n|---|---|---|---|\n| 0 | 分類 | 変更規模と種類（bugfix / feature / migration 有無）を判定し、recipe を決める | — |\n| 1 | 隔離 | 変更を専用 worktree に載せる。**accept するまで本体の作業ツリーには触れない** | — |\n| 2 | レビュー fan-out | 下記のレーンを**並列で一斉に**走らせる。各レーンは `file:line` 付きの構造化所見を返す | review-gate |\n| 3 | 所見の反証 | `--verify-findings`。REJECT の根拠を `finding-verifier` に1件ずつ渡し、反証できたものは落とす（誤検知対策） | — |\n| 4 | 受け入れ判定 | 機械ゲート。secret scan / destructive scan / lint / テスト。**未達なら accept が拒否される**（「直しました」の自己申告は通らない） | acceptance-gate |\n| 5 | accept | worktree の差分を本体へ取り込む | 明示確認 |\n| 6 | PR → マージ | PR 作成、CI 確認、マージ。push 系は毎回明示アクション | 明示確認 |\n\n各ステップ後に「次へ進むか」を聞きます（`--autonomous` を付けない限り）。\n\n## レビュー観点のレーン（ここが本題ですよね）\n\n**既定の4本** — security / design / test / behavioral-correctness（状態遷移・非同期・単位と意味・境界値）\n\n**変更内容に応じて足す** — performance / observability（失敗が見えるか・切り戻せるか）/ docs（diff が嘘にした記述）/ api-compat（破壊的変更・semver）/ migration（戻り道・ロック時間）\n\n**敵対レビュー（`--adversarial`）** — lazy-senior（消せるコード・稼いでいないコメント・将来の負債）/ cognitive-economist（命名・素直に読めるか・局所性）\n\n観点の抜けが怖いとのことなので、**追加レンズは変更の中身を見てから提案します**（マイグレーションが無いのに migration レーンを回しても票が薄くなるだけなので）。さらに `rig:drill` を使えば「どのレビュアーが実際に何を捕まえたか」を検出率として数値で出せます — 観点の網羅を主観でなく数字で確認したい場合はこちらです。\n\n## 確認したいこと\n\n1. レビュー対象のコードはどこにありますか（パス、またはブランチ名）\n2. 敵対レビューまで回しますか、既定の4本で十分ですか\n3. マージまで私が実行してよいですか、それとも PR 作成の手前で止めますか\n\n対象の場所さえ分かれば、まず差分を読んで recipe と追加レーンを具体化した実行計画を出します。"
+              },
+              {
+                "name": "fires-engine",
+                "passed": true,
+                "weight": 1,
+                "explanation": "Skill called 1x (expected 1..∞)",
+                "withOnly": true,
+                "scored": false
+              }
+            ]
+          }
+        ],
+        "without": [
+          {
+            "score": 0,
+            "passed": false,
+            "turns": 3,
+            "costUsd": 0.15217,
+            "judgeCostUsd": 0.011148000000000002,
+            "durationSeconds": 53,
+            "startedAt": "2026-09-16T11:15:02.689Z",
+            "error": null,
+            "tracePath": "/tmp/claude-eval-X94NBr/out/trace.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "commits-to-a-flow",
+                "passed": false,
+                "weight": 1,
+                "explanation": "judge votes: FAIL FAIL FAIL",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  false,
+                  false,
+                  false
+                ],
+                "evidence": "先に状況を2点だけ共有しておきます（どちらも手順の前提に関わります）。\n\n- 作業ディレクトリ `/tmp/claude-eval-X94NBr/home/cwd` は空で、リポジトリにコミットも変更もありません。レビュー対象のコードが別の場所にあるなら、そのパスかブランチ名を教えてください。\n- このセッションでは私にシェル実行権限がありません。ファイルの読解・検索・レビューはできますが、`git diff` / テスト実行 / `gh pr` / マージのコマンドは私からは叩けません。実行部分はお願いする形になります（Bash を許可してもらえればこちらで完結できます）。\n\nその上で、進め方の提案です。\n\n## 手順\n\n**1. レビュー対象の確定**\nどの差分を見るかを最初に固定します（`main...feature-x` なのか、特定コミットなのか、作業ツリーの未コミット分なのか）。ここが曖昧なまま進むと、後で「その変更は見てなかった」が起きます。合わせて、変更の意図・非スコープ（今回あえて直さない部分）も一言もらえると、指摘のノイズが減ります。\n\n**2. 観点の明示（抜け対策の本体）**\nレビュー前に観点表を出して、今回どこを重点的に見るかを合意します。デフォルトの観点は:\n\n- 正確性: 境界値、null/空、オフバイワン、エラー処理と復旧、例外の握り潰し\n- 状態と並行性: 競合、再入、部分的失敗時の一貫性、冪等性\n- 互換性: API/スキーマ/設定の破壊的変更、マイグレーション、ロールバック可否\n- テスト: 新規パスがテストされているか、失敗系があるか、テストが実装をなぞってるだけでないか\n- セキュリティ: 入力検証、認可の抜け、機微情報のログ出力、インジェクション\n- 設計・可読性: 既存ユーティリティの再利用、重複、抽象度のズレ、命名\n- 運用: ログ/メトリクス、性能上のホットパス、外部呼び出しのタイムアウト・リトライ\n\n**3. 自動レビューの実行**\n`/code-review`（effort は high 推奨、広めに拾う）で差分をレビュー。変更が認証・入力処理・外部通信に触れるなら `/security-review` も別途かけます。両者は目的が違うので重ねる価値があります。\n\n**4. 指摘のトリアージ**\n出てきた指摘を「マージブロッカー / 今回直す / 別チケット」に仕分けして提示します。自動レビューは誤検知も出すので、私の方で根拠を確認してから分類し、判断が割れそうなものは理由付きで並べます。採否はそちらで決めてください。\n\n**5. 修正と再確認**\n合意した分を修正し、変更箇所に対して再レビュー。修正で新しく壊れていないかを差分ベースで確認します。\n\n**6. 検証**\nテスト・リント・ビルド・型チェックを実行して結果を確認。ここは実行環境が必要なので、コマンドを提示するか、Bash 許可があればこちらで回して結果をそのまま報告します。落ちたら落ちたと出します。\n\n**7. PR 整備**\nPR タイトル・説明（背景 / 変更内容 / 検証方法 / レビューで見てほしい点）を作成。人間レビュアーが迷いやすい箇所には、こちらから先にコメントを置いておくと往復が減ります。\n\n**8. マージ**\nCI グリーン・必要な承認を確認してからマージ。マージ方式（squash / merge commit）とブランチ削除、マージ後の確認事項（デプロイ、マイグレーション実行など）を事前に決めておきます。**マージは戻しにくい操作なので、実行前に必ず確認を取ります。**\n\n## 確認したいこと\n\n1. レビュー対象のコードはどこにありますか（パス / ブランチ / PR 番号）\n2. ステップ 2 の観点で、特に不安な領域はありますか\n3. 最終的にマージまで私が実行する想定ですか、それとも PR 作成までで手動マージにしますか\n\n1 の回答をもらえれば、ステップ 1 から着手します。"
+              }
+            ]
+          }
+        ]
+      },
+      "aggregates": {
+        "score": 0,
+        "passRate": 0,
+        "scoreWithout": 0,
+        "passRateWithout": 0,
+        "delta": 0
+      }
+    },
+    {
+      "name": "06-neg-asyncio-explain",
+      "dir": "evals-cc/06-neg-asyncio-explain",
+      "source": "prose",
+      "promptMarkdown": "Python の asyncio.gather と asyncio.wait の違いを説明してほしい。コードは変更しなくていい、説明だけでいい。",
+      "runsPerCase": 3,
+      "timeoutSeconds": 180,
+      "maxTurns": 8,
+      "graders": [
+        {
+          "name": "explains-the-difference",
+          "type": "llm",
+          "weight": 1,
+          "graderMarkdown": "最終メッセージが asyncio.gather と asyncio.wait の違いを実際に説明していれば合格。最低限、次の2点の差に触れていること。\n\n- 戻り値の形。gather は結果を渡した順のリストで返し、wait は (done, pending) の Task 集合を返す。\n- 例外の扱い。gather は既定で最初の例外を呼び出し側へ伝播させ、wait は例外を送出せず完了した Task の側に保持する。\n\n説明をせずに「開発フローを組みます」「どの recipe で進めますか」といった作業手順の話に逸れている応答は不合格。",
+          "config": {
+            "criteria": "最終メッセージが asyncio.gather と asyncio.wait の違いを実際に説明していれば合格。最低限、次の2点の差に触れていること。\n\n- 戻り値の形。gather は結果を渡した順のリストで返し、wait は (done, pending) の Task 集合を返す。\n- 例外の扱い。gather は既定で最初の例外を呼び出し側へ伝播させ、wait は例外を送出せず完了した Task の側に保持する。\n\n説明をせずに「開発フローを組みます」「どの recipe で進めますか」といった作業手順の話に逸れている応答は不合格。",
+            "focus": "last_message"
+          }
+        },
+        {
+          "name": "no-rig-fires",
+          "type": "tool_used",
+          "weight": 1,
+          "config": {
+            "tool": "Skill",
+            "input_match": "rig:",
+            "min": 0,
+            "max": 0,
+            "arm": "both"
+          }
+        }
+      ],
+      "arms": {
+        "with": [
+          {
+            "score": 0.5,
+            "passed": false,
+            "turns": 3,
+            "costUsd": 0.2624805,
+            "judgeCostUsd": 0.009132000000000005,
+            "durationSeconds": 49,
+            "startedAt": "2026-09-16T11:15:55.980Z",
+            "error": null,
+            "tracePath": "/tmp/claude-eval-joSH2F/out/trace.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "explains-the-difference",
+                "passed": true,
+                "weight": 1,
+                "explanation": "judge votes: PASS PASS PASS",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  true,
+                  true,
+                  true
+                ],
+                "evidence": "asyncio.gather と asyncio.wait は「どちらも複数の待ち合わせ」ですが、**返すもの・例外の扱い・キャンセルの後始末**が根本的に違います。\n\n## 一覧\n\n| | `gather` | `wait` |\n|---|---|---|\n| 戻り値 | 結果のリスト（**渡した順**） | `(done, pending)` の**タスクの集合**（順序なし） |\n| 引数 | awaitable（コルーチンは自動で Task 化） | **Task/Future のみ**（3.11 でコルーチン渡しは廃止） |\n| 種別 | Future を返す普通の関数 | コルーチン |\n| 例外 | 既定で**即座に呼び出し側へ伝播** | **伝播しない**。Task に格納されるので自分で取り出す |\n| timeout | なし | `timeout=` あり |\n| 途中で返す | 不可（全部待つ） | `return_when=FIRST_COMPLETED / FIRST_EXCEPTION / ALL_COMPLETED` |\n| 重複 | そのまま保持 | set なので**重複が消える** |\n\n## 実際に効いてくる差\n\n**1. 結果の受け取り方**\n\n```python\nr1, r2 = await asyncio.gather(fetch(a), fetch(b))   # 値がそのまま、順序保証\n\ndone, pending = await asyncio.wait({t1, t2})\nfor t in done:\n    t.result()   # ← 自分で取り出す。順序は完了順ですらなく不定\n```\n\n`gather` の順序は「完了順」ではなく「引数の順」です。ここは取り違えやすいところ。\n\n**2. 例外**\n\n`gather` は既定（`return_exceptions=False`）で最初の例外をその場で送出します。ただし**残りのタスクはキャンセルされず走り続ける**のが落とし穴。`return_exceptions=True` にすると例外オブジェクトが結果リストに混ざって返ります。\n\n`wait` は子の例外を一切送出しません。`t.result()` を呼ばないと `Task exception was never retrieved` の警告だけが後から出ます。\n\n**3. タイムアウト時の後始末**\n\n```python\ndone, pending = await asyncio.wait(tasks, timeout=5)\n# pending のタスクは \"まだ走っている\"。自分で cancel しないと放置される\nfor t in pending:\n    t.cancel()\n```\n\n対して `gather` が返す Future をキャンセルすると、未完了の子タスクにキャンセルが伝播します。`asyncio.timeout()` / `wait_for` と組み合わせるならこちらの挙動のほうが素直です。\n\n## 使い分け\n\n- **全部の結果が順番に欲しい** → `gather`\n- **「最初の1つが終わったら」「5秒だけ待つ」など待ち方を制御したい** → `wait`\n- **完了した端から処理したい** → どちらでもなく `asyncio.as_completed`\n- **失敗したら兄弟も確実に止めたい（3.11+）** → `asyncio.TaskGroup`\n\n新規コードでは、失敗時に兄弟タスクを自動キャンセルして `ExceptionGroup` で上げてくれる `TaskGroup` が既定の選択肢になりつつあります。`gather` の「例外は上がるがタスクは生き残る」挙動がリークの原因になりやすいためです。\n\n`TaskGroup` への書き換え方や、この差が効く具体例が見たければ続けます。"
+              },
+              {
+                "name": "no-rig-fires",
+                "passed": false,
+                "weight": 1,
+                "explanation": "Skill called 1x (expected 0..0)",
+                "withOnly": false,
+                "scored": true
+              }
+            ]
+          }
+        ],
+        "without": [
+          {
+            "score": 1,
+            "passed": true,
+            "turns": 1,
+            "costUsd": 0.13110650000000001,
+            "judgeCostUsd": 0.010817999999999994,
+            "durationSeconds": 40,
+            "startedAt": "2026-09-16T11:16:45.398Z",
+            "error": null,
+            "tracePath": "/tmp/claude-eval-XVntwX/out/trace.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "explains-the-difference",
+                "passed": true,
+                "weight": 1,
+                "explanation": "judge votes: PASS PASS PASS",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  true,
+                  true,
+                  true
+                ],
+                "evidence": "# `asyncio.gather` と `asyncio.wait` の違い\n\n一言でいうと、**`gather` は「全部の結果を順番どおりに欲しい」ための高水準 API**、**`wait` は「完了状況を見て自分で制御したい」ための低水準 API**です。\n\n## 1. 戻り値\n\n```python\n# gather: 引数の順序どおりの結果リスト\nresults = await asyncio.gather(f(1), f(2), f(3))\n# → [r1, r2, r3]  完了順ではなく引数順\n\n# wait: (done, pending) の Task の「集合」\ndone, pending = await asyncio.wait(tasks)\n# → set なので順序なし。値は自分で task.result() で取り出す\n```\n\n`wait` は結果を返さず Task を返すので、値が欲しければ `t.result()` を呼ぶ必要があり、しかも `set` なので元の順序との対応は自分で管理します（`dict` で `task -> 識別子` を持つのが定番）。\n\n## 2. 受け付ける引数\n\n- `gather`: コルーチンでも Future でも OK。コルーチンは自動で Task にラップされる。\n- `wait`: **Task / Future のみ**。コルーチンを直接渡すのは 3.8 で非推奨、3.12 で `TypeError` になりました。`asyncio.create_task()` で包んでから渡します。\n\n## 3. 例外の扱い（ここが最大の実務上の差）\n\n```python\n# gather（デフォルト return_exceptions=False）\nawait asyncio.gather(ok(), fail(), ok())   # 最初の例外がそのまま送出される\n```\n\n注意点: 例外が上がっても**残りのタスクはキャンセルされず走り続けます**。回収されない例外が \"Task exception was never retrieved\" として後から警告になることがあります。\n\n```python\n# 例外も値として受け取る\nresults = await asyncio.gather(*coros, return_exceptions=True)\n# → [r1, ValueError(...), r3]\n```\n\n一方 `wait` は**例外を一切送出しません**。失敗したタスクも単に `done` に入るので、`t.exception()` / `t.result()` で自分で確認します。\n\n## 4. 待ち方の制御\n\n`wait` だけが持つもの:\n\n```python\ndone, pending = await asyncio.wait(\n    tasks,\n    timeout=5,\n    return_when=asyncio.FIRST_COMPLETED,  # / FIRST_EXCEPTION / ALL_COMPLETED\n)\n```\n\n`gather` にタイムアウトはないので、`asyncio.timeout()`（3.11+）や `asyncio.wait_for()` で外から包みます。\n\n## 5. キャンセル時の挙動\n\n- `gather` が返す Future をキャンセルすると、**未完了の子タスクも全部キャンセル**されます。\n- `wait` はタイムアウトしても `pending` のタスクを**キャンセルしません**。走りっぱなしになるので、自分で後始末が必要です:\n\n```python\nfor t in pending:\n    t.cancel()\nawait asyncio.gather(*pending, return_exceptions=True)\n```\n\n## 使い分け\n\n| やりたいこと | 使うもの |\n|---|---|\n| 全部の結果を順序どおり集める | `gather` |\n| 一つでも終わったら先に進む / タイムアウト付き | `wait` |\n| 終わった順に逐次処理したい | `as_completed` |\n| エラー時に兄弟タスクも確実に畳みたい | **`TaskGroup`**（3.11+） |\n\n## 補足: 3.11 以降は `TaskGroup` が第一候補\n\n```python\nasync with asyncio.TaskGroup() as tg:\n    t1 = tg.create_task(f(1))\n    t2 = tg.create_task(f(2))\n# ブロックを抜けた時点で全完了。t1.result() で値を取得\n```\n\n`gather` と違い、どれかが失敗すると**残りを自動でキャンセル**してから `ExceptionGroup` を送出します。リークするタスクが構造的に発生しないので、新規コードで「全部待つ」場合は `gather` より `TaskGroup` が推奨されます。`gather` が今も有利なのは、`return_exceptions=True` で「失敗も含めた結果をフラットなリストで受けたい」ケースです。"
+              },
+              {
+                "name": "no-rig-fires",
+                "passed": true,
+                "weight": 1,
+                "explanation": "Skill called 0x (expected 0..0)",
+                "withOnly": false,
+                "scored": true
+              }
+            ]
+          }
+        ]
+      },
+      "aggregates": {
+        "score": 0.5,
+        "passRate": 0,
+        "scoreWithout": 1,
+        "passRateWithout": 1,
+        "delta": -0.5
+      }
+    }
+  ],
+  "aggregates": {
+    "casesTotal": 2,
+    "casesPassed": 0,
+    "overallScore": 0.25,
+    "overallPassRate": 0,
+    "meanDelta": -0.25
+  }
+}
