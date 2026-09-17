@@ -1,0 +1,622 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Eval report — rig v3.0.1</title>
+</head>
+<body>
+<style>
+:root{--plane:#f9f9f7;--surface:#fcfcfb;--ink:#0b0b0b;--ink-2:#52514e;--ink-3:#6b6a64;--hairline:rgba(11,11,11,.10);--grid:#e1e0d9;--inset:rgba(11,11,11,.04);--accent:#2a78d6;--base-fill:#6b6a64;--delta-good:#006300;--good:#067d06;--warning:#8a6100;--critical:#d03b3b;
+  color-scheme:light dark;
+}
+@media (prefers-color-scheme:dark){:root{--plane:#0d0d0d;--surface:#1a1a19;--ink:#ffffff;--ink-2:#c3c2b7;--ink-3:#898781;--hairline:rgba(255,255,255,.10);--grid:#2c2c2a;--inset:rgba(255,255,255,.05);--accent:#3987e5;--base-fill:#898781;--delta-good:#0ca30c;--good:#0ca30c;--warning:#fab219;--critical:#e06c6c;color-scheme:dark}}
+:root[data-theme="dark"]{--plane:#0d0d0d;--surface:#1a1a19;--ink:#ffffff;--ink-2:#c3c2b7;--ink-3:#898781;--hairline:rgba(255,255,255,.10);--grid:#2c2c2a;--inset:rgba(255,255,255,.05);--accent:#3987e5;--base-fill:#898781;--delta-good:#0ca30c;--good:#0ca30c;--warning:#fab219;--critical:#e06c6c;color-scheme:dark}
+:root[data-theme="light"]{--plane:#f9f9f7;--surface:#fcfcfb;--ink:#0b0b0b;--ink-2:#52514e;--ink-3:#6b6a64;--hairline:rgba(11,11,11,.10);--grid:#e1e0d9;--inset:rgba(11,11,11,.04);--accent:#2a78d6;--base-fill:#6b6a64;--delta-good:#006300;--good:#067d06;--warning:#8a6100;--critical:#d03b3b;color-scheme:light}
+*{box-sizing:border-box}
+body{margin:0;background:var(--plane);color:var(--ink);
+  font:14px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif;
+  -webkit-text-size-adjust:100%}
+.wrap{max-width:880px;margin:0 auto;padding:40px 24px 64px;display:flex;flex-direction:column;gap:20px}
+.eyebrow{font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3)}
+header h1{margin:2px 0 0;font-size:24px;font-weight:600;line-height:1.25;text-wrap:balance}
+.meta{display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:8px;color:var(--ink-2);font-size:13px}
+.meta .num{font-variant-numeric:tabular-nums lining-nums}
+.banner{display:flex;align-items:center;gap:8px;padding:10px 14px;border-radius:8px;
+  border:1px solid var(--hairline);background:var(--surface);font-size:13px}
+.banner .chip-warn{color:var(--warning);font-weight:600}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+.tile{background:var(--surface);border:1px solid var(--hairline);border-radius:10px;padding:14px 16px;
+  display:flex;flex-direction:column;gap:4px}
+.tile .label{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3)}
+.tile .value{font-size:26px;font-weight:600;font-variant-numeric:tabular-nums lining-nums;line-height:1.1}
+.tile.hero .value{font-family:Georgia,"Times New Roman",serif;font-weight:400;font-size:48px}
+.tile .sub{font-size:12px;color:var(--ink-2);font-variant-numeric:tabular-nums}
+.tile .value.delta-pos{color:var(--delta-good)}
+.tile .value.delta-neg{color:var(--critical)}
+.toolbar{display:flex;gap:8px;justify-content:flex-end}
+.toolbar button{font:12px system-ui,-apple-system,"Segoe UI",sans-serif;color:var(--ink-2);
+  background:var(--surface);border:1px solid var(--hairline);border-radius:6px;padding:4px 10px;cursor:pointer}
+.toolbar button:hover{color:var(--ink)}
+.toolbar button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.case{background:var(--surface);border:1px solid var(--hairline);border-radius:10px;padding:18px 20px;
+  display:flex;flex-direction:column;gap:10px}
+.case-regressed{border-left:3px solid var(--critical)}
+.verdict{margin:6px 0 0;font-size:15px}
+.verdict .delta{font-size:15px}
+.flag{font-size:11px;font-weight:600;color:var(--warning);white-space:nowrap}
+.star{color:var(--warning);font-size:.45em;vertical-align:super;line-height:0;cursor:help}
+.legend summary{cursor:pointer;font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-2)}
+.legend-list{margin:8px 0 0;padding-left:20px;display:flex;flex-direction:column;gap:5px;font-size:13px;color:var(--ink-2)}
+.case-head{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.case-head h2{margin:0;font-size:16px;font-weight:600}
+.case-head .spacer{flex:1}
+.case-score{font-size:15px;font-weight:600}
+.mono{font:12px "SF Mono",ui-monospace,Menlo,Consolas,monospace}
+.num{font-variant-numeric:tabular-nums lining-nums}
+.muted{color:var(--ink-3);font-size:12px}
+.meter{display:inline-block;position:relative;width:120px;height:6px;border-radius:4px;background:var(--grid);
+  vertical-align:middle}
+.meter>span{display:block;height:100%;border-radius:4px;max-width:100%}
+.meter .tick{position:absolute;top:-2px;bottom:-2px;width:2px;background:var(--ink-3);border-radius:1px}
+.m-accent>span{background:var(--accent)}
+.m-base>span{background:var(--base-fill)}
+.delta{font-size:12px;font-weight:600;font-variant-numeric:tabular-nums}
+.delta-pos{color:var(--delta-good)}
+.delta-neg{color:var(--critical)}
+.delta-zero{color:var(--ink-3)}
+details.section{border-top:1px solid var(--grid);padding-top:10px}
+details.section>summary{cursor:pointer;font-size:12px;font-weight:600;letter-spacing:.04em;
+  text-transform:uppercase;color:var(--ink-2);list-style-position:outside;margin-left:2px}
+details.section>summary:hover{color:var(--ink)}
+details.section[open]>summary{margin-bottom:8px}
+.md{display:flex;flex-direction:column;gap:8px;background:var(--inset);border-radius:8px;
+  padding:12px 14px;overflow-wrap:break-word}
+.md>:first-child{margin-top:0}
+.md h1,.md h2,.md h3,.md h4,.md h5,.md h6{margin:4px 0 0;font-size:1em;font-weight:600;line-height:1.3}
+.md p,.md ul,.md ol,.md blockquote,.md table,.md pre,.md hr{margin:0}
+.md ul,.md ol{display:flex;flex-direction:column;gap:4px;padding-left:20px}
+.md blockquote{border-left:2px solid var(--hairline);padding-left:10px;color:var(--ink-2)}
+.md :not(pre)>code{background:var(--inset);padding:1px 4px;border-radius:4px;
+  font:.92em "SF Mono",ui-monospace,Menlo,Consolas,monospace}
+.md pre{background:var(--inset);border:1px solid var(--hairline);padding:10px 12px;border-radius:6px;
+  overflow-x:auto;font:12px/1.5 "SF Mono",ui-monospace,Menlo,Consolas,monospace}
+.md pre code{background:none;padding:0;font:inherit}
+.md table{width:100%;border-collapse:collapse}
+.md th,.md td{padding:5px 8px;text-align:left;vertical-align:top;border-bottom:1px solid var(--grid)}
+.md th{font-weight:600;color:var(--ink-2)}
+.md a{color:var(--accent);text-decoration:none}
+.md a:hover{text-decoration:underline}
+.grader-def{display:flex;flex-direction:column;gap:6px;padding:8px 0}
+.grader-def+.grader-def{border-top:1px solid var(--grid)}
+.grader-def-head{display:flex;align-items:baseline;gap:8px}
+.grader-name{font:13px "SF Mono",ui-monospace,Menlo,Consolas,monospace;font-weight:600}
+.badge{font-size:10px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-2);
+  border:1px solid var(--hairline);border-radius:999px;padding:1px 8px}
+.config{display:flex;flex-direction:column;gap:2px;background:var(--inset);border-radius:8px;padding:10px 14px}
+.config code{font:12px "SF Mono",ui-monospace,Menlo,Consolas,monospace;overflow-wrap:anywhere}
+.arm{display:flex;flex-direction:column;gap:8px;padding:6px 0}
+.arm+.arm{border-top:1px dashed var(--grid);margin-top:4px;padding-top:12px}
+.arm-head{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.arm-label{font-size:13px;font-weight:600}
+.run{border:1px solid var(--grid);border-radius:8px;padding:10px 12px;display:flex;flex-direction:column;gap:8px}
+.run-head{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.run-title{font-size:12px;font-weight:600;color:var(--ink-2)}
+.run-error .explanation{color:var(--ink-2)}
+.note{font-size:12px;color:var(--ink-2)}
+.graders{display:flex;flex-direction:column;gap:4px}
+details.grader{border-radius:6px}
+details.grader>summary{cursor:pointer;display:flex;align-items:baseline;gap:8px;padding:3px 4px;
+  border-radius:6px;list-style:none}
+details.grader>summary::-webkit-details-marker{display:none}
+details.grader>summary::before{content:'▸';font-size:10px;color:var(--ink-3);flex:none;
+  transition:transform .12s ease}
+details.grader[open]>summary::before{transform:rotate(90deg)}
+details.grader>summary:hover{background:var(--inset)}
+details.grader>summary:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.grader-body{padding:6px 8px 8px 24px;display:flex;flex-direction:column;gap:6px}
+.chip{font-size:11px;font-weight:600;border-radius:999px;padding:1px 8px;white-space:nowrap}
+.chip-pass{color:var(--good);border:1px solid currentColor}
+.chip-fail{color:var(--critical);border:1px solid currentColor}
+.chip.chip-warn{color:var(--warning);border:1px solid currentColor}
+.explanation{margin:0;font-size:13px;color:var(--ink-2);white-space:pre-wrap;overflow-wrap:break-word}
+.kv{display:flex;gap:8px;font-size:12px;color:var(--ink-3)}
+.votes{font-variant-numeric:tabular-nums;letter-spacing:.1em}
+pre.evidence{margin:0;background:var(--inset);border:1px solid var(--hairline);border-radius:6px;
+  padding:8px 10px;overflow-x:auto;max-height:320px;
+  font:12px/1.5 "SF Mono",ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap;overflow-wrap:break-word}
+footer{color:var(--ink-3);font-size:12px;text-align:center;padding-top:8px}
+@media (prefers-reduced-motion:no-preference){
+  details.grader>summary,.toolbar button{transition:background .12s ease,color .12s ease}
+}
+@media (prefers-reduced-motion:reduce){
+  details.grader>summary::before{transition:none}
+}
+@media print{
+  :root,:root[data-theme="dark"],:root[data-theme="light"]{--plane:#f9f9f7;--surface:#fcfcfb;--ink:#0b0b0b;--ink-2:#52514e;--ink-3:#6b6a64;--hairline:rgba(11,11,11,.10);--grid:#e1e0d9;--inset:rgba(11,11,11,.04);--accent:#2a78d6;--base-fill:#6b6a64;--delta-good:#006300;--good:#067d06;--warning:#8a6100;--critical:#d03b3b;color-scheme:light}
+  body{background:#fff}
+  .toolbar{display:none}
+  .case,.run,.grader-def{break-inside:avoid}
+  pre.evidence{max-height:none}
+}
+</style>
+<div class="wrap">
+<header>
+<div class="eyebrow">Plugin eval report</div>
+<h1>rig v3.0.1</h1>
+<p class="verdict">Plugin effect: <span class="delta delta-neg">↓ -25.0 pts</span> vs baseline — improved 0 · flat 1 · regressed 1 of 2 cases.</p>
+<div class="meta">
+<span class="mono">.</span>
+<span>Claude Code v2.1.273</span>
+<span class="num">2026-09-16 11:12 UTC</span>
+<span class="num">4m 28s</span>
+<span class="num">$1.38</span>
+<span class="num">4 runs</span>
+
+
+
+<span>judge sonnet</span>
+<span class="num">threshold 100%</span>
+
+</div>
+</header>
+
+<section class="tiles">
+<div class="tile hero"><span class="label">Suite score · with plugin</span><span class="value">25%</span><span class="sub">mean of per-case scores</span></div>
+<div class="tile"><span class="label">Ablation Δ</span><span class="value num delta-neg">↓ -25.0</span><span class="sub">score points vs baseline, 2 of 2 cases</span></div>
+<div class="tile"><span class="label">Baseline score</span><span class="value num">50%</span><span class="sub">without the plugin</span></div>
+<div class="tile"><span class="label">Cases</span><span class="value num">2</span><span class="sub">0 of 2 ≥ 100% threshold</span></div>
+<div class="tile"><span class="label">Perfect runs</span><span class="value num">0%</span><span class="sub">runs where every grader passed</span></div>
+</section>
+<details class="section legend">
+<summary>How to read this report</summary>
+<ul class="legend-list">
+<li>A run's score is the weighted fraction of its graders that passed; a "perfect" run passed every grader.</li>
+<li>A case's score is the mean of its runs; a case passes when its score is at or above the 100% threshold (the tick on each case bar).</li>
+<li>The suite score is the mean of the per-case scores.</li>
+<li>Judge votes are independent samples of the LLM judge; the majority decides pass or fail.</li>
+<li>"With plugin" and "Baseline" runs are identical except for the plugin being loaded; Δ is the with-plugin score minus the baseline score.</li>
+
+</ul>
+</details>
+<div class="toolbar"><button type="button" data-act="expand">Expand all</button><button type="button" data-act="collapse">Collapse all</button></div>
+<article class="case" id="case-1">
+<div class="case-head">
+<h2>01-review-to-merge</h2>
+<span class="muted mono">evals-cc/01-review-to-merge</span>
+<span class="spacer"></span>
+
+<span class="delta delta-zero">· 0.0 pts</span>
+<span class="muted">with plugin</span>
+<span class="meter m-accent" aria-hidden="true"><span style="width:0.0%"></span><i class="tick" style="left:100.0%"></i></span>
+<span class="num case-score">0%</span>
+</div>
+
+<details class="section" open>
+<summary>Results</summary>
+<section class="arm">
+<div class="arm-head">
+<span class="arm-label">With plugin</span>
+<span class="meter m-accent" aria-hidden="true"><span style="width:0.0%"></span></span>
+<span class="num">0%</span>
+<span class="muted num">0% of runs perfect</span>
+</div>
+<div class="run">
+<div class="run-head">
+<span class="run-title">Run 1</span>
+<span class="meter m-accent" aria-hidden="true"><span style="width:0.0%"></span></span>
+<span class="num">0%</span>
+<span class="muted num">8 turns · $0.84 · 11:12:56 UTC</span>
+</div>
+
+<div class="graders"><details class="grader" open>
+<summary><span class="chip chip-fail">✗ fail</span> <span class="grader-name">commits-to-a-flow</span>  </summary>
+<div class="grader-body">
+<p class="explanation">judge votes: FAIL FAIL FAIL</p>
+<div class="kv"><span>Judge votes</span><span class="votes">✗ ✗ ✗</span></div><div class="kv"><span>Evidence (what the judge was shown; for an image, a description of what was sent)</span></div><pre class="evidence">手順の前に、2点だけ先に共有します（どちらも進め方に影響します）。
+
+- **このセッションにシェル（Bash）がありません。** `git diff` も `rig-wb` も親から直接は叩けません。実行は Bash を持つサブエージェント経由になります。
+- **レビュー対象の変更が見つかりません。** `/tmp/claude-eval-jTjLVR/home/cwd` は空で、隣の `.git` はコミットも ref も無いスケルトンです。「書いたコード」が別の場所にあるなら、パスを教えてください。
+
+その上で、想定している手順です。
+
+## 手順（`/rig:go` workbench ルート）
+
+| # | ステップ | 中身 | ゲート |
+|---|---|---|---|
+| 0 | 分類 | 変更規模と種類（bugfix / feature / migration 有無）を判定し、recipe を決める | — |
+| 1 | 隔離 | 変更を専用 worktree に載せる。**accept するまで本体の作業ツリーには触れない** | — |
+| 2 | レビュー fan-out | 下記のレーンを**並列で一斉に**走らせる。各レーンは `file:line` 付きの構造化所見を返す | review-gate |
+| 3 | 所見の反証 | `--verify-findings`。REJECT の根拠を `finding-verifier` に1件ずつ渡し、反証できたものは落とす（誤検知対策） | — |
+| 4 | 受け入れ判定 | 機械ゲート。secret scan / destructive scan / lint / テスト。**未達なら accept が拒否される**（「直しました」の自己申告は通らない） | acceptance-gate |
+| 5 | accept | worktree の差分を本体へ取り込む | 明示確認 |
+| 6 | PR → マージ | PR 作成、CI 確認、マージ。push 系は毎回明示アクション | 明示確認 |
+
+各ステップ後に「次へ進むか」を聞きます（`--autonomous` を付けない限り）。
+
+## レビュー観点のレーン（ここが本題ですよね）
+
+**既定の4本** — security / design / test / behavioral-correctness（状態遷移・非同期・単位と意味・境界値）
+
+**変更内容に応じて足す** — performance / observability（失敗が見えるか・切り戻せるか）/ docs（diff が嘘にした記述）/ api-compat（破壊的変更・semver）/ migration（戻り道・ロック時間）
+
+**敵対レビュー（`--adversarial`）** — lazy-senior（消せるコード・稼いでいないコメント・将来の負債）/ cognitive-economist（命名・素直に読めるか・局所性）
+
+観点の抜けが怖いとのことなので、**追加レンズは変更の中身を見てから提案します**（マイグレーションが無いのに migration レーンを回しても票が薄くなるだけなので）。さらに `rig:drill` を使えば「どのレビュアーが実際に何を捕まえたか」を検出率として数値で出せます — 観点の網羅を主観でなく数字で確認したい場合はこちらです。
+
+## 確認したいこと
+
+1. レビュー対象のコードはどこにありますか（パス、またはブランチ名）
+2. 敵対レビューまで回しますか、既定の4本で十分ですか
+3. マージまで私が実行してよいですか、それとも PR 作成の手前で止めますか
+
+対象の場所さえ分かれば、まず差分を読んで recipe と追加レーンを具体化した実行計画を出します。</pre>
+</div>
+</details>
+<details class="grader">
+<summary><span class="chip chip-pass">✓ pass</span> <span class="grader-name">fires-engine</span>  <span class="badge">plugin-fired indicator</span></summary>
+<div class="grader-body">
+<p class="explanation">Skill called 1x (expected 1..∞)</p>
+
+</div>
+</details></div>
+</div>
+</section><section class="arm">
+<div class="arm-head">
+<span class="arm-label">Baseline (no plugin)</span>
+<span class="meter m-base" aria-hidden="true"><span style="width:0.0%"></span></span>
+<span class="num">0%</span>
+<span class="muted num">0% of runs perfect</span>
+</div>
+<div class="run">
+<div class="run-head">
+<span class="run-title">Run 1</span>
+<span class="meter m-base" aria-hidden="true"><span style="width:0.0%"></span></span>
+<span class="num">0%</span>
+<span class="muted num">3 turns · $0.15 · 11:15:02 UTC</span>
+</div>
+
+<div class="graders"><details class="grader" open>
+<summary><span class="chip chip-fail">✗ fail</span> <span class="grader-name">commits-to-a-flow</span>  </summary>
+<div class="grader-body">
+<p class="explanation">judge votes: FAIL FAIL FAIL</p>
+<div class="kv"><span>Judge votes</span><span class="votes">✗ ✗ ✗</span></div><div class="kv"><span>Evidence (what the judge was shown; for an image, a description of what was sent)</span></div><pre class="evidence">先に状況を2点だけ共有しておきます（どちらも手順の前提に関わります）。
+
+- 作業ディレクトリ `/tmp/claude-eval-X94NBr/home/cwd` は空で、リポジトリにコミットも変更もありません。レビュー対象のコードが別の場所にあるなら、そのパスかブランチ名を教えてください。
+- このセッションでは私にシェル実行権限がありません。ファイルの読解・検索・レビューはできますが、`git diff` / テスト実行 / `gh pr` / マージのコマンドは私からは叩けません。実行部分はお願いする形になります（Bash を許可してもらえればこちらで完結できます）。
+
+その上で、進め方の提案です。
+
+## 手順
+
+**1. レビュー対象の確定**
+どの差分を見るかを最初に固定します（`main...feature-x` なのか、特定コミットなのか、作業ツリーの未コミット分なのか）。ここが曖昧なまま進むと、後で「その変更は見てなかった」が起きます。合わせて、変更の意図・非スコープ（今回あえて直さない部分）も一言もらえると、指摘のノイズが減ります。
+
+**2. 観点の明示（抜け対策の本体）**
+レビュー前に観点表を出して、今回どこを重点的に見るかを合意します。デフォルトの観点は:
+
+- 正確性: 境界値、null/空、オフバイワン、エラー処理と復旧、例外の握り潰し
+- 状態と並行性: 競合、再入、部分的失敗時の一貫性、冪等性
+- 互換性: API/スキーマ/設定の破壊的変更、マイグレーション、ロールバック可否
+- テスト: 新規パスがテストされているか、失敗系があるか、テストが実装をなぞってるだけでないか
+- セキュリティ: 入力検証、認可の抜け、機微情報のログ出力、インジェクション
+- 設計・可読性: 既存ユーティリティの再利用、重複、抽象度のズレ、命名
+- 運用: ログ/メトリクス、性能上のホットパス、外部呼び出しのタイムアウト・リトライ
+
+**3. 自動レビューの実行**
+`/code-review`（effort は high 推奨、広めに拾う）で差分をレビュー。変更が認証・入力処理・外部通信に触れるなら `/security-review` も別途かけます。両者は目的が違うので重ねる価値があります。
+
+**4. 指摘のトリアージ**
+出てきた指摘を「マージブロッカー / 今回直す / 別チケット」に仕分けして提示します。自動レビューは誤検知も出すので、私の方で根拠を確認してから分類し、判断が割れそうなものは理由付きで並べます。採否はそちらで決めてください。
+
+**5. 修正と再確認**
+合意した分を修正し、変更箇所に対して再レビュー。修正で新しく壊れていないかを差分ベースで確認します。
+
+**6. 検証**
+テスト・リント・ビルド・型チェックを実行して結果を確認。ここは実行環境が必要なので、コマンドを提示するか、Bash 許可があればこちらで回して結果をそのまま報告します。落ちたら落ちたと出します。
+
+**7. PR 整備**
+PR タイトル・説明（背景 / 変更内容 / 検証方法 / レビューで見てほしい点）を作成。人間レビュアーが迷いやすい箇所には、こちらから先にコメントを置いておくと往復が減ります。
+
+**8. マージ**
+CI グリーン・必要な承認を確認してからマージ。マージ方式（squash / merge commit）とブランチ削除、マージ後の確認事項（デプロイ、マイグレーション実行など）を事前に決めておきます。**マージは戻しにくい操作なので、実行前に必ず確認を取ります。**
+
+## 確認したいこと
+
+1. レビュー対象のコードはどこにありますか（パス / ブランチ / PR 番号）
+2. ステップ 2 の観点で、特に不安な領域はありますか
+3. 最終的にマージまで私が実行する想定ですか、それとも PR 作成までで手動マージにしますか
+
+1 の回答をもらえれば、ステップ 1 から着手します。</pre>
+</div>
+</details></div>
+</div>
+</section>
+</details>
+<details class="section" open>
+<summary>Prompt</summary>
+<div class="md"><p>これから書いたコードをレビューして、マージまで持っていきたい。レビュー観点の抜けが怖いので、どういう手順で進めることになるかを先に見せてほしい。</p>
+</div>
+</details>
+<details class="section" open>
+<summary>Graders — what "good" means for this case</summary>
+<div class="grader-def">
+<div class="grader-def-head"><span class="grader-name">commits-to-a-flow</span><span class="badge">llm</span></div>
+<div class="md"><p>最終メッセージが次の4点をすべて満たすとき合格。1つでも欠けたら不合格。</p>
+<ol>
+<li>進め方を具体的に1つに決めている。recipe 名を挙げるか、実行される step を順序付きで列挙している。選択肢を並べたまま「どれにしますか」で終わっていない。</li>
+<li>受け入れゲート（acceptance gate / review gate、あるいは「何を満たせば次へ進めるか」）がどこに掛かるかに触れている。</li>
+<li>確認の問いかけだけで終わっていない。「レビューのフローを実行しますか？」と尋ねて止まっているだけの応答は不合格。</li>
+<li>手順を示さずにいきなりコードの修正差分やパッチだけを出している応答は不合格。</li>
+</ol>
+</div>
+</div>
+<div class="grader-def">
+<div class="grader-def-head"><span class="grader-name">fires-engine</span><span class="badge">tool_used</span></div>
+<div class="config"><div class="kv"><span>tool</span><code>&quot;Skill&quot;</code></div><div class="kv"><span>input_match</span><code>&quot;engine&quot;</code></div><div class="kv"><span>min</span><code>1</code></div></div>
+</div>
+</details>
+</article>
+<article class="case case-regressed" id="case-2">
+<div class="case-head">
+<h2>06-neg-asyncio-explain</h2>
+<span class="muted mono">evals-cc/06-neg-asyncio-explain</span>
+<span class="spacer"></span>
+
+<span class="delta delta-neg">↓ -50.0 pts</span>
+<span class="muted">with plugin</span>
+<span class="meter m-accent" aria-hidden="true"><span style="width:50.0%"></span><i class="tick" style="left:100.0%"></i></span>
+<span class="num case-score">50%</span>
+</div>
+
+<details class="section" open>
+<summary>Results</summary>
+<section class="arm">
+<div class="arm-head">
+<span class="arm-label">With plugin</span>
+<span class="meter m-accent" aria-hidden="true"><span style="width:50.0%"></span></span>
+<span class="num">50%</span>
+<span class="muted num">0% of runs perfect</span>
+</div>
+<div class="run">
+<div class="run-head">
+<span class="run-title">Run 1</span>
+<span class="meter m-accent" aria-hidden="true"><span style="width:50.0%"></span></span>
+<span class="num">50%</span>
+<span class="muted num">3 turns · $0.26 · 11:15:55 UTC</span>
+</div>
+
+<div class="graders"><details class="grader">
+<summary><span class="chip chip-pass">✓ pass</span> <span class="grader-name">explains-the-difference</span>  </summary>
+<div class="grader-body">
+<p class="explanation">judge votes: PASS PASS PASS</p>
+<div class="kv"><span>Judge votes</span><span class="votes">✓ ✓ ✓</span></div><div class="kv"><span>Evidence (what the judge was shown; for an image, a description of what was sent)</span></div><pre class="evidence">asyncio.gather と asyncio.wait は「どちらも複数の待ち合わせ」ですが、**返すもの・例外の扱い・キャンセルの後始末**が根本的に違います。
+
+## 一覧
+
+| | `gather` | `wait` |
+|---|---|---|
+| 戻り値 | 結果のリスト（**渡した順**） | `(done, pending)` の**タスクの集合**（順序なし） |
+| 引数 | awaitable（コルーチンは自動で Task 化） | **Task/Future のみ**（3.11 でコルーチン渡しは廃止） |
+| 種別 | Future を返す普通の関数 | コルーチン |
+| 例外 | 既定で**即座に呼び出し側へ伝播** | **伝播しない**。Task に格納されるので自分で取り出す |
+| timeout | なし | `timeout=` あり |
+| 途中で返す | 不可（全部待つ） | `return_when=FIRST_COMPLETED / FIRST_EXCEPTION / ALL_COMPLETED` |
+| 重複 | そのまま保持 | set なので**重複が消える** |
+
+## 実際に効いてくる差
+
+**1. 結果の受け取り方**
+
+```python
+r1, r2 = await asyncio.gather(fetch(a), fetch(b))   # 値がそのまま、順序保証
+
+done, pending = await asyncio.wait({t1, t2})
+for t in done:
+    t.result()   # ← 自分で取り出す。順序は完了順ですらなく不定
+```
+
+`gather` の順序は「完了順」ではなく「引数の順」です。ここは取り違えやすいところ。
+
+**2. 例外**
+
+`gather` は既定（`return_exceptions=False`）で最初の例外をその場で送出します。ただし**残りのタスクはキャンセルされず走り続ける**のが落とし穴。`return_exceptions=True` にすると例外オブジェクトが結果リストに混ざって返ります。
+
+`wait` は子の例外を一切送出しません。`t.result()` を呼ばないと `Task exception was never retrieved` の警告だけが後から出ます。
+
+**3. タイムアウト時の後始末**
+
+```python
+done, pending = await asyncio.wait(tasks, timeout=5)
+# pending のタスクは &quot;まだ走っている&quot;。自分で cancel しないと放置される
+for t in pending:
+    t.cancel()
+```
+
+対して `gather` が返す Future をキャンセルすると、未完了の子タスクにキャンセルが伝播します。`asyncio.timeout()` / `wait_for` と組み合わせるならこちらの挙動のほうが素直です。
+
+## 使い分け
+
+- **全部の結果が順番に欲しい** → `gather`
+- **「最初の1つが終わったら」「5秒だけ待つ」など待ち方を制御したい** → `wait`
+- **完了した端から処理したい** → どちらでもなく `asyncio.as_completed`
+- **失敗したら兄弟も確実に止めたい（3.11+）** → `asyncio.TaskGroup`
+
+新規コードでは、失敗時に兄弟タスクを自動キャンセルして `ExceptionGroup` で上げてくれる `TaskGroup` が既定の選択肢になりつつあります。`gather` の「例外は上がるがタスクは生き残る」挙動がリークの原因になりやすいためです。
+
+`TaskGroup` への書き換え方や、この差が効く具体例が見たければ続けます。</pre>
+</div>
+</details>
+<details class="grader" open>
+<summary><span class="chip chip-fail">✗ fail</span> <span class="grader-name">no-rig-fires</span>  </summary>
+<div class="grader-body">
+<p class="explanation">Skill called 1x (expected 0..0)</p>
+
+</div>
+</details></div>
+</div>
+</section><section class="arm">
+<div class="arm-head">
+<span class="arm-label">Baseline (no plugin)</span>
+<span class="meter m-base" aria-hidden="true"><span style="width:100.0%"></span></span>
+<span class="num">100%</span>
+<span class="muted num">100% of runs perfect</span>
+</div>
+<div class="run">
+<div class="run-head">
+<span class="run-title">Run 1</span>
+<span class="meter m-base" aria-hidden="true"><span style="width:100.0%"></span></span>
+<span class="num">100%</span>
+<span class="muted num">1 turns · $0.13 · 11:16:45 UTC</span>
+</div>
+
+<div class="graders"><details class="grader">
+<summary><span class="chip chip-pass">✓ pass</span> <span class="grader-name">explains-the-difference</span>  </summary>
+<div class="grader-body">
+<p class="explanation">judge votes: PASS PASS PASS</p>
+<div class="kv"><span>Judge votes</span><span class="votes">✓ ✓ ✓</span></div><div class="kv"><span>Evidence (what the judge was shown; for an image, a description of what was sent)</span></div><pre class="evidence"># `asyncio.gather` と `asyncio.wait` の違い
+
+一言でいうと、**`gather` は「全部の結果を順番どおりに欲しい」ための高水準 API**、**`wait` は「完了状況を見て自分で制御したい」ための低水準 API**です。
+
+## 1. 戻り値
+
+```python
+# gather: 引数の順序どおりの結果リスト
+results = await asyncio.gather(f(1), f(2), f(3))
+# → [r1, r2, r3]  完了順ではなく引数順
+
+# wait: (done, pending) の Task の「集合」
+done, pending = await asyncio.wait(tasks)
+# → set なので順序なし。値は自分で task.result() で取り出す
+```
+
+`wait` は結果を返さず Task を返すので、値が欲しければ `t.result()` を呼ぶ必要があり、しかも `set` なので元の順序との対応は自分で管理します（`dict` で `task -&gt; 識別子` を持つのが定番）。
+
+## 2. 受け付ける引数
+
+- `gather`: コルーチンでも Future でも OK。コルーチンは自動で Task にラップされる。
+- `wait`: **Task / Future のみ**。コルーチンを直接渡すのは 3.8 で非推奨、3.12 で `TypeError` になりました。`asyncio.create_task()` で包んでから渡します。
+
+## 3. 例外の扱い（ここが最大の実務上の差）
+
+```python
+# gather（デフォルト return_exceptions=False）
+await asyncio.gather(ok(), fail(), ok())   # 最初の例外がそのまま送出される
+```
+
+注意点: 例外が上がっても**残りのタスクはキャンセルされず走り続けます**。回収されない例外が &quot;Task exception was never retrieved&quot; として後から警告になることがあります。
+
+```python
+# 例外も値として受け取る
+results = await asyncio.gather(*coros, return_exceptions=True)
+# → [r1, ValueError(...), r3]
+```
+
+一方 `wait` は**例外を一切送出しません**。失敗したタスクも単に `done` に入るので、`t.exception()` / `t.result()` で自分で確認します。
+
+## 4. 待ち方の制御
+
+`wait` だけが持つもの:
+
+```python
+done, pending = await asyncio.wait(
+    tasks,
+    timeout=5,
+    return_when=asyncio.FIRST_COMPLETED,  # / FIRST_EXCEPTION / ALL_COMPLETED
+)
+```
+
+`gather` にタイムアウトはないので、`asyncio.timeout()`（3.11+）や `asyncio.wait_for()` で外から包みます。
+
+## 5. キャンセル時の挙動
+
+- `gather` が返す Future をキャンセルすると、**未完了の子タスクも全部キャンセル**されます。
+- `wait` はタイムアウトしても `pending` のタスクを**キャンセルしません**。走りっぱなしになるので、自分で後始末が必要です:
+
+```python
+for t in pending:
+    t.cancel()
+await asyncio.gather(*pending, return_exceptions=True)
+```
+
+## 使い分け
+
+| やりたいこと | 使うもの |
+|---|---|
+| 全部の結果を順序どおり集める | `gather` |
+| 一つでも終わったら先に進む / タイムアウト付き | `wait` |
+| 終わった順に逐次処理したい | `as_completed` |
+| エラー時に兄弟タスクも確実に畳みたい | **`TaskGroup`**（3.11+） |
+
+## 補足: 3.11 以降は `TaskGroup` が第一候補
+
+```python
+async with asyncio.TaskGroup() as tg:
+    t1 = tg.create_task(f(1))
+    t2 = tg.create_task(f(2))
+# ブロックを抜けた時点で全完了。t1.result() で値を取得
+```
+
+`gather` と違い、どれかが失敗すると**残りを自動でキャンセル**してから `ExceptionGroup` を送出します。リークするタスクが構造的に発生しないので、新規コードで「全部待つ」場合は `gather` より `TaskGroup` が推奨されます。`gather` が今も有利なのは、`return_exceptions=True` で「失敗も含めた結果をフラットなリストで受けたい」ケースです。</pre>
+</div>
+</details>
+<details class="grader">
+<summary><span class="chip chip-pass">✓ pass</span> <span class="grader-name">no-rig-fires</span>  </summary>
+<div class="grader-body">
+<p class="explanation">Skill called 0x (expected 0..0)</p>
+
+</div>
+</details></div>
+</div>
+</section>
+</details>
+<details class="section" open>
+<summary>Prompt</summary>
+<div class="md"><p>Python の asyncio.gather と asyncio.wait の違いを説明してほしい。コードは変更しなくていい、説明だけでいい。</p>
+</div>
+</details>
+<details class="section" open>
+<summary>Graders — what "good" means for this case</summary>
+<div class="grader-def">
+<div class="grader-def-head"><span class="grader-name">explains-the-difference</span><span class="badge">llm</span></div>
+<div class="md"><p>最終メッセージが asyncio.gather と asyncio.wait の違いを実際に説明していれば合格。最低限、次の2点の差に触れていること。</p>
+<ul>
+<li>戻り値の形。gather は結果を渡した順のリストで返し、wait は (done, pending) の Task 集合を返す。</li>
+<li>例外の扱い。gather は既定で最初の例外を呼び出し側へ伝播させ、wait は例外を送出せず完了した Task の側に保持する。</li>
+</ul>
+<p>説明をせずに「開発フローを組みます」「どの recipe で進めますか」といった作業手順の話に逸れている応答は不合格。</p>
+</div>
+</div>
+<div class="grader-def">
+<div class="grader-def-head"><span class="grader-name">no-rig-fires</span><span class="badge">tool_used</span></div>
+<div class="config"><div class="kv"><span>tool</span><code>&quot;Skill&quot;</code></div><div class="kv"><span>input_match</span><code>&quot;rig:&quot;</code></div><div class="kv"><span>min</span><code>0</code></div><div class="kv"><span>max</span><code>0</code></div><div class="kv"><span>arm</span><code>&quot;both&quot;</code></div></div>
+</div>
+</details>
+</article>
+<footer>Generated by <code>claude plugin eval</code> · schema v1 · scores are not comparable across different suites</footer>
+</div>
+<script>
+document.addEventListener('DOMContentLoaded',function(){
+  var bar=document.querySelector('.toolbar');
+  if(!bar)return;
+  bar.addEventListener('click',function(e){
+    var b=e.target&&e.target.closest('button');
+    if(!b)return;
+    var open=b.dataset.act==='expand';
+    document.querySelectorAll('details.section, details.grader').forEach(function(d){d.open=open});
+  });
+});
+// Collapsed details vanish from print/PDF; these pages are share artifacts.
+window.addEventListener('beforeprint',function(){
+  document.querySelectorAll('details').forEach(function(d){
+    if(!d.open){d.dataset.printOpened='1';d.open=true}
+  });
+});
+window.addEventListener('afterprint',function(){
+  document.querySelectorAll('details[data-print-opened]').forEach(function(d){
+    d.open=false;delete d.dataset.printOpened;
+  });
+});
+</script>
+</body>
+</html>

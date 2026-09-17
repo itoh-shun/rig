@@ -1,0 +1,2056 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Eval report — rig v3.0.1</title>
+</head>
+<body>
+<style>
+:root{--plane:#f9f9f7;--surface:#fcfcfb;--ink:#0b0b0b;--ink-2:#52514e;--ink-3:#6b6a64;--hairline:rgba(11,11,11,.10);--grid:#e1e0d9;--inset:rgba(11,11,11,.04);--accent:#2a78d6;--base-fill:#6b6a64;--delta-good:#006300;--good:#067d06;--warning:#8a6100;--critical:#d03b3b;
+  color-scheme:light dark;
+}
+@media (prefers-color-scheme:dark){:root{--plane:#0d0d0d;--surface:#1a1a19;--ink:#ffffff;--ink-2:#c3c2b7;--ink-3:#898781;--hairline:rgba(255,255,255,.10);--grid:#2c2c2a;--inset:rgba(255,255,255,.05);--accent:#3987e5;--base-fill:#898781;--delta-good:#0ca30c;--good:#0ca30c;--warning:#fab219;--critical:#e06c6c;color-scheme:dark}}
+:root[data-theme="dark"]{--plane:#0d0d0d;--surface:#1a1a19;--ink:#ffffff;--ink-2:#c3c2b7;--ink-3:#898781;--hairline:rgba(255,255,255,.10);--grid:#2c2c2a;--inset:rgba(255,255,255,.05);--accent:#3987e5;--base-fill:#898781;--delta-good:#0ca30c;--good:#0ca30c;--warning:#fab219;--critical:#e06c6c;color-scheme:dark}
+:root[data-theme="light"]{--plane:#f9f9f7;--surface:#fcfcfb;--ink:#0b0b0b;--ink-2:#52514e;--ink-3:#6b6a64;--hairline:rgba(11,11,11,.10);--grid:#e1e0d9;--inset:rgba(11,11,11,.04);--accent:#2a78d6;--base-fill:#6b6a64;--delta-good:#006300;--good:#067d06;--warning:#8a6100;--critical:#d03b3b;color-scheme:light}
+*{box-sizing:border-box}
+body{margin:0;background:var(--plane);color:var(--ink);
+  font:14px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif;
+  -webkit-text-size-adjust:100%}
+.wrap{max-width:880px;margin:0 auto;padding:40px 24px 64px;display:flex;flex-direction:column;gap:20px}
+.eyebrow{font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3)}
+header h1{margin:2px 0 0;font-size:24px;font-weight:600;line-height:1.25;text-wrap:balance}
+.meta{display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:8px;color:var(--ink-2);font-size:13px}
+.meta .num{font-variant-numeric:tabular-nums lining-nums}
+.banner{display:flex;align-items:center;gap:8px;padding:10px 14px;border-radius:8px;
+  border:1px solid var(--hairline);background:var(--surface);font-size:13px}
+.banner .chip-warn{color:var(--warning);font-weight:600}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+.tile{background:var(--surface);border:1px solid var(--hairline);border-radius:10px;padding:14px 16px;
+  display:flex;flex-direction:column;gap:4px}
+.tile .label{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3)}
+.tile .value{font-size:26px;font-weight:600;font-variant-numeric:tabular-nums lining-nums;line-height:1.1}
+.tile.hero .value{font-family:Georgia,"Times New Roman",serif;font-weight:400;font-size:48px}
+.tile .sub{font-size:12px;color:var(--ink-2);font-variant-numeric:tabular-nums}
+.tile .value.delta-pos{color:var(--delta-good)}
+.tile .value.delta-neg{color:var(--critical)}
+.toolbar{display:flex;gap:8px;justify-content:flex-end}
+.toolbar button{font:12px system-ui,-apple-system,"Segoe UI",sans-serif;color:var(--ink-2);
+  background:var(--surface);border:1px solid var(--hairline);border-radius:6px;padding:4px 10px;cursor:pointer}
+.toolbar button:hover{color:var(--ink)}
+.toolbar button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.case{background:var(--surface);border:1px solid var(--hairline);border-radius:10px;padding:18px 20px;
+  display:flex;flex-direction:column;gap:10px}
+.case-regressed{border-left:3px solid var(--critical)}
+.verdict{margin:6px 0 0;font-size:15px}
+.verdict .delta{font-size:15px}
+.flag{font-size:11px;font-weight:600;color:var(--warning);white-space:nowrap}
+.star{color:var(--warning);font-size:.45em;vertical-align:super;line-height:0;cursor:help}
+.legend summary{cursor:pointer;font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-2)}
+.legend-list{margin:8px 0 0;padding-left:20px;display:flex;flex-direction:column;gap:5px;font-size:13px;color:var(--ink-2)}
+.case-head{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.case-head h2{margin:0;font-size:16px;font-weight:600}
+.case-head .spacer{flex:1}
+.case-score{font-size:15px;font-weight:600}
+.mono{font:12px "SF Mono",ui-monospace,Menlo,Consolas,monospace}
+.num{font-variant-numeric:tabular-nums lining-nums}
+.muted{color:var(--ink-3);font-size:12px}
+.meter{display:inline-block;position:relative;width:120px;height:6px;border-radius:4px;background:var(--grid);
+  vertical-align:middle}
+.meter>span{display:block;height:100%;border-radius:4px;max-width:100%}
+.meter .tick{position:absolute;top:-2px;bottom:-2px;width:2px;background:var(--ink-3);border-radius:1px}
+.m-accent>span{background:var(--accent)}
+.m-base>span{background:var(--base-fill)}
+.delta{font-size:12px;font-weight:600;font-variant-numeric:tabular-nums}
+.delta-pos{color:var(--delta-good)}
+.delta-neg{color:var(--critical)}
+.delta-zero{color:var(--ink-3)}
+details.section{border-top:1px solid var(--grid);padding-top:10px}
+details.section>summary{cursor:pointer;font-size:12px;font-weight:600;letter-spacing:.04em;
+  text-transform:uppercase;color:var(--ink-2);list-style-position:outside;margin-left:2px}
+details.section>summary:hover{color:var(--ink)}
+details.section[open]>summary{margin-bottom:8px}
+.md{display:flex;flex-direction:column;gap:8px;background:var(--inset);border-radius:8px;
+  padding:12px 14px;overflow-wrap:break-word}
+.md>:first-child{margin-top:0}
+.md h1,.md h2,.md h3,.md h4,.md h5,.md h6{margin:4px 0 0;font-size:1em;font-weight:600;line-height:1.3}
+.md p,.md ul,.md ol,.md blockquote,.md table,.md pre,.md hr{margin:0}
+.md ul,.md ol{display:flex;flex-direction:column;gap:4px;padding-left:20px}
+.md blockquote{border-left:2px solid var(--hairline);padding-left:10px;color:var(--ink-2)}
+.md :not(pre)>code{background:var(--inset);padding:1px 4px;border-radius:4px;
+  font:.92em "SF Mono",ui-monospace,Menlo,Consolas,monospace}
+.md pre{background:var(--inset);border:1px solid var(--hairline);padding:10px 12px;border-radius:6px;
+  overflow-x:auto;font:12px/1.5 "SF Mono",ui-monospace,Menlo,Consolas,monospace}
+.md pre code{background:none;padding:0;font:inherit}
+.md table{width:100%;border-collapse:collapse}
+.md th,.md td{padding:5px 8px;text-align:left;vertical-align:top;border-bottom:1px solid var(--grid)}
+.md th{font-weight:600;color:var(--ink-2)}
+.md a{color:var(--accent);text-decoration:none}
+.md a:hover{text-decoration:underline}
+.grader-def{display:flex;flex-direction:column;gap:6px;padding:8px 0}
+.grader-def+.grader-def{border-top:1px solid var(--grid)}
+.grader-def-head{display:flex;align-items:baseline;gap:8px}
+.grader-name{font:13px "SF Mono",ui-monospace,Menlo,Consolas,monospace;font-weight:600}
+.badge{font-size:10px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-2);
+  border:1px solid var(--hairline);border-radius:999px;padding:1px 8px}
+.config{display:flex;flex-direction:column;gap:2px;background:var(--inset);border-radius:8px;padding:10px 14px}
+.config code{font:12px "SF Mono",ui-monospace,Menlo,Consolas,monospace;overflow-wrap:anywhere}
+.arm{display:flex;flex-direction:column;gap:8px;padding:6px 0}
+.arm+.arm{border-top:1px dashed var(--grid);margin-top:4px;padding-top:12px}
+.arm-head{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.arm-label{font-size:13px;font-weight:600}
+.run{border:1px solid var(--grid);border-radius:8px;padding:10px 12px;display:flex;flex-direction:column;gap:8px}
+.run-head{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.run-title{font-size:12px;font-weight:600;color:var(--ink-2)}
+.run-error .explanation{color:var(--ink-2)}
+.note{font-size:12px;color:var(--ink-2)}
+.graders{display:flex;flex-direction:column;gap:4px}
+details.grader{border-radius:6px}
+details.grader>summary{cursor:pointer;display:flex;align-items:baseline;gap:8px;padding:3px 4px;
+  border-radius:6px;list-style:none}
+details.grader>summary::-webkit-details-marker{display:none}
+details.grader>summary::before{content:'▸';font-size:10px;color:var(--ink-3);flex:none;
+  transition:transform .12s ease}
+details.grader[open]>summary::before{transform:rotate(90deg)}
+details.grader>summary:hover{background:var(--inset)}
+details.grader>summary:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.grader-body{padding:6px 8px 8px 24px;display:flex;flex-direction:column;gap:6px}
+.chip{font-size:11px;font-weight:600;border-radius:999px;padding:1px 8px;white-space:nowrap}
+.chip-pass{color:var(--good);border:1px solid currentColor}
+.chip-fail{color:var(--critical);border:1px solid currentColor}
+.chip.chip-warn{color:var(--warning);border:1px solid currentColor}
+.explanation{margin:0;font-size:13px;color:var(--ink-2);white-space:pre-wrap;overflow-wrap:break-word}
+.kv{display:flex;gap:8px;font-size:12px;color:var(--ink-3)}
+.votes{font-variant-numeric:tabular-nums;letter-spacing:.1em}
+pre.evidence{margin:0;background:var(--inset);border:1px solid var(--hairline);border-radius:6px;
+  padding:8px 10px;overflow-x:auto;max-height:320px;
+  font:12px/1.5 "SF Mono",ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap;overflow-wrap:break-word}
+footer{color:var(--ink-3);font-size:12px;text-align:center;padding-top:8px}
+@media (prefers-reduced-motion:no-preference){
+  details.grader>summary,.toolbar button{transition:background .12s ease,color .12s ease}
+}
+@media (prefers-reduced-motion:reduce){
+  details.grader>summary::before{transition:none}
+}
+@media print{
+  :root,:root[data-theme="dark"],:root[data-theme="light"]{--plane:#f9f9f7;--surface:#fcfcfb;--ink:#0b0b0b;--ink-2:#52514e;--ink-3:#6b6a64;--hairline:rgba(11,11,11,.10);--grid:#e1e0d9;--inset:rgba(11,11,11,.04);--accent:#2a78d6;--base-fill:#6b6a64;--delta-good:#006300;--good:#067d06;--warning:#8a6100;--critical:#d03b3b;color-scheme:light}
+  body{background:#fff}
+  .toolbar{display:none}
+  .case,.run,.grader-def{break-inside:avoid}
+  pre.evidence{max-height:none}
+}
+</style>
+<div class="wrap">
+<header>
+<div class="eyebrow">Plugin eval report</div>
+<h1>rig v3.0.1</h1>
+<p class="verdict">Plugin effect: <span class="delta delta-pos">↑ +4.2 pts</span> vs baseline — improved 2 · flat 5 · regressed 1 of 8 cases.</p>
+<div class="meta">
+<span class="mono">.</span>
+<span>Claude Code v2.1.273</span>
+<span class="num">2026-09-16 16:29 UTC</span>
+<span class="num">12m 18s</span>
+<span class="num">$5.03</span>
+<span class="num">16 runs</span>
+
+
+
+<span>judge sonnet</span>
+<span class="num">threshold 100%</span>
+
+</div>
+</header>
+
+<section class="tiles">
+<div class="tile hero"><span class="label">Suite score · with plugin</span><span class="value">72.9%</span><span class="sub">mean of per-case scores</span></div>
+<div class="tile"><span class="label">Ablation Δ</span><span class="value num delta-pos">↑ +4.2</span><span class="sub">score points vs baseline, 8 of 8 cases</span></div>
+<div class="tile"><span class="label">Baseline score</span><span class="value num">68.8%</span><span class="sub">without the plugin</span></div>
+<div class="tile"><span class="label">Cases</span><span class="value num">8</span><span class="sub">5 of 8 ≥ 100% threshold</span></div>
+<div class="tile"><span class="label">Perfect runs</span><span class="value num">62.5%</span><span class="sub">runs where every grader passed</span></div>
+</section>
+<details class="section legend">
+<summary>How to read this report</summary>
+<ul class="legend-list">
+<li>A run's score is the weighted fraction of its graders that passed; a "perfect" run passed every grader.</li>
+<li>A case's score is the mean of its runs; a case passes when its score is at or above the 100% threshold (the tick on each case bar).</li>
+<li>The suite score is the mean of the per-case scores.</li>
+<li>Judge votes are independent samples of the LLM judge; the majority decides pass or fail.</li>
+<li>"With plugin" and "Baseline" runs are identical except for the plugin being loaded; Δ is the with-plugin score minus the baseline score.</li>
+
+</ul>
+</details>
+<div class="toolbar"><button type="button" data-act="expand">Expand all</button><button type="button" data-act="collapse">Collapse all</button></div>
+<article class="case" id="case-1">
+<div class="case-head">
+<h2>01-review-to-merge</h2>
+<span class="muted mono">evals-cc/01-review-to-merge</span>
+<span class="spacer"></span>
+
+<span class="delta delta-pos">↑ +33.3 pts</span>
+<span class="muted">with plugin</span>
+<span class="meter m-accent" aria-hidden="true"><span style="width:100.0%"></span><i class="tick" style="left:100.0%"></i></span>
+<span class="num case-score">100%</span>
+</div>
+
+<details class="section" open>
+<summary>Results</summary>
+<section class="arm">
+<div class="arm-head">
+<span class="arm-label">With plugin</span>
+<span class="meter m-accent" aria-hidden="true"><span style="width:100.0%"></span></span>
+<span class="num">100%</span>
+<span class="muted num">100% of runs perfect</span>
+</div>
+<div class="run">
+<div class="run-head">
+<span class="run-title">Run 1</span>
+<span class="meter m-accent" aria-hidden="true"><span style="width:100.0%"></span></span>
+<span class="num">100%</span>
+<span class="muted num">12 turns · $0.80 · 16:29:45 UTC</span>
+</div>
+
+<div class="graders"><details class="grader">
+<summary><span class="chip chip-pass">✓ pass</span> <span class="grader-name">fires-engine</span>  <span class="badge">plugin-fired indicator</span></summary>
+<div class="grader-body">
+<p class="explanation">Skill called 1x (expected 1..∞)</p>
+
+</div>
+</details>
+<details class="grader">
+<summary><span class="chip chip-pass">✓ pass</span> <span class="grader-name">gate-blocks-progression</span>  </summary>
+<div class="grader-body">
+<p class="explanation">judge votes: PASS PASS PASS</p>
+<div class="kv"><span>Judge votes</span><span class="votes">✓ ✓ ✓</span></div><div class="kv"><span>Evidence (what the judge was shown; for an image, a description of what was sent)</span></div><pre class="evidence">手順を先に出します。まだ何も実行していません。
+
+**先に1つ確認が必要です。** `/tmp/claude-eval-AwMiu2/home/cwd` は空の git リポジトリで、追跡ファイルも未コミットの変更も見つかりませんでした。レビュー対象のコードがどこにあるか教えてください（別ディレクトリ／ブランチ／PR 番号）。下の手順はその対象が決まればそのまま走らせられます。
+
+---
+
+## rig --plan
+
+```
+recipe: release-flow [shipped] | autonomy: interactive | backend: manual | review: on
+diff: 不明 → size: S（既定）
+description: intake→design?→implement→verify→review?→pr→merge の全工程
+flags: --review --from review
+slice: --from review（実装済みのため review から）
+```
+
+| # | step | instruction | pattern | gate | personas | policies | output_contract | condition |
+|---|---|---|---|---|---|---|---|---|
+| 1 | review | parallel-review | parallel-fanout | acceptance-gate | security / design / test / behavioral-correctness-reviewer | pre-push-review | review-verdict | `--review または size L+` [✓ 実行: --review 解決] |
+| 2 | pr | pr | serial | — | orchestrator | pr-hygiene, branch-strategy | — | — |
+| 3 | merge | merge | serial | — | orchestrator | branch-strategy, ci-cost | — | — |
+
+### Gate: ゲート条件
+
+**step: review**（acceptance-gate · max_retries: 2 [既定]）
+- [ ] 4-way review に REJECT が無い
+- [ ] APPROVE_WITH_CONDITIONS のマージ前必須条件をすべて反映済み
+
+`[既定]` = 汎用既定値（2）
+
+### Reviewer Fan-out: レビュアー集合
+
+**step: review**（pattern: parallel-fanout）
+- security-reviewer [agent] — 権限・認可・インジェクション・秘密情報・依存
+- design-reviewer [agent] — 抽象度・既存規約・後方互換・より単純な代案
+- test-reviewer [agent] — 既存テストとの整合・新規テストの要否・第三者検証可能性
+- behavioral-correctness-reviewer [agent] — 状態遷移・非同期・単位と意味・境界値・到達可能性
+
+```
+steps: 3（gate=1）| acceptance retries 上限: 2 | RUN はしない
+```
+
+---
+
+### 「観点の抜け」への手当て
+
+ご懸念そのものなので、既定の 4-way に**上乗せできるレーン**を挙げます。どれを足すか選んでください（全部足すと遅く・高くなるので、変更の性質で絞るのが筋です）。
+
+| 追加レーン | 足す価値がある変更 |
+|---|---|
+| `--adversarial`（lazy-senior / cognitive-economist） | 消せるコード・稼がないコメント・将来の保守負債を突く |
+| `--persona performance-reviewer` | ホットパス・計算量・リソースリーク |
+| `--persona observability-reviewer` | 失敗が見えるか・ログ・メトリクス・ロールバック |
+| `--persona api-compat-reviewer` | 公開 API / スキーマ / semver に触る変更 |
+| `--persona migration-reviewer` | DB・データ移行を含む変更 |
+| `--persona docs-reviewer` | README / CHANGELOG / 設定例が diff で嘘になっていないか |
+| `--verify-findings` | REJECT の根拠を finding-verifier に反証させ、誤検知をゲートに通さない |
+
+もう一点、**size が S 判定だと review step は既定で OFF** になります。上の plan では `--review` を明示して常時 ON にしてあります（ここが一番よくある「抜け」です）。
+
+### 安全面（既定の挙動）
+
+- 変更は**隔離 worktree で扱い、`accept` するまでメインの作業ツリーに触れません**
+- **ゲートが REJECT / pending の間は accept が拒否されます**（「終わった」という自己申告は通りません）
+- push・PR 作成・merge はいずれも明示アクションで、その都度確認します
+
+---
+
+**次に必要なもの**：① レビュー対象の場所、② 追加レーンの選択（無しでも可）。その2つが決まったら RUN に入ります。実行前にもう一度確認します。</pre>
+</div>
+</details>
+<details class="grader">
+<summary><span class="chip chip-pass">✓ pass</span> <span class="grader-name">names-ordered-steps</span>  </summary>
+<div class="grader-body">
+<p class="explanation">judge votes: PASS PASS PASS</p>
+<div class="kv"><span>Judge votes</span><span class="votes">✓ ✓ ✓</span></div><div class="kv"><span>Evidence (what the judge was shown; for an image, a description of what was sent)</span></div><pre class="evidence">手順を先に出します。まだ何も実行していません。
+
+**先に1つ確認が必要です。** `/tmp/claude-eval-AwMiu2/home/cwd` は空の git リポジトリで、追跡ファイルも未コミットの変更も見つかりませんでした。レビュー対象のコードがどこにあるか教えてください（別ディレクトリ／ブランチ／PR 番号）。下の手順はその対象が決まればそのまま走らせられます。
+
+---
+
+## rig --plan
+
+```
+recipe: release-flow [shipped] | autonomy: interactive | backend: manual | review: on
+diff: 不明 → size: S（既定）
+description: intake→design?→implement→verify→review?→pr→merge の全工程
+flags: --review --from review
+slice: --from review（実装済みのため review から）
+```
+
+| # | step | instruction | pattern | gate | personas | policies | output_contract | condition |
+|---|---|---|---|---|---|---|---|---|
+| 1 | review | parallel-review | parallel-fanout | acceptance-gate | security / design / test / behavioral-correctness-reviewer | pre-push-review | review-verdict | `--review または size L+` [✓ 実行: --review 解決] |
+| 2 | pr | pr | serial | — | orchestrator | pr-hygiene, branch-strategy | — | — |
+| 3 | merge | merge | serial | — | orchestrator | branch-strategy, ci-cost | — | — |
+
+### Gate: ゲート条件
+
+**step: review**（acceptance-gate · max_retries: 2 [既定]）
+- [ ] 4-way review に REJECT が無い
+- [ ] APPROVE_WITH_CONDITIONS のマージ前必須条件をすべて反映済み
+
+`[既定]` = 汎用既定値（2）
+
+### Reviewer Fan-out: レビュアー集合
+
+**step: review**（pattern: parallel-fanout）
+- security-reviewer [agent] — 権限・認可・インジェクション・秘密情報・依存
+- design-reviewer [agent] — 抽象度・既存規約・後方互換・より単純な代案
+- test-reviewer [agent] — 既存テストとの整合・新規テストの要否・第三者検証可能性
+- behavioral-correctness-reviewer [agent] — 状態遷移・非同期・単位と意味・境界値・到達可能性
+
+```
+steps: 3（gate=1）| acceptance retries 上限: 2 | RUN はしない
+```
+
+---
+
+### 「観点の抜け」への手当て
+
+ご懸念そのものなので、既定の 4-way に**上乗せできるレーン**を挙げます。どれを足すか選んでください（全部足すと遅く・高くなるので、変更の性質で絞るのが筋です）。
+
+| 追加レーン | 足す価値がある変更 |
+|---|---|
+| `--adversarial`（lazy-senior / cognitive-economist） | 消せるコード・稼がないコメント・将来の保守負債を突く |
+| `--persona performance-reviewer` | ホットパス・計算量・リソースリーク |
+| `--persona observability-reviewer` | 失敗が見えるか・ログ・メトリクス・ロールバック |
+| `--persona api-compat-reviewer` | 公開 API / スキーマ / semver に触る変更 |
+| `--persona migration-reviewer` | DB・データ移行を含む変更 |
+| `--persona docs-reviewer` | README / CHANGELOG / 設定例が diff で嘘になっていないか |
+| `--verify-findings` | REJECT の根拠を finding-verifier に反証させ、誤検知をゲートに通さない |
+
+もう一点、**size が S 判定だと review step は既定で OFF** になります。上の plan では `--review` を明示して常時 ON にしてあります（ここが一番よくある「抜け」です）。
+
+### 安全面（既定の挙動）
+
+- 変更は**隔離 worktree で扱い、`accept` するまでメインの作業ツリーに触れません**
+- **ゲートが REJECT / pending の間は accept が拒否されます**（「終わった」という自己申告は通りません）
+- push・PR 作成・merge はいずれも明示アクションで、その都度確認します
+
+---
+
+**次に必要なもの**：① レビュー対象の場所、② 追加レーンの選択（無しでも可）。その2つが決まったら RUN に入ります。実行前にもう一度確認します。</pre>
+</div>
+</details>
+<details class="grader">
+<summary><span class="chip chip-pass">✓ pass</span> <span class="grader-name">review-split-and-reconciled</span>  </summary>
+<div class="grader-body">
+<p class="explanation">judge votes: PASS PASS PASS</p>
+<div class="kv"><span>Judge votes</span><span class="votes">✓ ✓ ✓</span></div><div class="kv"><span>Evidence (what the judge was shown; for an image, a description of what was sent)</span></div><pre class="evidence">手順を先に出します。まだ何も実行していません。
+
+**先に1つ確認が必要です。** `/tmp/claude-eval-AwMiu2/home/cwd` は空の git リポジトリで、追跡ファイルも未コミットの変更も見つかりませんでした。レビュー対象のコードがどこにあるか教えてください（別ディレクトリ／ブランチ／PR 番号）。下の手順はその対象が決まればそのまま走らせられます。
+
+---
+
+## rig --plan
+
+```
+recipe: release-flow [shipped] | autonomy: interactive | backend: manual | review: on
+diff: 不明 → size: S（既定）
+description: intake→design?→implement→verify→review?→pr→merge の全工程
+flags: --review --from review
+slice: --from review（実装済みのため review から）
+```
+
+| # | step | instruction | pattern | gate | personas | policies | output_contract | condition |
+|---|---|---|---|---|---|---|---|---|
+| 1 | review | parallel-review | parallel-fanout | acceptance-gate | security / design / test / behavioral-correctness-reviewer | pre-push-review | review-verdict | `--review または size L+` [✓ 実行: --review 解決] |
+| 2 | pr | pr | serial | — | orchestrator | pr-hygiene, branch-strategy | — | — |
+| 3 | merge | merge | serial | — | orchestrator | branch-strategy, ci-cost | — | — |
+
+### Gate: ゲート条件
+
+**step: review**（acceptance-gate · max_retries: 2 [既定]）
+- [ ] 4-way review に REJECT が無い
+- [ ] APPROVE_WITH_CONDITIONS のマージ前必須条件をすべて反映済み
+
+`[既定]` = 汎用既定値（2）
+
+### Reviewer Fan-out: レビュアー集合
+
+**step: review**（pattern: parallel-fanout）
+- security-reviewer [agent] — 権限・認可・インジェクション・秘密情報・依存
+- design-reviewer [agent] — 抽象度・既存規約・後方互換・より単純な代案
+- test-reviewer [agent] — 既存テストとの整合・新規テストの要否・第三者検証可能性
+- behavioral-correctness-reviewer [agent] — 状態遷移・非同期・単位と意味・境界値・到達可能性
+
+```
+steps: 3（gate=1）| acceptance retries 上限: 2 | RUN はしない
+```
+
+---
+
+### 「観点の抜け」への手当て
+
+ご懸念そのものなので、既定の 4-way に**上乗せできるレーン**を挙げます。どれを足すか選んでください（全部足すと遅く・高くなるので、変更の性質で絞るのが筋です）。
+
+| 追加レーン | 足す価値がある変更 |
+|---|---|
+| `--adversarial`（lazy-senior / cognitive-economist） | 消せるコード・稼がないコメント・将来の保守負債を突く |
+| `--persona performance-reviewer` | ホットパス・計算量・リソースリーク |
+| `--persona observability-reviewer` | 失敗が見えるか・ログ・メトリクス・ロールバック |
+| `--persona api-compat-reviewer` | 公開 API / スキーマ / semver に触る変更 |
+| `--persona migration-reviewer` | DB・データ移行を含む変更 |
+| `--persona docs-reviewer` | README / CHANGELOG / 設定例が diff で嘘になっていないか |
+| `--verify-findings` | REJECT の根拠を finding-verifier に反証させ、誤検知をゲートに通さない |
+
+もう一点、**size が S 判定だと review step は既定で OFF** になります。上の plan では `--review` を明示して常時 ON にしてあります（ここが一番よくある「抜け」です）。
+
+### 安全面（既定の挙動）
+
+- 変更は**隔離 worktree で扱い、`accept` するまでメインの作業ツリーに触れません**
+- **ゲートが REJECT / pending の間は accept が拒否されます**（「終わった」という自己申告は通りません）
+- push・PR 作成・merge はいずれも明示アクションで、その都度確認します
+
+---
+
+**次に必要なもの**：① レビュー対象の場所、② 追加レーンの選択（無しでも可）。その2つが決まったら RUN に入ります。実行前にもう一度確認します。</pre>
+</div>
+</details></div>
+</div>
+</section><section class="arm">
+<div class="arm-head">
+<span class="arm-label">Baseline (no plugin)</span>
+<span class="meter m-base" aria-hidden="true"><span style="width:66.7%"></span></span>
+<span class="num">66.7%</span>
+<span class="muted num">0% of runs perfect</span>
+</div>
+<div class="run">
+<div class="run-head">
+<span class="run-title">Run 1</span>
+<span class="meter m-base" aria-hidden="true"><span style="width:66.7%"></span></span>
+<span class="num">66.7%</span>
+<span class="muted num">3 turns · $0.17 · 16:31:08 UTC</span>
+</div>
+
+<div class="graders"><details class="grader" open>
+<summary><span class="chip chip-fail">✗ fail</span> <span class="grader-name">gate-blocks-progression</span>  </summary>
+<div class="grader-body">
+<p class="explanation">judge votes: FAIL FAIL FAIL</p>
+<div class="kv"><span>Judge votes</span><span class="votes">✗ ✗ ✗</span></div><div class="kv"><span>Evidence (what the judge was shown; for an image, a description of what was sent)</span></div><pre class="evidence">作業ディレクトリ `/tmp/claude-eval-yQQAPy/home/cwd` は空で、コミットもありません。実物をまだ見られていないので、以下は「この手順で進めます」という提案です。対象の場所（パス／ブランチ／PR番号）を教えてもらえれば、そのまま実行に入れます。
+
+## 進め方（提案）
+
+**0. スコープの確定**
+差分を洗い出して、「意図した変更」と「差分」がずれていないかだけ先に見ます。デバッグ用の出力、コメントアウトした旧コード、無関係なファイルの巻き込みはここで落とします。以降のレビューの土台になるので最初に固定します。
+
+**1. テストを実際に走らせる**
+レビューの前に green を確認します。落ちているならレビューより先に原因を切り分けます（レビュー指摘とテスト失敗が混ざると原因が追えなくなるため）。
+
+**2. `/code-review` — 正しさ**
+境界条件、エラーハンドリング、null/空ケース、並行性、既存呼び出し元との後方互換性。ここは effort を `high` で回して、取りこぼしより過検出寄りに倒します。
+
+**3. `/security-review` — セキュリティ**
+入力検証、認可漏れ、秘密情報の混入、インジェクション、依存追加の妥当性。2 とは観点が別物なので独立に通します。
+
+**4. `/simplify` — 設計・可読性**
+重複、既存ユーティリティの再利用漏れ、抽象度のズレ。これは正しさとセキュリティが片付いた後に回します（先にやると手戻りになるため）。
+
+**5. 指摘の仕分けと修正**
+2〜4 の指摘を「直す／今回は見送る（理由付き）」に分けて提示します。私が勝手に全部直すのではなく、判断が要るものは一覧にして確認します。修正後にテスト再実行。
+
+**6. テストの十分性チェック**
+変更したパスに対してテストが実在するか、失敗系が書かれているかを見ます。5 の修正で新たに増えた分岐も対象です。
+
+**7. マージ準備**
+コミットの整理、PR 説明（何を・なぜ・どう検証したか）、CI の確認、マイグレーションや設定変更があれば手順の明記。
+
+## 先に伝えておくべき制約
+
+このセッションではシェルが使えません。つまり **1 のテスト実行、および 7 の push / PR 作成 / マージは私の側では実行できません**。ファイルの読み取りとレビュー（0, 2, 3, 4, 6 と 5 の修正案提示）は可能です。テスト結果を貼ってもらう形にするか、bash を使える状態にするかは選んでください。
+
+## 必要な情報
+
+- コードの場所（別ディレクトリのパス、もしくはブランチ名 / PR 番号）
+- 今回の変更の意図（1〜2 行で十分です。0 と 6 の判断精度が変わります）
+
+この手順で問題なければ、対象を教えてください。順序や粒度の変更もこの段階なら容易です。</pre>
+</div>
+</details>
+<details class="grader">
+<summary><span class="chip chip-pass">✓ pass</span> <span class="grader-name">names-ordered-steps</span>  </summary>
+<div class="grader-body">
+<p class="explanation">judge votes: PASS PASS PASS</p>
+<div class="kv"><span>Judge votes</span><span class="votes">✓ ✓ ✓</span></div><div class="kv"><span>Evidence (what the judge was shown; for an image, a description of what was sent)</span></div><pre class="evidence">作業ディレクトリ `/tmp/claude-eval-yQQAPy/home/cwd` は空で、コミットもありません。実物をまだ見られていないので、以下は「この手順で進めます」という提案です。対象の場所（パス／ブランチ／PR番号）を教えてもらえれば、そのまま実行に入れます。
+
+## 進め方（提案）
+
+**0. スコープの確定**
+差分を洗い出して、「意図した変更」と「差分」がずれていないかだけ先に見ます。デバッグ用の出力、コメントアウトした旧コード、無関係なファイルの巻き込みはここで落とします。以降のレビューの土台になるので最初に固定します。
+
+**1. テストを実際に走らせる**
+レビューの前に green を確認します。落ちているならレビューより先に原因を切り分けます（レビュー指摘とテスト失敗が混ざると原因が追えなくなるため）。
+
+**2. `/code-review` — 正しさ**
+境界条件、エラーハンドリング、null/空ケース、並行性、既存呼び出し元との後方互換性。ここは effort を `high` で回して、取りこぼしより過検出寄りに倒します。
+
+**3. `/security-review` — セキュリティ**
+入力検証、認可漏れ、秘密情報の混入、インジェクション、依存追加の妥当性。2 とは観点が別物なので独立に通します。
+
+**4. `/simplify` — 設計・可読性**
+重複、既存ユーティリティの再利用漏れ、抽象度のズレ。これは正しさとセキュリティが片付いた後に回します（先にやると手戻りになるため）。
+
+**5. 指摘の仕分けと修正**
+2〜4 の指摘を「直す／今回は見送る（理由付き）」に分けて提示します。私が勝手に全部直すのではなく、判断が要るものは一覧にして確認します。修正後にテスト再実行。
+
+**6. テストの十分性チェック**
+変更したパスに対してテストが実在するか、失敗系が書かれているかを見ます。5 の修正で新たに増えた分岐も対象です。
+
+**7. マージ準備**
+コミットの整理、PR 説明（何を・なぜ・どう検証したか）、CI の確認、マイグレーションや設定変更があれば手順の明記。
+
+## 先に伝えておくべき制約
+
+このセッションではシェルが使えません。つまり **1 のテスト実行、および 7 の push / PR 作成 / マージは私の側では実行できません**。ファイルの読み取りとレビュー（0, 2, 3, 4, 6 と 5 の修正案提示）は可能です。テスト結果を貼ってもらう形にするか、bash を使える状態にするかは選んでください。
+
+## 必要な情報
+
+- コードの場所（別ディレクトリのパス、もしくはブランチ名 / PR 番号）
+- 今回の変更の意図（1〜2 行で十分です。0 と 6 の判断精度が変わります）
+
+この手順で問題なければ、対象を教えてください。順序や粒度の変更もこの段階なら容易です。</pre>
+</div>
+</details>
+<details class="grader">
+<summary><span class="chip chip-pass">✓ pass</span> <span class="grader-name">review-split-and-reconciled</span>  </summary>
+<div class="grader-body">
+<p class="explanation">judge votes: PASS PASS PASS</p>
+<div class="kv"><span>Judge votes</span><span class="votes">✓ ✓ ✓</span></div><div class="kv"><span>Evidence (what the judge was shown; for an image, a description of what was sent)</span></div><pre class="evidence">作業ディレクトリ `/tmp/claude-eval-yQQAPy/home/cwd` は空で、コミットもありません。実物をまだ見られていないので、以下は「この手順で進めます」という提案です。対象の場所（パス／ブランチ／PR番号）を教えてもらえれば、そのまま実行に入れます。
+
+## 進め方（提案）
+
+**0. スコープの確定**
+差分を洗い出して、「意図した変更」と「差分」がずれていないかだけ先に見ます。デバッグ用の出力、コメントアウトした旧コード、無関係なファイルの巻き込みはここで落とします。以降のレビューの土台になるので最初に固定します。
+
+**1. テストを実際に走らせる**
+レビューの前に green を確認します。落ちているならレビューより先に原因を切り分けます（レビュー指摘とテスト失敗が混ざると原因が追えなくなるため）。
+
+**2. `/code-review` — 正しさ**
+境界条件、エラーハンドリング、null/空ケース、並行性、既存呼び出し元との後方互換性。ここは effort を `high` で回して、取りこぼしより過検出寄りに倒します。
+
+**3. `/security-review` — セキュリティ**
+入力検証、認可漏れ、秘密情報の混入、インジェクション、依存追加の妥当性。2 とは観点が別物なので独立に通します。
+
+**4. `/simplify` — 設計・可読性**
+重複、既存ユーティリティの再利用漏れ、抽象度のズレ。これは正しさとセキュリティが片付いた後に回します（先にやると手戻りになるため）。
+
+**5. 指摘の仕分けと修正**
+2〜4 の指摘を「直す／今回は見送る（理由付き）」に分けて提示します。私が勝手に全部直すのではなく、判断が要るものは一覧にして確認します。修正後にテスト再実行。
+
+**6. テストの十分性チェック**
+変更したパスに対してテストが実在するか、失敗系が書かれているかを見ます。5 の修正で新たに増えた分岐も対象です。
+
+**7. マージ準備**
+コミットの整理、PR 説明（何を・なぜ・どう検証したか）、CI の確認、マイグレーションや設定変更があれば手順の明記。
+
+## 先に伝えておくべき制約
+
+このセッションではシェルが使えません。つまり **1 のテスト実行、および 7 の push / PR 作成 / マージは私の側では実行できません**。ファイルの読み取りとレビュー（0, 2, 3, 4, 6 と 5 の修正案提示）は可能です。テスト結果を貼ってもらう形にするか、bash を使える状態にするかは選んでください。
+
+## 必要な情報
+
+- コードの場所（別ディレクトリのパス、もしくはブランチ名 / PR 番号）
+- 今回の変更の意図（1〜2 行で十分です。0 と 6 の判断精度が変わります）
+
+この手順で問題なければ、対象を教えてください。順序や粒度の変更もこの段階なら容易です。</pre>
+</div>
+</details></div>
+</div>
+</section>
+</details>
+<details class="section" open>
+<summary>Prompt</summary>
+<div class="md"><p>これから書いたコードをレビューして、マージまで持っていきたい。レビュー観点の抜けが怖いので、どういう手順で進めることになるかを先に見せてほしい。</p>
+</div>
+</details>
+<details class="section" open>
+<summary>Graders — what "good" means for this case</summary>
+<div class="grader-def">
+<div class="grader-def-head"><span class="grader-name">fires-engine</span><span class="badge">tool_used</span></div>
+<div class="config"><div class="kv"><span>tool</span><code>&quot;Skill&quot;</code></div><div class="kv"><span>input_match</span><code>&quot;engine&quot;</code></div><div class="kv"><span>min</span><code>1</code></div></div>
+</div>
+<div class="grader-def">
+<div class="grader-def-head"><span class="grader-name">gate-blocks-progression</span><span class="badge">llm</span></div>
+<div class="md"><p>手順のどこかに、満たさなければ次へ進めない関門が置かれているかを見る。</p>
+<p>合格の条件は次の2つを両方満たすこと。</p>
+<ol>
+<li>合否を判定する箇所が手順の中に明示されている。</li>
+<li>その判定が不合格だったときに<strong>進行が止まる</strong>と書かれている。たとえば「通らなければ取り込みが拒否される」「REJECT が残っている間はマージしない」のように、次の段階へ進めないことが述べられている。</li>
+</ol>
+<p>チェックや検証を実行して<strong>結果を報告する</strong>とだけ書かれている応答は不合格。「テストを実行して結果を確認します」「落ちたら落ちたと報告します」は、報告であって関門ではない。実行結果が進行を止めるとは書かれていないため。</p>
+</div>
+</div>
+<div class="grader-def">
+<div class="grader-def-head"><span class="grader-name">names-ordered-steps</span><span class="badge">llm</span></div>
+<div class="md"><p>レビューからマージまでに実行される作業が、順序付きで並んでいれば合格。番号付きリスト・表・見出しのいずれでもよい。</p>
+<p>進め方をまったく示さずにいきなりコードの修正差分やパッチだけを出している応答は不合格。</p>
+<p>対象コードの所在を尋ねる質問や、任意の追加項目をどうするか尋ねる質問が含まれていること自体は減点しない。順序付きの手順が示されているかどうかだけを見る。</p>
+</div>
+</div>
+<div class="grader-def">
+<div class="grader-def-head"><span class="grader-name">review-split-and-reconciled</span><span class="badge">llm</span></div>
+<div class="md"><p>レビューが1回の通し読みではなく、複数の担当に分けて行われ、その結果が突き合わされるかを見る。</p>
+<p>合格の条件は次の2つを両方満たすこと。</p>
+<ol>
+<li>レビューの観点が複数に分かれており、それぞれの観点が名指しされている。単に確認項目を列挙するのではなく、観点ごとに別々のレビューが走ると読めること。</li>
+<li>分かれて出てきた所見が、そのまま全部採用されるのではなく、取捨または統合されると述べている。誤検知の切り分け、指摘の仕分け、合否判定への集約などが該当する。</li>
+</ol>
+<p>条件2について。<strong>これが手順の何段目かは問わない。</strong> 表の行になっていても、フラグの説明であっても、散文で一度触れられているだけでも、所見が突き合わされると読み取れれば満たす。判定するのは所見の扱いが述べられているかどうかであって、それがどの書式で書かれているかではない。</p>
+<p>観点の一覧を挙げるだけで、それらが1回のレビューの確認項目として消費されており、所見の取捨に一切触れていない応答は不合格。</p>
+</div>
+</div>
+</details>
+</article>
+<article class="case" id="case-2">
+<div class="case-head">
+<h2>02-fix-nan-total</h2>
+<span class="muted mono">evals-cc/02-fix-nan-total</span>
+<span class="spacer"></span>
+
+<span class="delta delta-zero">· 0.0 pts</span>
+<span class="muted">with plugin</span>
+<span class="meter m-accent" aria-hidden="true"><span style="width:33.3%"></span><i class="tick" style="left:100.0%"></i></span>
+<span class="num case-score">33.3%</span>
+</div>
+
+<details class="section" open>
+<summary>Results</summary>
+<section class="arm">
+<div class="arm-head">
+<span class="arm-label">With plugin</span>
+<span class="meter m-accent" aria-hidden="true"><span style="width:33.3%"></span></span>
+<span class="num">33.3%</span>
+<span class="muted num">0% of runs perfect</span>
+</div>
+<div class="run">
+<div class="run-head">
+<span class="run-title">Run 1</span>
+<span class="meter m-accent" aria-hidden="true"><span style="width:33.3%"></span></span>
+<span class="num">33.3%</span>
+<span class="muted num">8 turns · $0.52 · 16:32:09 UTC</span>
+</div>
+
+<div class="graders"><details class="grader" open>
+<summary><span class="chip chip-fail">✗ fail</span> <span class="grader-name">failing-test-precedes-fix</span>  </summary>
+<div class="grader-body">
+<p class="explanation">judge votes: FAIL FAIL FAIL</p>
+<div class="kv"><span>Judge votes</span><span class="votes">✗ ✗ ✗</span></div><div class="kv"><span>Evidence (what the judge was shown; for an image, a description of what was sent)</span></div><pre class="evidence">▸ rig | task: (not created) | recipe: (unresolved) | step: intake (0/N) | gate: none | backend: manual | mode: gated
+
+I&apos;ve got the flow up, but I can&apos;t find the code. The working directory (`/tmp/claude-eval-skAa4Y/home/cwd`) is an empty git repo — no source files, no commits. So before anything else: **where does the checkout code live?** A path, or a repo I should clone.
+
+Meanwhile, here&apos;s how I&apos;d go at it once I can see it — it&apos;s a bugfix, so a light harness: implement → verify → review, in an isolated worktree, with a gate before anything lands in your tree.
+
+**On &quot;properly rather than patched over&quot;:** `NaN` in a total almost always means an arithmetic operation met `undefined` — and the interesting question is *which* one. The three usual root causes want different fixes:
+
+1. **The reduce has no initial value.** `items.reduce((a, b) =&gt; a + b.price)` on `[]` throws; with a seed of `undefined` or on a sum of objects it yields `NaN`. Fix: seed the accumulator with `0` and type the sum.
+2. **A subtotal is computed then divided or multiplied by something derived from the cart** — tax rate, average, discount ratio — and on an empty cart that&apos;s `0/0`. Fix: guard the ratio at its source, not the total.
+3. **A field is missing rather than the cart being empty**, and empty-cart is just the case that exposes it. Fix belongs at the boundary where the cart is parsed, and the empty cart is then one case among several.
+
+The patch-over version of all three is `isNaN(total) ? 0 : total` at the render site. I&apos;d rather push the fix to wherever the value first stops being a number, so that a cart with one malformed item doesn&apos;t silently render `0` instead.
+
+**On the test that would have caught it:** the empty-cart case is the obvious one, but a test asserting only `total( []) === 0` passes against the `isNaN` band-aid too. I&apos;d write it at the same level the fix lives — the total calculation, not the rendered component — and pair it with a boundary case or two (one item, an item with a zero price) so the test pins the arithmetic rather than the symptom.
+
+Point me at the code and I&apos;ll classify it, spin up the worktree, and confirm the plan with you before any change is written.</pre>
+</div>
+</details>
+<details class="grader">
+<summary><span class="chip chip-pass">✓ pass</span> <span class="grader-name">fires-engine</span>  <span class="badge">plugin-fired indicator</span></summary>
+<div class="grader-body">
+<p class="explanation">Skill called 1x (expected 1..∞)</p>
+
+</div>
+</details>
+<details class="grader" open>
+<summary><span class="chip chip-fail">✗ fail</span> <span class="grader-name">gate-blocks-progression</span>  </summary>
+<div class="grader-body">
+<p class="explanation">judge votes: FAIL FAIL FAIL</p>
+<div class="kv"><span>Judge votes</span><span class="votes">✗ ✗ ✗</span></div><div class="kv"><span>Evidence (what the judge was shown; for an image, a description of what was sent)</span></div><pre class="evidence">▸ rig | task: (not created) | recipe: (unresolved) | step: intake (0/N) | gate: none | backend: manual | mode: gated
+
+I&apos;ve got the flow up, but I can&apos;t find the code. The working directory (`/tmp/claude-eval-skAa4Y/home/cwd`) is an empty git repo — no source files, no commits. So before anything else: **where does the checkout code live?** A path, or a repo I should clone.
+
+Meanwhile, here&apos;s how I&apos;d go at it once I can see it — it&apos;s a bugfix, so a light harness: implement → verify → review, in an isolated worktree, with a gate before anything lands in your tree.
+
+**On &quot;properly rather than patched over&quot;:** `NaN` in a total almost always means an arithmetic operation met `undefined` — and the interesting question is *which* one. The three usual root causes want different fixes:
+
+1. **The reduce has no initial value.** `items.reduce((a, b) =&gt; a + b.price)` on `[]` throws; with a seed of `undefined` or on a sum of objects it yields `NaN`. Fix: seed the accumulator with `0` and type the sum.
+2. **A subtotal is computed then divided or multiplied by something derived from the cart** — tax rate, average, discount ratio — and on an empty cart that&apos;s `0/0`. Fix: guard the ratio at its source, not the total.
+3. **A field is missing rather than the cart being empty**, and empty-cart is just the case that exposes it. Fix belongs at the boundary where the cart is parsed, and the empty cart is then one case among several.
+
+The patch-over version of all three is `isNaN(total) ? 0 : total` at the render site. I&apos;d rather push the fix to wherever the value first stops being a number, so that a cart with one malformed item doesn&apos;t silently render `0` instead.
+
+**On the test that would have caught it:** the empty-cart case is the obvious one, but a test asserting only `total( []) === 0` passes against the `isNaN` band-aid too. I&apos;d write it at the same level the fix lives — the total calculation, not the rendered component — and pair it with a boundary case or two (one item, an item with a zero price) so the test pins the arithmetic rather than the symptom.
+
+Point me at the code and I&apos;ll classify it, spin up the worktree, and confirm the plan with you before any change is written.</pre>
+</div>
+</details>
+<details class="grader">
+<summary><span class="chip chip-pass">✓ pass</span> <span class="grader-name">isolates-before-landing</span>  </summary>
+<div class="grader-body">
+<p class="explanation">judge votes: PASS PASS PASS</p>
+<div class="kv"><span>Judge votes</span><span class="votes">✓ ✓ ✓</span></div><div class="kv"><span>Evidence (what the judge was shown; for an image, a description of what was sent)</span></div><pre class="evidence">▸ rig | task: (not created) | recipe: (unresolved) | step: intake (0/N) | gate: none | backend: manual | mode: gated
+
+I&apos;ve got the flow up, but I can&apos;t find the code. The working directory (`/tmp/claude-eval-skAa4Y/home/cwd`) is an empty git repo — no source files, no commits. So before anything else: **where does the checkout code live?** A path, or a repo I should clone.
+
+Meanwhile, here&apos;s how I&apos;d go at it once I can see it — it&apos;s a bugfix, so a light harness: implement → verify → review, in an isolated worktree, with a gate before anything lands in your tree.
+
+**On &quot;properly rather than patched over&quot;:** `NaN` in a total almost always means an arithmetic operation met `undefined` — and the interesting question is *which* one. The three usual root causes want different fixes:
+
+1. **The reduce has no initial value.** `items.reduce((a, b) =&gt; a + b.price)` on `[]` throws; with a seed of `undefined` or on a sum of objects it yields `NaN`. Fix: seed the accumulator with `0` and type the sum.
+2. **A subtotal is computed then divided or multiplied by something derived from the cart** — tax rate, average, discount ratio — and on an empty cart that&apos;s `0/0`. Fix: guard the ratio at its source, not the total.
+3. **A field is missing rather than the cart being empty**, and empty-cart is just the case that exposes it. Fix belongs at the boundary where the cart is parsed, and the empty cart is then one case among several.
+
+The patch-over version of all three is `isNaN(total) ? 0 : total` at the render site. I&apos;d rather push the fix to wherever the value first stops being a number, so that a cart with one malformed item doesn&apos;t silently render `0` instead.
+
+**On the test that would have caught it:** the empty-cart case is the obvious one, but a test asserting only `total( []) === 0` passes against the `isNaN` band-aid too. I&apos;d write it at the same level the fix lives — the total calculation, not the rendered component — and pair it with a boundary case or two (one item, an item with a zero price) so the test pins the arithmetic rather than the symptom.
+
+Point me at the code and I&apos;ll classify it, spin up the worktree, and confirm the plan with you before any change is written.</pre>
+</div>
+</details></div>
+</div>
+</section><section class="arm">
+<div class="arm-head">
+<span class="arm-label">Baseline (no plugin)</span>
+<span class="meter m-base" aria-hidden="true"><span style="width:33.3%"></span></span>
+<span class="num">33.3%</span>
+<span class="muted num">0% of runs perfect</span>
+</div>
+<div class="run">
+<div class="run-head">
+<span class="run-title">Run 1</span>
+<span class="meter m-base" aria-hidden="true"><span style="width:33.3%"></span></span>
+<span class="num">33.3%</span>
+<span class="muted num">6 turns · $0.15 · 16:32:58 UTC</span>
+</div>
+
+<div class="graders"><details class="grader">
+<summary><span class="chip chip-pass">✓ pass</span> <span class="grader-name">failing-test-precedes-fix</span>  </summary>
+<div class="grader-body">
+<p class="explanation">judge votes: PASS PASS PASS</p>
+<div class="kv"><span>Judge votes</span><span class="votes">✓ ✓ ✓</span></div><div class="kv"><span>Evidence (what the judge was shown; for an image, a description of what was sent)</span></div><pre class="evidence">The repo here is empty — `/tmp/claude-eval-u54W7e/home/cwd` has no files, and the git repo has no commits. So I can&apos;t see the checkout code. Point me at it (a path, or a different directory/branch to open) and I&apos;ll do the actual fix.
+
+Here&apos;s how I&apos;d approach it once I can see it:
+
+**1. Reproduce before touching anything.** Write a failing test first: `total(cart: [])` → expect `0`, watch it produce `NaN`. That test is the thing you asked for, and writing it first guarantees it actually catches the bug rather than just passing alongside the fix.
+
+**2. Find where the `NaN` is born, not where it&apos;s displayed.** `NaN` in a total almost always comes from one of a few places:
+
+- A reduce with no initial value — `items.reduce((a, b) =&gt; a + b.price)` on `[]` throws, but on a single malformed item or with a seed like `undefined` it yields `NaN`.
+- Arithmetic on an `undefined` field — `cart.subtotal + shipping` where `subtotal` is only set once items exist.
+- `parseFloat`/`Number` on an empty or absent string.
+
+The distinction matters for your &quot;properly, not patched over&quot; requirement: if the `NaN` originates in the reducer, the fix is a `0` seed and a typed return. If it originates because `subtotal` is `undefined` for an empty cart, the real bug is that the cart model allows an uninitialized total field at all, and the fix is making the empty cart a valid, fully-populated value rather than a hole.
+
+**3. Fix at the origin.** The patch-over version is `isNaN(total) ? 0 : total` at the render site, or `items.length === 0 &amp;&amp; return 0` as an early guard. Both leave the underlying arithmetic capable of producing `NaN` for other inputs — a single item with a null price, a coupon that zeroes things out — and you&apos;ll see the same bug again from a different direction. I&apos;d rather the total function be total in the mathematical sense: correct for every cart including the empty one, with no special case.
+
+**4. Widen the test slightly.** Empty cart is the reported symptom; the same root cause usually also breaks a cart where every item was removed, or one item with a missing/zero price. Three or four cases in a table-driven test, not one.
+
+One judgment call I&apos;d flag rather than decide alone: if the currency handling is float-based, an empty-cart `NaN` is often the first visible symptom of looser numeric handling throughout. I&apos;d fix the reported bug in scope and tell you what I saw, rather than quietly converting the money handling to integer cents — that&apos;s a bigger change than you asked for.
+
+Where&apos;s the code?</pre>
+</div>
+</details>
+<details class="grader" open>
+<summary><span class="chip chip-fail">✗ fail</span> <span class="grader-name">gate-blocks-progression</span>  </summary>
+<div class="grader-body">
+<p class="explanation">judge votes: FAIL FAIL FAIL</p>
+<div class="kv"><span>Judge votes</span><span class="votes">✗ ✗ ✗</span></div><div class="kv"><span>Evidence (what the judge was shown; for an image, a description of what was sent)</span></div><pre class="evidence">The repo here is empty — `/tmp/claude-eval-u54W7e/home/cwd` has no files, and the git repo has no commits. So I can&apos;t see the checkout code. Point me at it (a path, or a different directory/branch to open) and I&apos;ll do the actual fix.
+
+Here&apos;s how I&apos;d approach it once I can see it:
+
+**1. Reproduce before touching anything.** Write a failing test first: `total(cart: [])` → expect `0`, watch it produce `NaN`. That test is the thing you asked for, and writing it first guarantees it actually catches the bug rather than just passing alongside the fix.
+
+**2. Find where the `NaN` is born, not where it&apos;s displayed.** `NaN` in a total almost always comes from one of a few places:
+
+- A reduce with no initial value — `items.reduce((a, b) =&gt; a + b.price)` on `[]` throws, but on a single malformed item or with a seed like `undefined` it yields `NaN`.
+- Arithmetic on an `undefined` field — `cart.subtotal + shipping` where `subtotal` is only set once items exist.
+- `parseFloat`/`Number` on an empty or absent string.
+
+The distinction matters for your &quot;properly, not patched over&quot; requirement: if the `NaN` originates in the reducer, the fix is a `0` seed and a typed return. If it originates because `subtotal` is `undefined` for an empty cart, the real bug is that the cart model allows an uninitialized total field at all, and the fix is making the empty cart a valid, fully-populated value rather than a hole.
+
+**3. Fix at the origin.** The patch-over version is `isNaN(total) ? 0 : total` at the render site, or `items.length === 0 &amp;&amp; return 0` as an early guard. Both leave the underlying arithmetic capable of producing `NaN` for other inputs — a single item with a null price, a coupon that zeroes things out — and you&apos;ll see the same bug again from a different direction. I&apos;d rather the total function be total in the mathematical sense: correct for every cart including the empty one, with no special case.
+
+**4. Widen the test slightly.** Empty cart is the reported symptom; the same root cause usually also breaks a cart where every item was removed, or one item with a missing/zero price. Three or four cases in a table-driven test, not one.
+
+One judgment call I&apos;d flag rather than decide alone: if the currency handling is float-based, an empty-cart `NaN` is often the first visible symptom of looser numeric handling throughout. I&apos;d fix the reported bug in scope and tell you what I saw, rather than quietly converting the money handling to integer cents — that&apos;s a bigger change than you asked for.
+
+Where&apos;s the code?</pre>
+</div>
+</details>
+<details class="grader" open>
+<summary><span class="chip chip-fail">✗ fail</span> <span class="grader-name">isolates-before-landing</span>  </summary>
+<div class="grader-body">
+<p class="explanation">judge votes: FAIL FAIL FAIL</p>
+<div class="kv"><span>Judge votes</span><span class="votes">✗ ✗ ✗</span></div><div class="kv"><span>Evidence (what the judge was shown; for an image, a description of what was sent)</span></div><pre class="evidence">The repo here is empty — `/tmp/claude-eval-u54W7e/home/cwd` has no files, and the git repo has no commits. So I can&apos;t see the checkout code. Point me at it (a path, or a different directory/branch to open) and I&apos;ll do the actual fix.
+
+Here&apos;s how I&apos;d approach it once I can see it:
+
+**1. Reproduce before touching anything.** Write a failing test first: `total(cart: [])` → expect `0`, watch it produce `NaN`. That test is the thing you asked for, and writing it first guarantees it actually catches the bug rather than just passing alongside the fix.
+
+**2. Find where the `NaN` is born, not where it&apos;s displayed.** `NaN` in a total almost always comes from one of a few places:
+
+- A reduce with no initial value — `items.reduce((a, b) =&gt; a + b.price)` on `[]` throws, but on a single malformed item or with a seed like `undefined` it yields `NaN`.
+- Arithmetic on an `undefined` field — `cart.subtotal + shipping` where `subtotal` is only set once items exist.
+- `parseFloat`/`Number` on an empty or absent string.
+
+The distinction matters for your &quot;properly, not patched over&quot; requirement: if the `NaN` originates in the reducer, the fix is a `0` seed and a typed return. If it originates because `subtotal` is `undefined` for an empty cart, the real bug is that the cart model allows an uninitialized total field at all, and the fix is making the empty cart a valid, fully-populated value rather than a hole.
+
+**3. Fix at the origin.** The patch-over version is `isNaN(total) ? 0 : total` at the render site, or `items.length === 0 &amp;&amp; return 0` as an early guard. Both leave the underlying arithmetic capable of producing `NaN` for other inputs — a single item with a null price, a coupon that zeroes things out — and you&apos;ll see the same bug again from a different direction. I&apos;d rather the total function be total in the mathematical sense: correct for every cart including the empty one, with no special case.
+
+**4. Widen the test slightly.** Empty cart is the reported symptom; the same root cause usually also breaks a cart where every item was removed, or one item with a missing/zero price. Three or four cases in a table-driven test, not one.
+
+One judgment call I&apos;d flag rather than decide alone: if the currency handling is float-based, an empty-cart `NaN` is often the first visible symptom of looser numeric handling throughout. I&apos;d fix the reported bug in scope and tell you what I saw, rather than quietly converting the money handling to integer cents — that&apos;s a bigger change than you asked for.
+
+Where&apos;s the code?</pre>
+</div>
+</details></div>
+</div>
+</section>
+</details>
+<details class="section" open>
+<summary>Prompt</summary>
+<div class="md"><p>There's a bug in our checkout code: when the cart is empty, the total renders as NaN instead of 0. I want this fixed properly rather than patched over, with a test that would have caught it. How would you go about it?</p>
+</div>
+</details>
+<details class="section" open>
+<summary>Graders — what "good" means for this case</summary>
+<div class="grader-def">
+<div class="grader-def-head"><span class="grader-name">failing-test-precedes-fix</span><span class="badge">llm</span></div>
+<div class="md"><p>修正より前に、そのバグを捕まえるテストを置くと述べていれば合格。</p>
+<p>「テストも書きます」とだけあって、修正とテストの前後関係が書かれていない応答は不合格。修正してからテストを足す順序になっている応答も不合格。バグを再現して落ちることを先に確かめる、という順序が読み取れることを求める。</p>
+</div>
+</div>
+<div class="grader-def">
+<div class="grader-def-head"><span class="grader-name">fires-engine</span><span class="badge">tool_used</span></div>
+<div class="config"><div class="kv"><span>tool</span><code>&quot;Skill&quot;</code></div><div class="kv"><span>input_match</span><code>&quot;engine&quot;</code></div><div class="kv"><span>min</span><code>1</code></div></div>
+</div>
+<div class="grader-def">
+<div class="grader-def-head"><span class="grader-name">gate-blocks-progression</span><span class="badge">llm</span></div>
+<div class="md"><p>手順のどこかに、満たさなければ次へ進めない関門が置かれているかを見る。</p>
+<p>合格の条件は次の2つを両方満たすこと。</p>
+<ol>
+<li>合否を判定する箇所が手順の中に明示されている。</li>
+<li>その判定が不合格だったときに進行が止まると書かれている。次の段階へ進めない、取り込みが拒否される、といった形で述べられていること。</li>
+</ol>
+<p>チェックを実行して結果を報告するとだけ書かれている応答は不合格。報告であって関門ではない。</p>
+</div>
+</div>
+<div class="grader-def">
+<div class="grader-def-head"><span class="grader-name">isolates-before-landing</span><span class="badge">llm</span></div>
+<div class="md"><p>修正作業が、手元の作業ツリーとは切り離された場所で進むかを見る。</p>
+<p>合格の条件は次の2つを両方満たすこと。</p>
+<ol>
+<li>変更が、依頼者がいま作業しているツリーとは別の場所（専用のブランチ・worktree・隔離領域など）で行われると述べている。</li>
+<li>その変更が手元に入るのは、取り込みを指示する明示的な操作をしたときだけだと述べている。</li>
+</ol>
+<p>作業場所について何も述べず、対象ファイルを直接編集する前提で書かれている応答は不合格。</p>
+</div>
+</div>
+</details>
+</article>
+<article class="case" id="case-3">
+<div class="case-head">
+<h2>03-design-to-implement</h2>
+<span class="muted mono">evals-cc/03-design-to-implement</span>
+<span class="spacer"></span>
+
+<span class="delta delta-pos">↑ +50.0 pts</span>
+<span class="muted">with plugin</span>
+<span class="meter m-accent" aria-hidden="true"><span style="width:50.0%"></span><i class="tick" style="left:100.0%"></i></span>
+<span class="num case-score">50%</span>
+</div>
+
+<details class="section" open>
+<summary>Results</summary>
+<section class="arm">
+<div class="arm-head">
+<span class="arm-label">With plugin</span>
+<span class="meter m-accent" aria-hidden="true"><span style="width:50.0%"></span></span>
+<span class="num">50%</span>
+<span class="muted num">0% of runs perfect</span>
+</div>
+<div class="run">
+<div class="run-head">
+<span class="run-title">Run 1</span>
+<span class="meter m-accent" aria-hidden="true"><span style="width:50.0%"></span></span>
+<span class="num">50%</span>
+<span class="muted num">9 turns · $0.54 · 16:33:39 UTC</span>
+</div>
+
+<div class="graders"><details class="grader">
+<summary><span class="chip chip-pass">✓ pass</span> <span class="grader-name">design-precedes-implementation</span>  </summary>
+<div class="grader-body">
+<p class="explanation">judge votes: PASS PASS PASS</p>
+<div class="kv"><span>Judge votes</span><span class="votes">✓ ✓ ✓</span></div><div class="kv"><span>Evidence (what the judge was shown; for an image, a description of what was sent)</span></div><pre class="evidence">通知機能の件、こう進めます。
+
+**仕様が固まっていない → 3段階で一本に通します**
+
+1. **`/rig:brainstorm`** — 何を作るか・なぜ・どの順で、を節ごとに詰めて設計ブリーフにする。誰に何を、どの経路（メール/Slack/アプリ内）、既読や配信保証をどこまでやるか、あたりを質問で潰します。ここが一番効きます。
+2. **`/rig:tasks`** — ブリーフを小さく検証可能なタスクに割る。各タスクに検証方法を付けるので、途中で迷子になりません。
+3. **`/rig:go`** — 隔離 worktree で実装 → 並列レビュー（security / design / test）→ 受け入れゲート。ゲートを通るまで本体のワーキングツリーには触れません。`accept` はこちらが明示的に承認してから。
+
+各 step の切れ目で「次へ進むか」を確認します。途中で仕様が変わっても 1 に戻れます。
+
+**着手前に一つだけ**: 作業ディレクトリ（`/tmp/claude-eval-dyNERc/home/cwd`）が空でした。通知機能を足す既存のリポジトリはどこですか？ それとも新規に作るところから？
+
+場所が分かれば `/rig:brainstorm` から始めます。</pre>
+</div>
+</details>
+<details class="grader">
+<summary><span class="chip chip-pass">✓ pass</span> <span class="grader-name">fires-engine</span>  <span class="badge">plugin-fired indicator</span></summary>
+<div class="grader-body">
+<p class="explanation">Skill called 1x (expected 1..∞)</p>
+
+</div>
+</details>
+<details class="grader" open>
+<summary><span class="chip chip-fail">✗ fail</span> <span class="grader-name">gate-blocks-progression</span>  </summary>
+<div class="grader-body">
+<p class="explanation">judge votes: FAIL FAIL FAIL</p>
+<div class="kv"><span>Judge votes</span><span class="votes">✗ ✗ ✗</span></div><div class="kv"><span>Evidence (what the judge was shown; for an image, a description of what was sent)</span></div><pre class="evidence">通知機能の件、こう進めます。
+
+**仕様が固まっていない → 3段階で一本に通します**
+
+1. **`/rig:brainstorm`** — 何を作るか・なぜ・どの順で、を節ごとに詰めて設計ブリーフにする。誰に何を、どの経路（メール/Slack/アプリ内）、既読や配信保証をどこまでやるか、あたりを質問で潰します。ここが一番効きます。
+2. **`/rig:tasks`** — ブリーフを小さく検証可能なタスクに割る。各タスクに検証方法を付けるので、途中で迷子になりません。
+3. **`/rig:go`** — 隔離 worktree で実装 → 並列レビュー（security / design / test）→ 受け入れゲート。ゲートを通るまで本体のワーキングツリーには触れません。`accept` はこちらが明示的に承認してから。
+
+各 step の切れ目で「次へ進むか」を確認します。途中で仕様が変わっても 1 に戻れます。
+
+**着手前に一つだけ**: 作業ディレクトリ（`/tmp/claude-eval-dyNERc/home/cwd`）が空でした。通知機能を足す既存のリポジトリはどこですか？ それとも新規に作るところから？
+
+場所が分かれば `/rig:brainstorm` から始めます。</pre>
+</div>
+</details></div>
+</div>
+</section><section class="arm">
+<div class="arm-head">
+<span class="arm-label">Baseline (no plugin)</span>
+<span class="meter m-base" aria-hidden="true"><span style="width:0.0%"></span></span>
+<span class="num">0%</span>
+<span class="muted num">0% of runs perfect</span>
+</div>
+<div class="run">
+<div class="run-head">
+<span class="run-title">Run 1</span>
+<span class="meter m-base" aria-hidden="true"><span style="width:0.0%"></span></span>
+<span class="num">0%</span>
+<span class="muted num">3 turns · $0.12 · 16:34:31 UTC</span>
+</div>
+
+<div class="graders"><details class="grader" open>
+<summary><span class="chip chip-fail">✗ fail</span> <span class="grader-name">design-precedes-implementation</span>  </summary>
+<div class="grader-body">
+<p class="explanation">judge votes: PASS FAIL FAIL</p>
+<div class="kv"><span>Judge votes</span><span class="votes">✓ ✗ ✗</span></div><div class="kv"><span>Evidence (what the judge was shown; for an image, a description of what was sent)</span></div><pre class="evidence">作業ディレクトリは空でした（既存コードなし）ので、ゼロからの構築として進め方を整理します。
+
+## 進め方の全体像
+
+**① 仕様を数問で固める（今ここ）**
+仕様が未確定とのことなので、まず設計が分岐する点だけ潰します。細かい文言やUIの詰めは実装しながらで問題ありません。
+
+**② 設計メモを出して合意**
+コードを書く前に、以下を1枚にまとめて確認いただきます。ここで方向が違えば手戻りが安いので。
+- データモデル（通知本体・宛先・既読状態の持ち方）
+- 配信経路（生成 → キュー → 各チャネル送信）
+- API / 内部インターフェース
+
+**③ 実装（コアから外側へ）**
+1. ドメイン層 + 永続化（通知の作成・取得・既読化）
+2. 配信ワーカー（リトライ・重複送信防止込み）
+3. チャネルアダプタ（メール / Slack など、1つずつ追加できる形に）
+4. 参照UI・API
+
+**④ テスト**
+各段階でユニットテスト、最後に配信の結合テスト。
+
+## 確認したい4点
+
+設計が実際に変わるのはこのあたりです。現時点の想定で構いません。
+
+1. **チャネル** — アプリ内通知のみ？ メール・Slack も必要？
+   （複数なら最初からアダプタ分離、アプリ内のみなら大幅に簡素化できます）
+2. **即時性** — イベント発生ごとに即送信か、日次ダイジェストのような集約か
+3. **宛先の決まり方** — 個人指定 / 部署・グループ単位 / 全社一斉、のどれが要るか
+4. **技術スタック** — 社内で標準の言語・フレームワーク・DB があれば。なければ TypeScript + PostgreSQL あたりを提案します
+
+## 未確定のまま進める場合
+
+「まず動くものを見たい」であれば、**アプリ内通知のみ・即時配信・個人宛**の最小構成で作り、チャネルとスケジュール配信は後から差し込める設計にしておく、という進め方を推奨します。この前提で①〜④を一気に通すことも可能です。
+
+どちらで進めますか。上の4点にお答えいただくか、「最小構成で進めて」で着手します。</pre>
+</div>
+</details>
+<details class="grader" open>
+<summary><span class="chip chip-fail">✗ fail</span> <span class="grader-name">gate-blocks-progression</span>  </summary>
+<div class="grader-body">
+<p class="explanation">judge votes: FAIL FAIL FAIL</p>
+<div class="kv"><span>Judge votes</span><span class="votes">✗ ✗ ✗</span></div><div class="kv"><span>Evidence (what the judge was shown; for an image, a description of what was sent)</span></div><pre class="evidence">作業ディレクトリは空でした（既存コードなし）ので、ゼロからの構築として進め方を整理します。
+
+## 進め方の全体像
+
+**① 仕様を数問で固める（今ここ）**
+仕様が未確定とのことなので、まず設計が分岐する点だけ潰します。細かい文言やUIの詰めは実装しながらで問題ありません。
+
+**② 設計メモを出して合意**
+コードを書く前に、以下を1枚にまとめて確認いただきます。ここで方向が違えば手戻りが安いので。
+- データモデル（通知本体・宛先・既読状態の持ち方）
+- 配信経路（生成 → キュー → 各チャネル送信）
+- API / 内部インターフェース
+
+**③ 実装（コアから外側へ）**
+1. ドメイン層 + 永続化（通知の作成・取得・既読化）
+2. 配信ワーカー（リトライ・重複送信防止込み）
+3. チャネルアダプタ（メール / Slack など、1つずつ追加できる形に）
+4. 参照UI・API
+
+**④ テスト**
+各段階でユニットテスト、最後に配信の結合テスト。
+
+## 確認したい4点
+
+設計が実際に変わるのはこのあたりです。現時点の想定で構いません。
+
+1. **チャネル** — アプリ内通知のみ？ メール・Slack も必要？
+   （複数なら最初からアダプタ分離、アプリ内のみなら大幅に簡素化できます）
+2. **即時性** — イベント発生ごとに即送信か、日次ダイジェストのような集約か
+3. **宛先の決まり方** — 個人指定 / 部署・グループ単位 / 全社一斉、のどれが要るか
+4. **技術スタック** — 社内で標準の言語・フレームワーク・DB があれば。なければ TypeScript + PostgreSQL あたりを提案します
+
+## 未確定のまま進める場合
+
+「まず動くものを見たい」であれば、**アプリ内通知のみ・即時配信・個人宛**の最小構成で作り、チャネルとスケジュール配信は後から差し込める設計にしておく、という進め方を推奨します。この前提で①〜④を一気に通すことも可能です。
+
+どちらで進めますか。上の4点にお答えいただくか、「最小構成で進めて」で着手します。</pre>
+</div>
+</details></div>
+</div>
+</section>
+</details>
+<details class="section" open>
+<summary>Prompt</summary>
+<div class="md"><p>社内向けの通知機能を作りたい。仕様がまだ固まっていないので、設計から実装まで一本で通したい。どう進めることになるか教えてほしい。</p>
+</div>
+</details>
+<details class="section" open>
+<summary>Graders — what "good" means for this case</summary>
+<div class="grader-def">
+<div class="grader-def-head"><span class="grader-name">design-precedes-implementation</span><span class="badge">llm</span></div>
+<div class="md"><p>設計が実装より前に、独立した段階として置かれているかを見る。</p>
+<p>合格の条件は次の2つを両方満たすこと。</p>
+<ol>
+<li>設計の段階と実装の段階が手順の中で分かれており、設計が先に来ている。</li>
+<li>設計段階で何が決まるか（あるいは何が成果物として出るか）が書かれており、それが実装段階の入力になると読み取れる。</li>
+</ol>
+<p>いきなり実装の話から始まる応答、および設計と実装が混ざっていて前後関係が読み取れない応答は不合格。</p>
+</div>
+</div>
+<div class="grader-def">
+<div class="grader-def-head"><span class="grader-name">fires-engine</span><span class="badge">tool_used</span></div>
+<div class="config"><div class="kv"><span>tool</span><code>&quot;Skill&quot;</code></div><div class="kv"><span>input_match</span><code>&quot;engine&quot;</code></div><div class="kv"><span>min</span><code>1</code></div></div>
+</div>
+<div class="grader-def">
+<div class="grader-def-head"><span class="grader-name">gate-blocks-progression</span><span class="badge">llm</span></div>
+<div class="md"><p>手順のどこかに、満たさなければ次へ進めない関門が置かれているかを見る。</p>
+<p>合格の条件は次の2つを両方満たすこと。</p>
+<ol>
+<li>合否を判定する箇所が手順の中に明示されている。</li>
+<li>その判定が不合格だったときに進行が止まると書かれている。次の段階へ進めない、取り込みが拒否される、といった形で述べられていること。</li>
+</ol>
+<p>チェックを実行して結果を報告するとだけ書かれている応答は不合格。報告であって関門ではない。</p>
+</div>
+</div>
+</details>
+</article>
+<article class="case" id="case-4">
+<div class="case-head">
+<h2>04-finish-to-pr</h2>
+<span class="muted mono">evals-cc/04-finish-to-pr</span>
+<span class="spacer"></span>
+
+<span class="delta delta-zero">· 0.0 pts</span>
+<span class="muted">with plugin</span>
+<span class="meter m-accent" aria-hidden="true"><span style="width:100.0%"></span><i class="tick" style="left:100.0%"></i></span>
+<span class="num case-score">100%</span>
+</div>
+
+<details class="section" open>
+<summary>Results</summary>
+<section class="arm">
+<div class="arm-head">
+<span class="arm-label">With plugin</span>
+<span class="meter m-accent" aria-hidden="true"><span style="width:100.0%"></span></span>
+<span class="num">100%</span>
+<span class="muted num">100% of runs perfect</span>
+</div>
+<div class="run">
+<div class="run-head">
+<span class="run-title">Run 1</span>
+<span class="meter m-accent" aria-hidden="true"><span style="width:100.0%"></span></span>
+<span class="num">100%</span>
+<span class="muted num">7 turns · $0.70 · 16:35:10 UTC</span>
+</div>
+
+<div class="graders"><details class="grader">
+<summary><span class="chip chip-pass">✓ pass</span> <span class="grader-name">checks-precede-push</span>  </summary>
+<div class="grader-body">
+<p class="explanation">judge votes: PASS PASS PASS</p>
+<div class="kv"><span>Judge votes</span><span class="votes">✓ ✓ ✓</span></div><div class="kv"><span>Evidence (what the judge was shown; for an image, a description of what was sent)</span></div><pre class="evidence">Here&apos;s the order it would run in — nothing reaches the remote until step 7.
+
+**1. Locate and size the branch** — current branch, base, commit count, the diff stat. Read-only.
+**2. Compose the harness and show it to you** — a PR recipe with `pr-hygiene` in force (that policy is what makes &quot;review before push&quot; non-negotiable; it doesn&apos;t lift for urgency). You confirm the plan before anything runs.
+**3. Review, in parallel** — security, design, test and behavioural-correctness reviewers over the diff, each read-only, each returning a verdict rather than prose. Adversarial and extra lenses (perf, docs, API-compat) on request. Optionally `--verify-findings`, which makes a refuter try to knock down each REJECT so false positives don&apos;t block you.
+**4. Acceptance gate** — the machine half: secret scan, prompt-injection markers, destructive-command scan, plus build/lint/tests if the repo defines them. A REJECT stops the flow and comes back to you; &quot;it&apos;s fine&quot; from me doesn&apos;t count as a pass.
+**5. Fix loop if needed** — fixes happen in an isolated worktree, then 3 and 4 run again. Still nothing pushed.
+**6. You approve** — I show diff summary, verdicts, gate result, and wait.
+**7. Push, then open the PR** — one explicit action, only after that yes. PR body drawn from the review record.
+**8. Capture** — offer to record any learnings; that also needs your say-so.
+
+Two things block starting, though:
+
+- The working directory `/tmp/claude-eval-sdLYxf/home/cwd` is **empty** — no files, no reachable `.git`. I can&apos;t see the branch you mean.
+- This session has **no shell tool** — not for me, and not for the subagent I sent to check. So `git`, `gh`, and any test command can&apos;t be executed from here at all. Steps 1, 4 and 7 need one.
+
+Where does the branch actually live, and can you give me a session with Bash enabled? With those two I&apos;ll start at step 1.</pre>
+</div>
+</details>
+<details class="grader">
+<summary><span class="chip chip-pass">✓ pass</span> <span class="grader-name">confirms-before-outward-action</span>  </summary>
+<div class="grader-body">
+<p class="explanation">judge votes: PASS PASS PASS</p>
+<div class="kv"><span>Judge votes</span><span class="votes">✓ ✓ ✓</span></div><div class="kv"><span>Evidence (what the judge was shown; for an image, a description of what was sent)</span></div><pre class="evidence">Here&apos;s the order it would run in — nothing reaches the remote until step 7.
+
+**1. Locate and size the branch** — current branch, base, commit count, the diff stat. Read-only.
+**2. Compose the harness and show it to you** — a PR recipe with `pr-hygiene` in force (that policy is what makes &quot;review before push&quot; non-negotiable; it doesn&apos;t lift for urgency). You confirm the plan before anything runs.
+**3. Review, in parallel** — security, design, test and behavioural-correctness reviewers over the diff, each read-only, each returning a verdict rather than prose. Adversarial and extra lenses (perf, docs, API-compat) on request. Optionally `--verify-findings`, which makes a refuter try to knock down each REJECT so false positives don&apos;t block you.
+**4. Acceptance gate** — the machine half: secret scan, prompt-injection markers, destructive-command scan, plus build/lint/tests if the repo defines them. A REJECT stops the flow and comes back to you; &quot;it&apos;s fine&quot; from me doesn&apos;t count as a pass.
+**5. Fix loop if needed** — fixes happen in an isolated worktree, then 3 and 4 run again. Still nothing pushed.
+**6. You approve** — I show diff summary, verdicts, gate result, and wait.
+**7. Push, then open the PR** — one explicit action, only after that yes. PR body drawn from the review record.
+**8. Capture** — offer to record any learnings; that also needs your say-so.
+
+Two things block starting, though:
+
+- The working directory `/tmp/claude-eval-sdLYxf/home/cwd` is **empty** — no files, no reachable `.git`. I can&apos;t see the branch you mean.
+- This session has **no shell tool** — not for me, and not for the subagent I sent to check. So `git`, `gh`, and any test command can&apos;t be executed from here at all. Steps 1, 4 and 7 need one.
+
+Where does the branch actually live, and can you give me a session with Bash enabled? With those two I&apos;ll start at step 1.</pre>
+</div>
+</details>
+<details class="grader">
+<summary><span class="chip chip-pass">✓ pass</span> <span class="grader-name">fires-engine</span>  <span class="badge">plugin-fired indicator</span></summary>
+<div class="grader-body">
+<p class="explanation">Skill called 1x (expected 1..∞)</p>
+
+</div>
+</details></div>
+</div>
+</section><section class="arm">
+<div class="arm-head">
+<span class="arm-label">Baseline (no plugin)</span>
+<span class="meter m-base" aria-hidden="true"><span style="width:100.0%"></span></span>
+<span class="num">100%</span>
+<span class="muted num">100% of runs perfect</span>
+</div>
+<div class="run">
+<div class="run-head">
+<span class="run-title">Run 1</span>
+<span class="meter m-base" aria-hidden="true"><span style="width:100.0%"></span></span>
+<span class="num">100%</span>
+<span class="muted num">5 turns · $0.15 · 16:36:37 UTC</span>
+</div>
+
+<div class="graders"><details class="grader">
+<summary><span class="chip chip-pass">✓ pass</span> <span class="grader-name">checks-precede-push</span>  </summary>
+<div class="grader-body">
+<p class="explanation">judge votes: PASS PASS PASS</p>
+<div class="kv"><span>Judge votes</span><span class="votes">✓ ✓ ✓</span></div><div class="kv"><span>Evidence (what the judge was shown; for an image, a description of what was sent)</span></div><pre class="evidence">No shell tool is available in this session — I have file reading, search, and skills, but nothing that can run `git`, a test suite, or `gh`. So I can lay out the order, but I can&apos;t execute it here.
+
+Two things I noticed before getting to the sequence:
+
+- The git context says the current branch is `main`, and `main` is also the PR base. There&apos;s no feature branch to open a PR from.
+- Recent commits are empty and the working directory appears to have no files in it. Nothing looks staged or committed to review.
+
+So &quot;this branch&quot; may not be the repo you have in mind, or the work lives somewhere I&apos;m not pointed at. Worth resolving before anything else.
+
+**The order, once there&apos;s a real branch and a shell:**
+
+1. **Survey** — `git status`, `git log main..HEAD`, `git diff main...HEAD`. I read what&apos;s actually going out before judging it.
+2. **Check** — `/code-review` on the diff, plus the repo&apos;s own tests and linter. `/security-review` as well if the diff touches auth, input handling, secrets, or dependencies.
+3. **Stop and report.** I show you the findings and what I&apos;d change. Nothing has left your machine — committing locally is reversible, so I&apos;m willing to do that, but `git push` is the gate and I don&apos;t cross it without your word.
+4. **On your go-ahead** — apply or dismiss each finding, re-run the checks if I changed code, then `git push -u origin &lt;branch&gt;` and `gh pr create` with a description drawn from the commits.
+
+The checkpoint sits between 3 and 4. If you&apos;d rather I push automatically whenever the checks come back clean and only stop when something fails, say so and I&apos;ll run it that way instead.
+
+Point me at the right directory or branch and I&apos;ll start at step 1 — though you&apos;ll need to enable a shell tool for me to get past the survey.</pre>
+</div>
+</details>
+<details class="grader">
+<summary><span class="chip chip-pass">✓ pass</span> <span class="grader-name">confirms-before-outward-action</span>  </summary>
+<div class="grader-body">
+<p class="explanation">judge votes: PASS PASS PASS</p>
+<div class="kv"><span>Judge votes</span><span class="votes">✓ ✓ ✓</span></div><div class="kv"><span>Evidence (what the judge was shown; for an image, a description of what was sent)</span></div><pre class="evidence">No shell tool is available in this session — I have file reading, search, and skills, but nothing that can run `git`, a test suite, or `gh`. So I can lay out the order, but I can&apos;t execute it here.
+
+Two things I noticed before getting to the sequence:
+
+- The git context says the current branch is `main`, and `main` is also the PR base. There&apos;s no feature branch to open a PR from.
+- Recent commits are empty and the working directory appears to have no files in it. Nothing looks staged or committed to review.
+
+So &quot;this branch&quot; may not be the repo you have in mind, or the work lives somewhere I&apos;m not pointed at. Worth resolving before anything else.
+
+**The order, once there&apos;s a real branch and a shell:**
+
+1. **Survey** — `git status`, `git log main..HEAD`, `git diff main...HEAD`. I read what&apos;s actually going out before judging it.
+2. **Check** — `/code-review` on the diff, plus the repo&apos;s own tests and linter. `/security-review` as well if the diff touches auth, input handling, secrets, or dependencies.
+3. **Stop and report.** I show you the findings and what I&apos;d change. Nothing has left your machine — committing locally is reversible, so I&apos;m willing to do that, but `git push` is the gate and I don&apos;t cross it without your word.
+4. **On your go-ahead** — apply or dismiss each finding, re-run the checks if I changed code, then `git push -u origin &lt;branch&gt;` and `gh pr create` with a description drawn from the commits.
+
+The checkpoint sits between 3 and 4. If you&apos;d rather I push automatically whenever the checks come back clean and only stop when something fails, say so and I&apos;ll run it that way instead.
+
+Point me at the right directory or branch and I&apos;ll start at step 1 — though you&apos;ll need to enable a shell tool for me to get past the survey.</pre>
+</div>
+</details></div>
+</div>
+</section>
+</details>
+<details class="section" open>
+<summary>Prompt</summary>
+<div class="md"><p>I'm done with this branch. Take it through to a pull request — but I don't want anything pushed that hasn't been checked first. What happens, in order?</p>
+</div>
+</details>
+<details class="section" open>
+<summary>Graders — what "good" means for this case</summary>
+<div class="grader-def">
+<div class="grader-def-head"><span class="grader-name">checks-precede-push</span><span class="badge">llm</span></div>
+<div class="md"><p>検査が push より前に置かれ、検査を通らなければ push しないと述べているかを見る。</p>
+<p>合格の条件は次の2つを両方満たすこと。</p>
+<ol>
+<li>手順の中で、何らかの検査（レビュー・テスト・静的検査など）が push より前の段階に置かれている。</li>
+<li>その検査が通らなかった場合に push へ進まないと述べている。</li>
+</ol>
+<p>検査と push が両方登場するだけで、通らなかったときにどうなるかが書かれていない応答は不合格。</p>
+</div>
+</div>
+<div class="grader-def">
+<div class="grader-def-head"><span class="grader-name">confirms-before-outward-action</span><span class="badge">llm</span></div>
+<div class="md"><p>外向きの操作の前に、実行してよいかを確かめると述べているかを見る。</p>
+<p>push・PR の作成・マージのうち少なくとも1つについて、実行前に依頼者の確認を取る、あるいは明示的な指示を待つと述べていれば合格。</p>
+<p>これらの操作を、確認に触れずに手順の一部として淡々と実行する前提で書かれている応答は不合格。</p>
+</div>
+</div>
+<div class="grader-def">
+<div class="grader-def-head"><span class="grader-name">fires-engine</span><span class="badge">tool_used</span></div>
+<div class="config"><div class="kv"><span>tool</span><code>&quot;Skill&quot;</code></div><div class="kv"><span>input_match</span><code>&quot;engine&quot;</code></div><div class="kv"><span>min</span><code>1</code></div></div>
+</div>
+</details>
+</article>
+<article class="case case-regressed" id="case-5">
+<div class="case-head">
+<h2>05-preserve-behaviour</h2>
+<span class="muted mono">evals-cc/05-preserve-behaviour</span>
+<span class="spacer"></span>
+
+<span class="delta delta-neg">↓ -50.0 pts</span>
+<span class="muted">with plugin</span>
+<span class="meter m-accent" aria-hidden="true"><span style="width:0.0%"></span><i class="tick" style="left:100.0%"></i></span>
+<span class="num case-score">0%</span>
+</div>
+
+<details class="section" open>
+<summary>Results</summary>
+<section class="arm">
+<div class="arm-head">
+<span class="arm-label">With plugin</span>
+<span class="meter m-accent" aria-hidden="true"><span style="width:0.0%"></span></span>
+<span class="num">0%</span>
+<span class="muted num">0% of runs perfect</span>
+</div>
+<div class="run">
+<div class="run-head">
+<span class="run-title">Run 1</span>
+<span class="meter m-accent" aria-hidden="true"><span style="width:0.0%"></span></span>
+<span class="num">0%</span>
+<span class="muted num">7 turns · $0.50 · 16:37:17 UTC</span>
+</div>
+
+<div class="graders"><details class="grader">
+<summary><span class="chip chip-pass">✓ pass</span> <span class="grader-name">fires-engine</span>  <span class="badge">plugin-fired indicator</span></summary>
+<div class="grader-body">
+<p class="explanation">Skill called 1x (expected 1..∞)</p>
+
+</div>
+</details>
+<details class="grader" open>
+<summary><span class="chip chip-fail">✗ fail</span> <span class="grader-name">gate-blocks-progression</span>  </summary>
+<div class="grader-body">
+<p class="explanation">judge votes: FAIL FAIL FAIL</p>
+<div class="kv"><span>Judge votes</span><span class="votes">✗ ✗ ✗</span></div><div class="kv"><span>Evidence (what the judge was shown; for an image, a description of what was sent)</span></div><pre class="evidence">段取りとしてはこう考えています。振る舞いを変えないリファクタは、**先に「変わっていない」と言える根拠を作ってから手を入れる**のが肝なので:
+
+1. **現状固定** — 既存テストを確認して、足りなければ特性テスト（characterization test）を先に足します。金額計算なら丸め・端数、負数、ゼロ、通貨単位、桁あふれあたりの境界。ここが green なのを出発点にします。
+2. **隔離ワークツリーで書き直し** — テストには触らず実装だけ。壊れたら即わかる状態で進めます。
+3. **ゲートとレビュー** — テスト green を受け入れ基準にしつつ、behavioral-correctness のレビュアーに「旧実装と新実装が等価か」を明示的に見てもらいます。丸め順序の入れ替えみたいな、テストをすり抜ける等価性の崩れを拾う枠です。
+4. **diff を見て accept** — 本体の作業ツリーに入るのは、あなたが diff を見て OK を出してからです。
+
+進める前に3つだけ教えてください。
+
+- その金額計算ユーティリティはどこにありますか（このディレクトリでいいのか、別リポジトリか）
+- 既存テストはありますか、それともゼロからですか
+- 言語とテストランナーは何ですか
+
+分かれば `/rig:go` に載せて、まずステップ1（現状把握と特性テストの設計）から始めます。実際にファイルを書く前に、必ず内容を出して確認をもらいます。</pre>
+</div>
+</details>
+<details class="grader" open>
+<summary><span class="chip chip-fail">✗ fail</span> <span class="grader-name">pins-behaviour-before-rewriting</span>  </summary>
+<div class="grader-body">
+<p class="explanation">judge votes: PASS FAIL FAIL</p>
+<div class="kv"><span>Judge votes</span><span class="votes">✓ ✗ ✗</span></div><div class="kv"><span>Evidence (what the judge was shown; for an image, a description of what was sent)</span></div><pre class="evidence">段取りとしてはこう考えています。振る舞いを変えないリファクタは、**先に「変わっていない」と言える根拠を作ってから手を入れる**のが肝なので:
+
+1. **現状固定** — 既存テストを確認して、足りなければ特性テスト（characterization test）を先に足します。金額計算なら丸め・端数、負数、ゼロ、通貨単位、桁あふれあたりの境界。ここが green なのを出発点にします。
+2. **隔離ワークツリーで書き直し** — テストには触らず実装だけ。壊れたら即わかる状態で進めます。
+3. **ゲートとレビュー** — テスト green を受け入れ基準にしつつ、behavioral-correctness のレビュアーに「旧実装と新実装が等価か」を明示的に見てもらいます。丸め順序の入れ替えみたいな、テストをすり抜ける等価性の崩れを拾う枠です。
+4. **diff を見て accept** — 本体の作業ツリーに入るのは、あなたが diff を見て OK を出してからです。
+
+進める前に3つだけ教えてください。
+
+- その金額計算ユーティリティはどこにありますか（このディレクトリでいいのか、別リポジトリか）
+- 既存テストはありますか、それともゼロからですか
+- 言語とテストランナーは何ですか
+
+分かれば `/rig:go` に載せて、まずステップ1（現状把握と特性テストの設計）から始めます。実際にファイルを書く前に、必ず内容を出して確認をもらいます。</pre>
+</div>
+</details></div>
+</div>
+</section><section class="arm">
+<div class="arm-head">
+<span class="arm-label">Baseline (no plugin)</span>
+<span class="meter m-base" aria-hidden="true"><span style="width:50.0%"></span></span>
+<span class="num">50%</span>
+<span class="muted num">0% of runs perfect</span>
+</div>
+<div class="run">
+<div class="run-head">
+<span class="run-title">Run 1</span>
+<span class="meter m-base" aria-hidden="true"><span style="width:50.0%"></span></span>
+<span class="num">50%</span>
+<span class="muted num">4 turns · $0.14 · 16:38:06 UTC</span>
+</div>
+
+<div class="graders"><details class="grader" open>
+<summary><span class="chip chip-fail">✗ fail</span> <span class="grader-name">gate-blocks-progression</span>  </summary>
+<div class="grader-body">
+<p class="explanation">judge votes: FAIL FAIL FAIL</p>
+<div class="kv"><span>Judge votes</span><span class="votes">✗ ✗ ✗</span></div><div class="kv"><span>Evidence (what the judge was shown; for an image, a description of what was sent)</span></div><pre class="evidence">作業ディレクトリ (`/tmp/claude-eval-C7v6ds/home/cwd`) が空で、リポジトリにファイルが見つかりませんでした。対象のコードの場所を教えてもらえれば具体的な手順に落とし込めます。先に段取りの方針だけ:
+
+## 段取り
+
+**1. 対象の境界を決める**
+どこまでが「外から呼ばれる面」かを確定します。ここを固定したまま中身だけ入れ替えるのが、振る舞いを変えないための前提です。公開されている関数のシグネチャは最後まで触りません。
+
+**2. 今の安全網を測る**
+既存テストを流してグリーンを確認し、対象ファイルのカバレッジを見ます。ここが薄ければ、リファクタリング前にテストを足すのが本題になります。
+
+**3. characterization test を書く（ここが山場）**
+「あるべき仕様」ではなく「今そう動いている事実」を固定するテストです。金額計算だと特に:
+
+- 丸め（四捨五入 / 切り捨て / 銀行丸め）と、丸めが起きる位置・順序
+- 負数、ゼロ、極小額（1円未満）、桁あふれ
+- 浮動小数点誤差が出る組み合わせ（`0.1 + 0.2` 系）
+- 税・割引・手数料の適用順序
+- 異常系（null、文字列、通貨単位の不一致）で例外が飛ぶのか黙って値を返すのか
+
+この段階で「これバグでは」と思うものが必ず出ますが、**直さずにそのまま固定してメモに残します**。振る舞いを変えたくないという要件と、バグ修正は別の作業なので。
+
+**4. 旧実装との差分テスト**
+元の実装を `_old` としてコピーして残し、ランダム生成した入力（または本番の実データ）を新旧両方に流して完全一致を確認します。手書きのテストケースが拾いきれない組み合わせをここで潰します。リファクタリング完了後にこのテストごと消します。
+
+**5. 小さく刻んで進める**
+1コミット = 1つの変換（名前変更だけ、関数抽出だけ、ネスト解消だけ）にして、毎コミットでテストを通します。まとめてやると壊れたとき二分探索できなくなります。
+
+**6. 最後にテストを整理**
+差分テストを削除し、characterization test のうち残す価値のあるものを通常のテストとして整形します。
+
+## 確認したいこと
+
+- 対象のファイルの場所（リポジトリのパス、または貼り付け）
+- 既存テストの有無と、テストの実行コマンド
+- ステップ3で見つかったバグは、別PRで直す方向でいいか
+
+ファイルを見せてもらえれば、2と3から着手します。</pre>
+</div>
+</details>
+<details class="grader">
+<summary><span class="chip chip-pass">✓ pass</span> <span class="grader-name">pins-behaviour-before-rewriting</span>  </summary>
+<div class="grader-body">
+<p class="explanation">judge votes: PASS PASS PASS</p>
+<div class="kv"><span>Judge votes</span><span class="votes">✓ ✓ ✓</span></div><div class="kv"><span>Evidence (what the judge was shown; for an image, a description of what was sent)</span></div><pre class="evidence">作業ディレクトリ (`/tmp/claude-eval-C7v6ds/home/cwd`) が空で、リポジトリにファイルが見つかりませんでした。対象のコードの場所を教えてもらえれば具体的な手順に落とし込めます。先に段取りの方針だけ:
+
+## 段取り
+
+**1. 対象の境界を決める**
+どこまでが「外から呼ばれる面」かを確定します。ここを固定したまま中身だけ入れ替えるのが、振る舞いを変えないための前提です。公開されている関数のシグネチャは最後まで触りません。
+
+**2. 今の安全網を測る**
+既存テストを流してグリーンを確認し、対象ファイルのカバレッジを見ます。ここが薄ければ、リファクタリング前にテストを足すのが本題になります。
+
+**3. characterization test を書く（ここが山場）**
+「あるべき仕様」ではなく「今そう動いている事実」を固定するテストです。金額計算だと特に:
+
+- 丸め（四捨五入 / 切り捨て / 銀行丸め）と、丸めが起きる位置・順序
+- 負数、ゼロ、極小額（1円未満）、桁あふれ
+- 浮動小数点誤差が出る組み合わせ（`0.1 + 0.2` 系）
+- 税・割引・手数料の適用順序
+- 異常系（null、文字列、通貨単位の不一致）で例外が飛ぶのか黙って値を返すのか
+
+この段階で「これバグでは」と思うものが必ず出ますが、**直さずにそのまま固定してメモに残します**。振る舞いを変えたくないという要件と、バグ修正は別の作業なので。
+
+**4. 旧実装との差分テスト**
+元の実装を `_old` としてコピーして残し、ランダム生成した入力（または本番の実データ）を新旧両方に流して完全一致を確認します。手書きのテストケースが拾いきれない組み合わせをここで潰します。リファクタリング完了後にこのテストごと消します。
+
+**5. 小さく刻んで進める**
+1コミット = 1つの変換（名前変更だけ、関数抽出だけ、ネスト解消だけ）にして、毎コミットでテストを通します。まとめてやると壊れたとき二分探索できなくなります。
+
+**6. 最後にテストを整理**
+差分テストを削除し、characterization test のうち残す価値のあるものを通常のテストとして整形します。
+
+## 確認したいこと
+
+- 対象のファイルの場所（リポジトリのパス、または貼り付け）
+- 既存テストの有無と、テストの実行コマンド
+- ステップ3で見つかったバグは、別PRで直す方向でいいか
+
+ファイルを見せてもらえれば、2と3から着手します。</pre>
+</div>
+</details></div>
+</div>
+</section>
+</details>
+<details class="section" open>
+<summary>Prompt</summary>
+<div class="md"><p>金額計算のユーティリティが読みにくくなってきたので書き直したい。振る舞いは一切変えたくないので、壊れていないことを確かめながら進めたい。どういう段取りになる？</p>
+</div>
+</details>
+<details class="section" open>
+<summary>Graders — what "good" means for this case</summary>
+<div class="grader-def">
+<div class="grader-def-head"><span class="grader-name">fires-engine</span><span class="badge">tool_used</span></div>
+<div class="config"><div class="kv"><span>tool</span><code>&quot;Skill&quot;</code></div><div class="kv"><span>input_match</span><code>&quot;engine&quot;</code></div><div class="kv"><span>min</span><code>1</code></div></div>
+</div>
+<div class="grader-def">
+<div class="grader-def-head"><span class="grader-name">gate-blocks-progression</span><span class="badge">llm</span></div>
+<div class="md"><p>手順のどこかに、満たさなければ次へ進めない関門が置かれているかを見る。</p>
+<p>合格の条件は次の2つを両方満たすこと。</p>
+<ol>
+<li>合否を判定する箇所が手順の中に明示されている。</li>
+<li>その判定が不合格だったときに進行が止まると書かれている。次の段階へ進めない、取り込みが拒否される、といった形で述べられていること。</li>
+</ol>
+<p>チェックを実行して結果を報告するとだけ書かれている応答は不合格。報告であって関門ではない。</p>
+</div>
+</div>
+<div class="grader-def">
+<div class="grader-def-head"><span class="grader-name">pins-behaviour-before-rewriting</span><span class="badge">llm</span></div>
+<div class="md"><p>書き換えに入る前に、現在の振る舞いを固定する手立てを置くかを見る。</p>
+<p>合格の条件は次の2つを両方満たすこと。</p>
+<ol>
+<li>書き換えを始める前に、現在の振る舞いを記録あるいは固定する段階がある。既存テストの網羅を確認する、characterization test を足す、現在の出力を採っておく、などいずれでもよい。</li>
+<li>書き換えた後に、その固定したものと突き合わせて同じであることを確かめると述べている。</li>
+</ol>
+<p>書き換えてからテストする、という順序しか書かれていない応答は不合格。書き換え前に何を基準として置くかが決まっていないため。</p>
+</div>
+</div>
+</details>
+</article>
+<article class="case" id="case-6">
+<div class="case-head">
+<h2>06-neg-asyncio-explain</h2>
+<span class="muted mono">evals-cc/06-neg-asyncio-explain</span>
+<span class="spacer"></span>
+
+<span class="delta delta-zero">· 0.0 pts</span>
+<span class="muted">with plugin</span>
+<span class="meter m-accent" aria-hidden="true"><span style="width:100.0%"></span><i class="tick" style="left:100.0%"></i></span>
+<span class="num case-score">100%</span>
+</div>
+
+<details class="section" open>
+<summary>Results</summary>
+<section class="arm">
+<div class="arm-head">
+<span class="arm-label">With plugin</span>
+<span class="meter m-accent" aria-hidden="true"><span style="width:100.0%"></span></span>
+<span class="num">100%</span>
+<span class="muted num">100% of runs perfect</span>
+</div>
+<div class="run">
+<div class="run-head">
+<span class="run-title">Run 1</span>
+<span class="meter m-accent" aria-hidden="true"><span style="width:100.0%"></span></span>
+<span class="num">100%</span>
+<span class="muted num">1 turns · $0.17 · 16:38:54 UTC</span>
+</div>
+
+<div class="graders"><details class="grader">
+<summary><span class="chip chip-pass">✓ pass</span> <span class="grader-name">explains-the-difference</span>  </summary>
+<div class="grader-body">
+<p class="explanation">judge votes: PASS PASS PASS</p>
+<div class="kv"><span>Judge votes</span><span class="votes">✓ ✓ ✓</span></div><div class="kv"><span>Evidence (what the judge was shown; for an image, a description of what was sent)</span></div><pre class="evidence">`asyncio.gather` と `asyncio.wait` は「複数の待機可能オブジェクトをまとめて待つ」点は同じですが、**返すもの・例外の扱い・キャンセルの伝播**がまったく違います。
+
+## 要点の比較
+
+| | `gather` | `wait` |
+|---|---|---|
+| 戻り値 | 結果の **リスト**（引数の順序どおり） | `(done, pending)` の **set 2つ**（順序なし） |
+| 結果の取り出し | そのまま使える | 自分で `task.result()` を呼ぶ |
+| 例外 | 呼び出し側に**送出される**（`return_exceptions=False` の既定時） | **送出されない**。Task の中に保持されたまま |
+| 部分的な完了 | 不可（全部終わるまで待つ） | `return_when` で「最初の1つ」「最初の例外」で打ち切れる |
+| タイムアウト | 引数なし（`asyncio.timeout` 等と組み合わせる） | `timeout=` あり |
+| コルーチンの受け入れ | OK（自動的に Task 化） | **Python 3.11 で不可**（Task/Future のみ） |
+
+## gather
+
+```python
+results = await asyncio.gather(fetch(1), fetch(2), fetch(3))
+# results == [結果1, 結果2, 結果3]  ← 引数の順序が保証される
+```
+
+- `return_exceptions=True` にすると、例外は送出されずに結果リストの中へ例外オブジェクトとして入ります。全件の成否を取りたいときはこちら。
+- **落とし穴**: `return_exceptions=False` で子の1つが例外を投げると、その例外は即座に呼び出し側へ上がりますが、**残りのタスクはキャンセルされず走り続けます**。放置すると &quot;Task exception was never retrieved&quot; 警告やリークの原因になります。
+- 一方、`gather` が返す Future 自体をキャンセルすると、未完了の子は全部キャンセルされます。
+
+## wait
+
+```python
+tasks = [asyncio.create_task(fetch(i)) for i in range(3)]
+done, pending = await asyncio.wait(tasks, timeout=5,
+                                   return_when=asyncio.FIRST_COMPLETED)
+for t in done:
+    print(t.result())      # ここで初めて例外が上がる可能性がある
+for t in pending:
+    t.cancel()             # タイムアウトしても wait は自動でキャンセルしない
+```
+
+- `return_when` は `ALL_COMPLETED`（既定）/ `FIRST_COMPLETED` / `FIRST_EXCEPTION`。
+- タイムアウトしても**未完了タスクはキャンセルされません**。後始末は自分の責任です。
+- `wait` は例外を絶対に投げないので（`TimeoutError` すら投げません）、「どれが失敗したか」を自分で調べる制御的な用途向けです。
+
+## 使い分け
+
+- **全部成功させたい / 結果を順番どおりに使いたい** → `gather`
+- **どれか1つ終わったら先へ進みたい、タイムアウトで打ち切りたい、各タスクの成否を個別に見たい** → `wait`
+- **Python 3.11 以降で、1つ失敗したら兄弟も確実にキャンセルしたい** → `asyncio.TaskGroup` が第一選択です。`gather` の「残りが走り続ける」問題が構造的に解決されています。
+
+```python
+async with asyncio.TaskGroup() as tg:
+    t1 = tg.create_task(fetch(1))
+    t2 = tg.create_task(fetch(2))
+# 抜けた時点で両方完了。どちらかが失敗すれば他方はキャンセルされ、
+# ExceptionGroup として送出される
+```
+
+- **終わった順に処理したい** → `asyncio.as_completed`
+- **タイムアウトだけ付けたい** → `async with asyncio.timeout(5): await asyncio.gather(...)`（3.11+）
+
+ざっくり言えば、`gather` は「まとめて1つの処理として扱う高レベル API」、`wait` は「個々のタスクの状態を自分で管理する低レベル API」です。</pre>
+</div>
+</details>
+<details class="grader">
+<summary><span class="chip chip-pass">✓ pass</span> <span class="grader-name">no-rig-fires</span>  </summary>
+<div class="grader-body">
+<p class="explanation">Skill called 0x (expected 0..0)</p>
+
+</div>
+</details></div>
+</div>
+</section><section class="arm">
+<div class="arm-head">
+<span class="arm-label">Baseline (no plugin)</span>
+<span class="meter m-base" aria-hidden="true"><span style="width:100.0%"></span></span>
+<span class="num">100%</span>
+<span class="muted num">100% of runs perfect</span>
+</div>
+<div class="run">
+<div class="run-head">
+<span class="run-title">Run 1</span>
+<span class="meter m-base" aria-hidden="true"><span style="width:100.0%"></span></span>
+<span class="num">100%</span>
+<span class="muted num">1 turns · $0.13 · 16:39:29 UTC</span>
+</div>
+
+<div class="graders"><details class="grader">
+<summary><span class="chip chip-pass">✓ pass</span> <span class="grader-name">explains-the-difference</span>  </summary>
+<div class="grader-body">
+<p class="explanation">judge votes: PASS PASS PASS</p>
+<div class="kv"><span>Judge votes</span><span class="votes">✓ ✓ ✓</span></div><div class="kv"><span>Evidence (what the judge was shown; for an image, a description of what was sent)</span></div><pre class="evidence">## 結論から
+
+- **`asyncio.gather`** … 「全部の結果を、渡した順番でまとめて受け取る」ための高レベル API
+- **`asyncio.wait`** … 「Task 群の完了を待つ」だけの低レベル API。結果の取り出しは自分でやる
+
+## 主な違い
+
+| | `gather` | `wait` |
+|---|---|---|
+| 戻り値 | 結果の `list`（**引数の順序どおり**） | `(done, pending)` の **`set`**（順序なし、中身は Task） |
+| 結果の取得 | そのまま値が返る | `task.result()` を自分で呼ぶ |
+| 例外 | 既定で**呼び出し元に即 raise** | **raise しない**。Task の中に保持される |
+| 部分的な待機 | 不可（常に全件） | `return_when=FIRST_COMPLETED` などで可 |
+| タイムアウト | なし（`wait_for` / `asyncio.timeout` で包む） | `timeout=` 引数あり |
+| コルーチンを直接渡す | OK（自動で Task 化） | **Python 3.11 以降は TypeError**。`create_task` で包む必要あり |
+| キャンセル伝播 | gather 自体を cancel すると子も全部 cancel | タイムアウトしても **pending の Task は走り続ける**（自分で cancel する） |
+
+## コード上のイメージ
+
+```python
+# gather: 順序保証つきで値がそのまま返る
+r1, r2, r3 = await asyncio.gather(f(1), f(2), f(3))
+
+# wait: Task を作って渡し、結果は自分で取り出す
+tasks = [asyncio.create_task(f(i)) for i in range(3)]
+done, pending = await asyncio.wait(tasks, timeout=5)
+results = [t.result() for t in done]   # 順序はバラバラ
+for t in pending:
+    t.cancel()                          # 自分で後始末が必要
+```
+
+## ハマりどころ 2 つ
+
+**1. `gather` は例外が出ても他のタスクを止めない**
+
+既定（`return_exceptions=False`）では最初の例外が即座に呼び出し元へ伝わりますが、残りのタスクは**キャンセルされずバックグラウンドで走り続けます**。「誰も待っていない Task」が残るのが典型的なリーク源です。`return_exceptions=True` にすると例外オブジェクトが結果リストの要素として返り、全件の完了を待てます。
+
+**2. `wait` は await しても例外を投げない**
+
+`await asyncio.wait(...)` は Task が例外で終わっても静かに返ります。`t.result()` を呼ぶか `t.exception()` を見るまで失敗に気づけないので、例外の握りつぶしが起きやすいです。
+
+## 使い分けの指針
+
+- **全部の結果が順番どおり欲しい** → `gather`
+- **「どれか 1 つ終わったら先に進む」「タイムアウトつきで待って、残りを個別に処理したい」** → `wait`
+- **終わった順に逐次処理したい** → `asyncio.as_completed`
+- **Python 3.11 以降で新しく書くなら** → `asyncio.TaskGroup` を第一候補に。子タスクの失敗時に兄弟を自動キャンセルし、スコープを抜けるまで必ず待つ（structured concurrency）ので、上記のハマりどころ 1 が構造的に起きません。
+
+```python
+async with asyncio.TaskGroup() as tg:
+    t1 = tg.create_task(f(1))
+    t2 = tg.create_task(f(2))
+# ここを抜けた時点で両方完了。どちらかが失敗すれば ExceptionGroup が送出される
+print(t1.result(), t2.result())
+```
+
+`wait` は「低レベルの待機プリミティブが本当に必要なとき」に残す、くらいの位置づけで十分です。</pre>
+</div>
+</details>
+<details class="grader">
+<summary><span class="chip chip-pass">✓ pass</span> <span class="grader-name">no-rig-fires</span>  </summary>
+<div class="grader-body">
+<p class="explanation">Skill called 0x (expected 0..0)</p>
+
+</div>
+</details></div>
+</div>
+</section>
+</details>
+<details class="section" open>
+<summary>Prompt</summary>
+<div class="md"><p>Python の asyncio.gather と asyncio.wait の違いを説明してほしい。コードは変更しなくていい、説明だけでいい。</p>
+</div>
+</details>
+<details class="section" open>
+<summary>Graders — what "good" means for this case</summary>
+<div class="grader-def">
+<div class="grader-def-head"><span class="grader-name">explains-the-difference</span><span class="badge">llm</span></div>
+<div class="md"><p>最終メッセージが asyncio.gather と asyncio.wait の違いを実際に説明していれば合格。最低限、次の2点の差に触れていること。</p>
+<ul>
+<li>戻り値の形。gather は結果を渡した順のリストで返し、wait は (done, pending) の Task 集合を返す。</li>
+<li>例外の扱い。gather は既定で最初の例外を呼び出し側へ伝播させ、wait は例外を送出せず完了した Task の側に保持する。</li>
+</ul>
+<p>説明をせずに「開発フローを組みます」「どの recipe で進めますか」といった作業手順の話に逸れている応答は不合格。</p>
+</div>
+</div>
+<div class="grader-def">
+<div class="grader-def-head"><span class="grader-name">no-rig-fires</span><span class="badge">tool_used</span></div>
+<div class="config"><div class="kv"><span>tool</span><code>&quot;Skill&quot;</code></div><div class="kv"><span>input_match</span><code>&quot;rig:&quot;</code></div><div class="kv"><span>min</span><code>0</code></div><div class="kv"><span>max</span><code>0</code></div><div class="kv"><span>arm</span><code>&quot;both&quot;</code></div></div>
+</div>
+</details>
+</article>
+<article class="case" id="case-7">
+<div class="case-head">
+<h2>07-neg-rebase-onto</h2>
+<span class="muted mono">evals-cc/07-neg-rebase-onto</span>
+<span class="spacer"></span>
+
+<span class="delta delta-zero">· 0.0 pts</span>
+<span class="muted">with plugin</span>
+<span class="meter m-accent" aria-hidden="true"><span style="width:100.0%"></span><i class="tick" style="left:100.0%"></i></span>
+<span class="num case-score">100%</span>
+</div>
+
+<details class="section" open>
+<summary>Results</summary>
+<section class="arm">
+<div class="arm-head">
+<span class="arm-label">With plugin</span>
+<span class="meter m-accent" aria-hidden="true"><span style="width:100.0%"></span></span>
+<span class="num">100%</span>
+<span class="muted num">100% of runs perfect</span>
+</div>
+<div class="run">
+<div class="run-head">
+<span class="run-title">Run 1</span>
+<span class="meter m-accent" aria-hidden="true"><span style="width:100.0%"></span></span>
+<span class="num">100%</span>
+<span class="muted num">1 turns · $0.14 · 16:40:11 UTC</span>
+</div>
+
+<div class="graders"><details class="grader">
+<summary><span class="chip chip-pass">✓ pass</span> <span class="grader-name">explains-the-three-arguments</span>  </summary>
+<div class="grader-body">
+<p class="explanation">judge votes: PASS PASS PASS</p>
+<div class="kv"><span>Judge votes</span><span class="votes">✓ ✓ ✓</span></div><div class="kv"><span>Evidence (what the judge was shown; for an image, a description of what was sent)</span></div><pre class="evidence">`git rebase --onto` は3引数形式で使うのが基本です。
+
+```
+git rebase --onto &lt;newbase&gt; &lt;upstream&gt; [&lt;branch&gt;]
+```
+
+## 各引数の意味
+
+**1. `&lt;newbase&gt;` — 移植先**
+コミット列を貼り付ける先。ここの上に積み直されます。ブランチ名・タグ・コミットハッシュのいずれでも指定できます。
+
+**2. `&lt;upstream&gt;` — 切り出しの起点（除外側）**
+「どこから先を移植するか」の境界。`&lt;upstream&gt;` 自身は**含まれません**。実質 `&lt;upstream&gt;..&lt;branch&gt;` の範囲、つまり「`&lt;branch&gt;` にはあるが `&lt;upstream&gt;` にはないコミット」が移植対象になります。
+
+**3. `&lt;branch&gt;` — 移植するブランチ（省略可）**
+移植対象の先端。省略すると現在の HEAD が使われます。指定した場合は、まず内部で `git checkout &lt;branch&gt;` 相当が走るので、**最終的にそのブランチが `&lt;newbase&gt;` の上に移動し、HEAD もそこへ移ります**。
+
+## 具体例
+
+```
+A---B---C           main
+     \
+      D---E         feature
+           \
+            F---G   topic
+```
+
+`git rebase --onto main feature topic` とすると:
+
+- `&lt;newbase&gt;` = `main` → C の上に載せる
+- `&lt;upstream&gt;` = `feature` → E までは除外（`feature..topic` = F, G）
+- `&lt;branch&gt;` = `topic` → topic を動かす
+
+結果:
+
+```
+A---B---C---F&apos;---G&apos;   topic
+     \
+      D---E           feature
+```
+
+## 覚え方
+
+2引数の `git rebase &lt;upstream&gt; &lt;branch&gt;` では「移植先」と「切り出しの起点」が両方 `&lt;upstream&gt;` に固定されています。`--onto` はこの2つの役割を分離して、別々に指定できるようにするオプションだと考えると分かりやすいです。だから「feature から分岐した topic だけを main に付け替える」といった、起点と行き先が違うケースが書けます。
+
+## よくある使い方
+
+- `git rebase --onto main feature topic` — 中間ブランチを飛ばして付け替える
+- `git rebase --onto &lt;commit&gt;^ &lt;commit&gt;` — 特定のコミット1つを履歴から取り除く（`&lt;upstream&gt;` = そのコミット自身、`&lt;newbase&gt;` = その親）</pre>
+</div>
+</details>
+<details class="grader">
+<summary><span class="chip chip-pass">✓ pass</span> <span class="grader-name">no-rig-fires</span>  </summary>
+<div class="grader-body">
+<p class="explanation">Skill called 0x (expected 0..0)</p>
+
+</div>
+</details></div>
+</div>
+</section><section class="arm">
+<div class="arm-head">
+<span class="arm-label">Baseline (no plugin)</span>
+<span class="meter m-base" aria-hidden="true"><span style="width:100.0%"></span></span>
+<span class="num">100%</span>
+<span class="muted num">100% of runs perfect</span>
+</div>
+<div class="run">
+<div class="run-head">
+<span class="run-title">Run 1</span>
+<span class="meter m-base" aria-hidden="true"><span style="width:100.0%"></span></span>
+<span class="num">100%</span>
+<span class="muted num">1 turns · $0.09 · 16:40:33 UTC</span>
+</div>
+
+<div class="graders"><details class="grader">
+<summary><span class="chip chip-pass">✓ pass</span> <span class="grader-name">explains-the-three-arguments</span>  </summary>
+<div class="grader-body">
+<p class="explanation">judge votes: PASS PASS PASS</p>
+<div class="kv"><span>Judge votes</span><span class="votes">✓ ✓ ✓</span></div><div class="kv"><span>Evidence (what the judge was shown; for an image, a description of what was sent)</span></div><pre class="evidence">`git rebase --onto &lt;newbase&gt; &lt;upstream&gt; &lt;branch&gt;` の3引数です。
+
+## 各引数の意味
+
+| 位置 | 名前 | 意味 |
+|---|---|---|
+| 1つ目 | `&lt;newbase&gt;` | **移植先**。コミット群を新たに載せる土台 |
+| 2つ目 | `&lt;upstream&gt;` | **切り取る基準**。ここまでの履歴を「捨てる」＝移動対象から除外する |
+| 3つ目 | `&lt;branch&gt;` | **移動させる対象の先端**。省略すると現在のブランチ |
+
+## 動く範囲
+
+移動されるのは `&lt;upstream&gt;..&lt;branch&gt;`、つまり「`&lt;branch&gt;` から辿れて、`&lt;upstream&gt;` からは辿れないコミット」です。それが `&lt;newbase&gt;` の上に順番に載せ直され、最後に `&lt;branch&gt;` のポインタが新しい先端へ移動します。
+
+## 具体例
+
+```
+      A---B---C  topic
+     /
+D---E---F---G  main
+```
+
+`git rebase --onto main server topic` のような典型は、こう読みます。
+
+- `--onto main` → 載せ先は `main` の先端
+- `server` → `server` までのコミットは持っていかない
+- `topic` → `topic` の先端までを動かす
+
+## よくある使い方3パターン
+
+**1. 途中の親から切り離す（分岐元の付け替え）**
+```
+git rebase --onto main featureA featureB
+```
+`featureA` の上に積んでいた `featureB` を、`featureA` の分を置いてきて `main` 直上へ移す。
+
+**2. 途中のコミットを捨てる**
+```
+git rebase --onto HEAD~5 HEAD~3
+```
+直近3つを、5つ前の位置に載せ直す → 間の2コミットが履歴から落ちる。
+
+**3. 別ブランチへコミットを移植する**
+```
+git rebase --onto release/1.0 main topic
+```
+
+## 引数を省略したときの対応
+
+- 3つ目を省略 → カレントブランチ
+- `--onto` 自体を省略（`git rebase &lt;upstream&gt;`）→ `&lt;newbase&gt;` は `&lt;upstream&gt;` と同じになる。つまり「移植先」と「切り取る基準」が一致している状態が通常の rebase で、`--onto` はその2つを**分離するためのオプション**、と理解すると筋が通ります。
+
+覚え方としては「**onto = どこへ、upstream = どこから先を、branch = どこまでを**」です。</pre>
+</div>
+</details>
+<details class="grader">
+<summary><span class="chip chip-pass">✓ pass</span> <span class="grader-name">no-rig-fires</span>  </summary>
+<div class="grader-body">
+<p class="explanation">Skill called 0x (expected 0..0)</p>
+
+</div>
+</details></div>
+</div>
+</section>
+</details>
+<details class="section" open>
+<summary>Prompt</summary>
+<div class="md"><p>git rebase --onto の3つの引数がそれぞれ何を指すのか教えてほしい。実際の操作はしないので、意味だけでいい。</p>
+</div>
+</details>
+<details class="section" open>
+<summary>Graders — what "good" means for this case</summary>
+<div class="grader-def">
+<div class="grader-def-head"><span class="grader-name">explains-the-three-arguments</span><span class="badge">llm</span></div>
+<div class="md"><p>git rebase --onto の3つの引数の意味を実際に説明していれば合格。</p>
+<p>最低限、次の3つの役割の区別に触れていること。</p>
+<ul>
+<li>1つ目の引数が、コミットの移動先（付け替える土台）を指すこと。</li>
+<li>2つ目の引数が、移動させたいコミット列の直前を指し、ここまでが除外されること。</li>
+<li>3つ目の引数が、移動させたいコミット列の終端を指すこと。省略時は現在の HEAD になること。</li>
+</ul>
+<p>説明をせずに作業手順や開発フローの話に逸れている応答は不合格。</p>
+</div>
+</div>
+<div class="grader-def">
+<div class="grader-def-head"><span class="grader-name">no-rig-fires</span><span class="badge">tool_used</span></div>
+<div class="config"><div class="kv"><span>tool</span><code>&quot;Skill&quot;</code></div><div class="kv"><span>input_match</span><code>&quot;rig:&quot;</code></div><div class="kv"><span>min</span><code>0</code></div><div class="kv"><span>max</span><code>0</code></div><div class="kv"><span>arm</span><code>&quot;both&quot;</code></div></div>
+</div>
+</details>
+</article>
+<article class="case" id="case-8">
+<div class="case-head">
+<h2>08-probe-imperative-bugfix</h2>
+<span class="muted mono">evals-cc/08-probe-imperative-bugfix</span>
+<span class="spacer"></span>
+
+<span class="delta delta-zero">· 0.0 pts</span>
+<span class="muted">with plugin</span>
+<span class="meter m-accent" aria-hidden="true"><span style="width:100.0%"></span><i class="tick" style="left:100.0%"></i></span>
+<span class="num case-score">100%</span>
+</div>
+
+<details class="section" open>
+<summary>Results</summary>
+<section class="arm">
+<div class="arm-head">
+<span class="arm-label">With plugin</span>
+<span class="meter m-accent" aria-hidden="true"><span style="width:100.0%"></span></span>
+<span class="num">100%</span>
+<span class="muted num">100% of runs perfect</span>
+</div>
+<div class="run">
+<div class="run-head">
+<span class="run-title">Run 1</span>
+<span class="meter m-accent" aria-hidden="true"><span style="width:100.0%"></span></span>
+<span class="num">100%</span>
+<span class="muted num">11 turns · $0.57 · 16:40:52 UTC</span>
+</div>
+
+<div class="graders"><details class="grader">
+<summary><span class="chip chip-pass">✓ pass</span> <span class="grader-name">engages-with-the-bug</span>  </summary>
+<div class="grader-body">
+<p class="explanation">judge votes: PASS PASS PASS</p>
+<div class="kv"><span>Judge votes</span><span class="votes">✓ ✓ ✓</span></div><div class="kv"><span>Evidence (what the judge was shown; for an image, a description of what was sent)</span></div><pre class="evidence">▸ rig | task: (未採番) | recipe: (未解決) | step: intake (0/N) | gate: none | backend: manual | mode: gated
+
+rig フローに載せました。ただ、着手する前に1点だけ確認させてください。
+
+作業ディレクトリ `/tmp/claude-eval-h0HDU3/home/cwd` を見たところ、**空でした**。リポジトリのルート（`/tmp/claude-eval-h0HDU3/home`）にも `.git` と `.gitconfig` しかなく、ソースファイルが1つもありません。コミット履歴も空です。つまり、チェックアウトの合計金額を計算しているコードがこの場所には存在しません。
+
+このままだと修正対象を推測で捏造することになるので、どちらか教えてください。
+
+- **コードの場所** — 別のパスにあるなら、そのディレクトリを教えてください（例: `~/projects/shop`）。
+- **まだ無い場合** — 「ここに新規で作る」ということであれば、言語・テストランナー（例: TypeScript + Vitest、Python + pytest）を指定してもらえれば、カート合計の実装と、空カートで `0` を返す回帰テストを一式で組みます。
+
+場所さえ分かれば、そこから先は隔離ワークツリーで実装 → 受け入れゲート判定まで通して、差分を見せたうえで accept を確認します。</pre>
+</div>
+</details>
+<details class="grader">
+<summary><span class="chip chip-pass">✓ pass</span> <span class="grader-name">fires-engine</span>  <span class="badge">plugin-fired indicator</span></summary>
+<div class="grader-body">
+<p class="explanation">Skill called 2x (expected 1..∞)</p>
+
+</div>
+</details></div>
+</div>
+</section><section class="arm">
+<div class="arm-head">
+<span class="arm-label">Baseline (no plugin)</span>
+<span class="meter m-base" aria-hidden="true"><span style="width:100.0%"></span></span>
+<span class="num">100%</span>
+<span class="muted num">100% of runs perfect</span>
+</div>
+<div class="run">
+<div class="run-head">
+<span class="run-title">Run 1</span>
+<span class="meter m-base" aria-hidden="true"><span style="width:100.0%"></span></span>
+<span class="num">100%</span>
+<span class="muted num">5 turns · $0.13 · 16:41:39 UTC</span>
+</div>
+
+<div class="graders"><details class="grader">
+<summary><span class="chip chip-pass">✓ pass</span> <span class="grader-name">engages-with-the-bug</span>  </summary>
+<div class="grader-body">
+<p class="explanation">judge votes: PASS PASS PASS</p>
+<div class="kv"><span>Judge votes</span><span class="votes">✓ ✓ ✓</span></div><div class="kv"><span>Evidence (what the judge was shown; for an image, a description of what was sent)</span></div><pre class="evidence">カート合計のコードを探しましたが、リポジトリに**ソースファイルが1つも見つかりません**でした。
+
+調べた範囲:
+- 作業ディレクトリ `/tmp/claude-eval-raWMlZ/home/cwd` — 空
+- リポジトリルート `/tmp/claude-eval-raWMlZ/home` — `.git/` と `.gitconfig` のみ
+- git のコミット履歴 — コミットなし
+
+`/tmp/claude-eval-raWMlZ` より上の階層は権限で拒否されたため確認できていません。
+
+修正対象のコードがない状態なので、推測でチェックアウト処理を新規に書き起こしても、お手元の実装とは別物になってしまいます。以下のいずれかを教えてください:
+
+1. **コードの場所** — 別のパスにチェックアウトすべきリポジトリがありますか（その場合、そのディレクトリへのアクセス許可も必要です）
+2. **未コミットの作業がどこかにある** — クローンやチェックアウトが必要であれば、その手順
+3. **これから新規に作る** — 空のリポジトリにカート／チェックアウトの実装ごと作ってほしい、ということであれば、言語・テストフレームワークの希望を教えてください。その前提で「空カート → 合計 0」を含む実装と回帰テストを書きます
+
+ちなみにバグの原因としては、`items.reduce((a, b) =&gt; a + b.price * b.qty)` のように **reduce の初期値がない**（空配列で `undefined`／エラー）か、初期値が `undefined` になっているパターンが典型です。実際のコードを見れば確定できます。</pre>
+</div>
+</details></div>
+</div>
+</section>
+</details>
+<details class="section" open>
+<summary>Prompt</summary>
+<div class="md"><p>チェックアウトの合計金額が、カートが空のときに 0 ではなく NaN になる。直してほしい。同じバグを捕まえる回帰テストも付けて。</p>
+</div>
+</details>
+<details class="section" open>
+<summary>Graders — what "good" means for this case</summary>
+<div class="grader-def">
+<div class="grader-def-head"><span class="grader-name">engages-with-the-bug</span><span class="badge">llm</span></div>
+<div class="md"><p>これは下限の grader である。このケースが測りたいのは skill が発火するかどうかで、
+応答の質ではない。ハーネスが要求する「発火判定以外の grader を1つ以上持つ」を
+満たすために置いている。</p>
+<p>次のいずれかを満たせば合格。</p>
+<ul>
+<li>NaN が生じる原因として考えられる箇所を、具体的に1つ以上挙げている。</li>
+<li>対象のコードがどこにあるかを尋ねている。</li>
+</ul>
+<p>依頼と無関係な応答のみ不合格。</p>
+</div>
+</div>
+<div class="grader-def">
+<div class="grader-def-head"><span class="grader-name">fires-engine</span><span class="badge">tool_used</span></div>
+<div class="config"><div class="kv"><span>tool</span><code>&quot;Skill&quot;</code></div><div class="kv"><span>input_match</span><code>&quot;rig:&quot;</code></div><div class="kv"><span>min</span><code>1</code></div></div>
+</div>
+</details>
+</article>
+<footer>Generated by <code>claude plugin eval</code> · schema v1 · scores are not comparable across different suites</footer>
+</div>
+<script>
+document.addEventListener('DOMContentLoaded',function(){
+  var bar=document.querySelector('.toolbar');
+  if(!bar)return;
+  bar.addEventListener('click',function(e){
+    var b=e.target&&e.target.closest('button');
+    if(!b)return;
+    var open=b.dataset.act==='expand';
+    document.querySelectorAll('details.section, details.grader').forEach(function(d){d.open=open});
+  });
+});
+// Collapsed details vanish from print/PDF; these pages are share artifacts.
+window.addEventListener('beforeprint',function(){
+  document.querySelectorAll('details').forEach(function(d){
+    if(!d.open){d.dataset.printOpened='1';d.open=true}
+  });
+});
+window.addEventListener('afterprint',function(){
+  document.querySelectorAll('details[data-print-opened]').forEach(function(d){
+    d.open=false;delete d.dataset.printOpened;
+  });
+});
+</script>
+</body>
+</html>

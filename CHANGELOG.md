@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Added
+
+**A `claude plugin eval` suite for rig's routing, in `evals-cc/`.** `claude plugin eval rig`
+found nothing to run: `evals/` holds rig-wb's own ledger (`evals/cases/<id>/case.json`), and
+the plugin-eval harness globs `<eval dir>/**/case.yaml` or `prompt.md`. The suite lives in its
+own directory, declared through `experimental.evals` in `.claude-plugin/plugin.json`, so the
+two eval systems do not share a name and the harness's `results/` never lands inside rig-wb's
+ledger. Eight cases: five work-shaped prompts that should route (a review, a bug report, an
+unspecified feature, finishing a branch, a behaviour-preserving rewrite), two explanation-only
+prompts that must not, and one imperative probe. Every case runs twice, with and without the
+plugin, so what it reports is uplift rather than a pass rate. `evals-cc/FINDINGS.md` records
+what the suite found — the talk hook firing on explanation-only turns, fixed under Changed —
+and keeps the judged scores apart from the tool-call counts, because only the counts held
+still across runs. `evals-cc/calibration/` keeps the answers every paid run produced, so a
+rubric can be checked against them by hand before the suite is run again.
+
 ### Changed
 
 **The talk hook routes work and answers questions.** The SessionStart hook told every

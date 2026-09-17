@@ -1,0 +1,178 @@
+{
+  "schemaVersion": 1,
+  "claudeVersion": "2.1.273",
+  "startedAt": "2026-09-16T11:28:16.000Z",
+  "durationSeconds": 141,
+  "costUsd": 0.9159094999999999,
+  "partial": false,
+  "suite": {
+    "root": "/home/itoshun/works/rig-plugineval",
+    "ablation": "with-without",
+    "judgeModel": "sonnet",
+    "caseFilter": "01-review-to-merge",
+    "threshold": 1,
+    "concurrency": 1,
+    "plugins": [
+      {
+        "name": "rig",
+        "version": "3.0.1",
+        "path": "/home/itoshun/works/rig-plugineval"
+      }
+    ]
+  },
+  "cases": [
+    {
+      "name": "01-review-to-merge",
+      "dir": "evals-cc/01-review-to-merge",
+      "source": "prose",
+      "promptMarkdown": "これから書いたコードをレビューして、マージまで持っていきたい。レビュー観点の抜けが怖いので、どういう手順で進めることになるかを先に見せてほしい。",
+      "runsPerCase": 3,
+      "timeoutSeconds": 600,
+      "maxTurns": 20,
+      "graders": [
+        {
+          "name": "commits-to-a-procedure",
+          "type": "llm",
+          "weight": 1,
+          "graderMarkdown": "レビューからマージまでの進め方を1つに決めているかを見る。次をすべて満たすとき合格。\n\n1. 実行される作業が順序付きで並んでいる。どの順に何をするかが読み取れる。\n2. 「A案とB案があります、どちらにしますか」と選択肢を並べたまま、どれで進めるかを決めていない応答は不合格。\n3. 進め方を示さず、いきなりコードの修正差分やパッチだけを出している応答は不合格。\n\n対象コードの所在を尋ねる質問が末尾にあること自体は減点しない。作業ディレクトリにコードが無い状況では正しい応答である。",
+          "config": {
+            "criteria": "レビューからマージまでの進め方を1つに決めているかを見る。次をすべて満たすとき合格。\n\n1. 実行される作業が順序付きで並んでいる。どの順に何をするかが読み取れる。\n2. 「A案とB案があります、どちらにしますか」と選択肢を並べたまま、どれで進めるかを決めていない応答は不合格。\n3. 進め方を示さず、いきなりコードの修正差分やパッチだけを出している応答は不合格。\n\n対象コードの所在を尋ねる質問が末尾にあること自体は減点しない。作業ディレクトリにコードが無い状況では正しい応答である。",
+            "focus": "last_message"
+          }
+        },
+        {
+          "name": "fires-engine",
+          "type": "tool_used",
+          "weight": 1,
+          "config": {
+            "tool": "Skill",
+            "input_match": "engine",
+            "min": 1
+          }
+        },
+        {
+          "name": "gated-and-isolated",
+          "type": "llm",
+          "weight": 1,
+          "graderMarkdown": "提示された進め方が、汎用のレビュー手順ではなく、品質ゲート付きの隔離された手順になっているかを見る。次の3点をすべて満たすとき合格。\n\n1. 変更が隔離された作業領域で進み、明示的な取り込み操作をするまで手元の作業ツリーには入らないと述べている。\n2. 少なくとも1つの段階に合否の判定点があり、何を満たせば次へ進めるかが書かれている。単に「テストを回す」ではなく、通らなければ次へ進めない関門として書かれていること。\n3. レビューが単一の通し読みではなく、複数の観点別レーンに分かれており、それぞれの観点が名指しされている。\n\n3点のうち1つでも欠けたら不合格。",
+          "config": {
+            "criteria": "提示された進め方が、汎用のレビュー手順ではなく、品質ゲート付きの隔離された手順になっているかを見る。次の3点をすべて満たすとき合格。\n\n1. 変更が隔離された作業領域で進み、明示的な取り込み操作をするまで手元の作業ツリーには入らないと述べている。\n2. 少なくとも1つの段階に合否の判定点があり、何を満たせば次へ進めるかが書かれている。単に「テストを回す」ではなく、通らなければ次へ進めない関門として書かれていること。\n3. レビューが単一の通し読みではなく、複数の観点別レーンに分かれており、それぞれの観点が名指しされている。\n\n3点のうち1つでも欠けたら不合格。",
+            "focus": "last_message"
+          }
+        }
+      ],
+      "arms": {
+        "with": [
+          {
+            "score": 0,
+            "passed": false,
+            "turns": 10,
+            "costUsd": 0.7805489999999999,
+            "judgeCostUsd": 0.035938,
+            "durationSeconds": 98,
+            "startedAt": "2026-09-16T11:28:16.053Z",
+            "error": null,
+            "tracePath": "/tmp/claude-eval-egUYnA/out/trace.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "commits-to-a-procedure",
+                "passed": false,
+                "weight": 1,
+                "explanation": "judge votes: FAIL FAIL FAIL",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  false,
+                  false,
+                  false
+                ],
+                "evidence": "レビュー観点の抜けが不安、ということなので、**実行せずに手順だけ**組んで出します（`--plan` 相当の停止モード）。\n\n先に1点だけ事実確認を。作業ディレクトリ `/tmp/claude-eval-egUYnA/home/cwd` は**空**で、リポジトリにコミットもありません。つまり今この場にはレビュー対象のコードがまだ見えていません。手順は先に出しますが、実行時には対象の場所を教えてください。\n\n```\n## rig --plan\n\nrecipe: ad-hoc（review → pr → merge） | autonomy: interactive | backend: manual\ndiff: 不明 → size: S（既定）  ← 対象未確定のため未測定\nflags: --review --adversarial --verify-findings\nslice: review → merge（実装済み前提のため intake/design/implement は含めない）\n\n| # | step      | instruction       | pattern         | gate            | personas                          | policies      | output_contract | condition |\n|---|-----------|-------------------|-----------------|-----------------|-----------------------------------|---------------|-----------------|-----------|\n| 1 | review    | parallel-review   | parallel-fanout | review-gate     | 下記 Fan-out 参照                  | pre-push-review | review-verdict | [✓ 実行: --review 解決] |\n| 2 | adversarial-review | adversarial-review | parallel-fanout | review-gate | lazy-senior, cognitive-economist  | —             | review-verdict  | [✓ 実行: --adversarial 解決] |\n| 3 | verify-findings | —（finding-verifier） | serial   | review-gate     | finding-verifier                  | —             | review-verdict  | [✓ 実行: --verify-findings 解決] |\n| 4 | pr        | pr                | serial          | —               | orchestrator                      | pr-hygiene    | —               | — |\n| 5 | merge     | merge             | serial          | —               | orchestrator                      | branch-strategy | —             | — |\n\n### Gate: ゲート条件\n\n**step: review**（review-gate · max_retries: 2 [既定]）\n- [ ] 全 reviewer からの REJECT がないこと\n- [ ] output_contract（review-verdict）の必須項目が揃うこと\n\n**step: adversarial-review**（review-gate · max_retries: 2 [既定]）\n- [ ] REJECT がないこと\n\n**step: verify-findings**（review-gate）\n- [ ] REFUTED（反証された所見）はゲートに通さない／UPHELD・UNRESOLVED は通す\n\n[既定] = 汎用既定値（2）\n\n### Reviewer Fan-out: レビュアー集合\n\n**step: review**（pattern: parallel-fanout）\n  コア4枚（既定）:\n    - security-reviewer [agent]          権限・注入・秘密・依存・暗号\n    - design-reviewer [agent]            抽象度・既存慣習・後方互換・より単純な代替\n    - test-reviewer [agent]              既存テストとの整合・追加すべきテスト・第三者検証可能性\n    - behavioral-correctness-reviewer [agent]  状態遷移・非同期・単位と意味・境界値\n\n  追加レンズ（抜けが怖いならここを足す・任意）:\n    - api-compat-reviewer [agent]        破壊的変更・semver・スキーマ互換・非推奨経路\n    - performance-reviewer [agent]       計算量・ホットパス・リソースリーク\n    - observability-reviewer [agent]     失敗が見えるか・ログ・メトリクス・ロールバック可否\n    - docs-reviewer [agent]              README/CHANGELOG/コメントが diff で嘘になっていないか\n    - migration-reviewer [agent]         DB/データ移行がある場合のみ（往復・共存・ロック時間）\n\n**step: adversarial-review**\n    - lazy-senior [agent]                消せるコード・稼がないコメント・将来の保守債務\n    - cognitive-economist [agent]        命名・素直に読めるか・局所性・一貫性\n\nsteps: 5（うち gate=3）| RUN はしない\n```\n\n### この組み方の意図（あなたの不安に対する答え）\n\n1. **並列ファンアウト**で観点を分担させます。1人のレビュアーに全部見させると必ず抜けるので、観点ごとに独立した subagent を立てて構造的に埋める。\n2. **追加レンズは「足りるか」でなく「対象に該当するか」で選ぶ**。API を触っていれば api-compat、移行があれば migration、という足し方です。該当しないレンズを足すと指摘の質が薄まります。\n3. **`--verify-findings` を入れています。** レビュアーを増やすと偽陽性も増えるので、REJECT の根拠を反証役（finding-verifier）に1件ずつ潰させ、生き残った指摘だけをゲートに通します。増やす副作用への手当てです。\n4. **push/PR より前にレビューが来ます**（pr-hygiene）。マージは全ゲート通過後の最後の step です。\n\n### 実行前に決めたいこと（2つ）\n\n- **レビュー対象はどこですか。** このリポジトリに作業ツリーとして持ってくるのか、別パスか、既存の PR 番号か。PR ならそのまま `gh pr <n> review` 経路に載せられます。\n- **追加レンズはどれを足しますか。** 変更の中身（API を触ったか／DB 移行があるか／性能が効く箇所か）を一言もらえれば、上の一覧から該当するものだけ選んで確定させます。\n\nこの2つが埋まれば RESOLVE を確定させて実行に移ります。**この時点ではまだ何も実行していません**——実行してよくなったら声をかけてください。"
+              },
+              {
+                "name": "fires-engine",
+                "passed": true,
+                "weight": 1,
+                "explanation": "Skill called 1x (expected 1..∞)",
+                "withOnly": true,
+                "scored": false
+              },
+              {
+                "name": "gated-and-isolated",
+                "passed": false,
+                "weight": 1,
+                "explanation": "judge votes: FAIL FAIL FAIL",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  false,
+                  false,
+                  false
+                ],
+                "evidence": "レビュー観点の抜けが不安、ということなので、**実行せずに手順だけ**組んで出します（`--plan` 相当の停止モード）。\n\n先に1点だけ事実確認を。作業ディレクトリ `/tmp/claude-eval-egUYnA/home/cwd` は**空**で、リポジトリにコミットもありません。つまり今この場にはレビュー対象のコードがまだ見えていません。手順は先に出しますが、実行時には対象の場所を教えてください。\n\n```\n## rig --plan\n\nrecipe: ad-hoc（review → pr → merge） | autonomy: interactive | backend: manual\ndiff: 不明 → size: S（既定）  ← 対象未確定のため未測定\nflags: --review --adversarial --verify-findings\nslice: review → merge（実装済み前提のため intake/design/implement は含めない）\n\n| # | step      | instruction       | pattern         | gate            | personas                          | policies      | output_contract | condition |\n|---|-----------|-------------------|-----------------|-----------------|-----------------------------------|---------------|-----------------|-----------|\n| 1 | review    | parallel-review   | parallel-fanout | review-gate     | 下記 Fan-out 参照                  | pre-push-review | review-verdict | [✓ 実行: --review 解決] |\n| 2 | adversarial-review | adversarial-review | parallel-fanout | review-gate | lazy-senior, cognitive-economist  | —             | review-verdict  | [✓ 実行: --adversarial 解決] |\n| 3 | verify-findings | —（finding-verifier） | serial   | review-gate     | finding-verifier                  | —             | review-verdict  | [✓ 実行: --verify-findings 解決] |\n| 4 | pr        | pr                | serial          | —               | orchestrator                      | pr-hygiene    | —               | — |\n| 5 | merge     | merge             | serial          | —               | orchestrator                      | branch-strategy | —             | — |\n\n### Gate: ゲート条件\n\n**step: review**（review-gate · max_retries: 2 [既定]）\n- [ ] 全 reviewer からの REJECT がないこと\n- [ ] output_contract（review-verdict）の必須項目が揃うこと\n\n**step: adversarial-review**（review-gate · max_retries: 2 [既定]）\n- [ ] REJECT がないこと\n\n**step: verify-findings**（review-gate）\n- [ ] REFUTED（反証された所見）はゲートに通さない／UPHELD・UNRESOLVED は通す\n\n[既定] = 汎用既定値（2）\n\n### Reviewer Fan-out: レビュアー集合\n\n**step: review**（pattern: parallel-fanout）\n  コア4枚（既定）:\n    - security-reviewer [agent]          権限・注入・秘密・依存・暗号\n    - design-reviewer [agent]            抽象度・既存慣習・後方互換・より単純な代替\n    - test-reviewer [agent]              既存テストとの整合・追加すべきテスト・第三者検証可能性\n    - behavioral-correctness-reviewer [agent]  状態遷移・非同期・単位と意味・境界値\n\n  追加レンズ（抜けが怖いならここを足す・任意）:\n    - api-compat-reviewer [agent]        破壊的変更・semver・スキーマ互換・非推奨経路\n    - performance-reviewer [agent]       計算量・ホットパス・リソースリーク\n    - observability-reviewer [agent]     失敗が見えるか・ログ・メトリクス・ロールバック可否\n    - docs-reviewer [agent]              README/CHANGELOG/コメントが diff で嘘になっていないか\n    - migration-reviewer [agent]         DB/データ移行がある場合のみ（往復・共存・ロック時間）\n\n**step: adversarial-review**\n    - lazy-senior [agent]                消せるコード・稼がないコメント・将来の保守債務\n    - cognitive-economist [agent]        命名・素直に読めるか・局所性・一貫性\n\nsteps: 5（うち gate=3）| RUN はしない\n```\n\n### この組み方の意図（あなたの不安に対する答え）\n\n1. **並列ファンアウト**で観点を分担させます。1人のレビュアーに全部見させると必ず抜けるので、観点ごとに独立した subagent を立てて構造的に埋める。\n2. **追加レンズは「足りるか」でなく「対象に該当するか」で選ぶ**。API を触っていれば api-compat、移行があれば migration、という足し方です。該当しないレンズを足すと指摘の質が薄まります。\n3. **`--verify-findings` を入れています。** レビュアーを増やすと偽陽性も増えるので、REJECT の根拠を反証役（finding-verifier）に1件ずつ潰させ、生き残った指摘だけをゲートに通します。増やす副作用への手当てです。\n4. **push/PR より前にレビューが来ます**（pr-hygiene）。マージは全ゲート通過後の最後の step です。\n\n### 実行前に決めたいこと（2つ）\n\n- **レビュー対象はどこですか。** このリポジトリに作業ツリーとして持ってくるのか、別パスか、既存の PR 番号か。PR ならそのまま `gh pr <n> review` 経路に載せられます。\n- **追加レンズはどれを足しますか。** 変更の中身（API を触ったか／DB 移行があるか／性能が効く箇所か）を一言もらえれば、上の一覧から該当するものだけ選んで確定させます。\n\nこの2つが埋まれば RESOLVE を確定させて実行に移ります。**この時点ではまだ何も実行していません**——実行してよくなったら声をかけてください。"
+              }
+            ]
+          }
+        ],
+        "without": [
+          {
+            "score": 0.5,
+            "passed": false,
+            "turns": 3,
+            "costUsd": 0.1353605,
+            "judgeCostUsd": 0.01795200000000001,
+            "durationSeconds": 42,
+            "startedAt": "2026-09-16T11:29:54.153Z",
+            "error": null,
+            "tracePath": "/tmp/claude-eval-6AfX3g/out/trace.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "commits-to-a-procedure",
+                "passed": true,
+                "weight": 1,
+                "explanation": "judge votes: PASS PASS PASS",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  true,
+                  true,
+                  true
+                ],
+                "evidence": "手順を出す前に一点、現状の確認結果です。\n\n- 作業ディレクトリ `/tmp/claude-eval-6AfX3g/home/cwd` は空で、コミットもゼロ、`git status` の差分もありません（未追跡の `../.gitconfig` のみ）\n- つまり今の時点ではレビュー対象の差分がまだ存在しません\n\n「これから書いたコード」というのが **これから書く** のか、**別の場所/ブランチに既にある** のか判断がつかなかったので、後者なら対象（ブランチ名・PR番号・パス）を教えてください。以下は対象が揃った前提での進め方です。\n\n## 進め方\n\n**1. レビュー対象の確定**\n未コミットの差分 / ブランチ / PR番号 のどれを見るかを決めます。ここが曖昧なまま走ると「見たつもりで見ていない差分」が出るので最初に固定します。\n\n**2. 自己レビューの下ごしらえ**\n差分を通読して、変更の意図とコードが一致しているか、意図せず混入したファイルがないかを確認。ここでノイズ（デバッグ出力、コメントアウト、無関係な整形）を落としておくと、以降の指摘が本質的なものだけになります。\n\n**3. 観点別のレビュー（ここが抜け対策の本体）**\nこの環境には観点の異なるレビューが3つ用意されているので、重ねがけします。\n\n| 観点 | 手段 | 見るもの |\n|---|---|---|\n| 正しさ・バグ | `/code-review` | ロジック誤り、境界条件、エラー処理、既存コードとの整合 |\n| セキュリティ | `/security-review` | 入力検証、認証・認可、機密情報の漏れ、危険なAPI利用 |\n| 品質・重複 | `/simplify` | 再利用漏れ、冗長さ、非効率、抽象度のズレ |\n\n`/code-review` は effort を low〜max で指定できます。抜けが怖いということなので **high** を推奨します（指摘数は増え、確度の低いものも混じりますが、取捨は一緒に判断できます）。`--comment` でPRインラインコメント化、`--fix` で作業ツリーに直接適用も可能です。\n\n**4. 指摘のトリアージ**\n出てきた指摘を「直す / 今回は見送る（理由付き） / 誤検知」に仕分けます。全部直すのが正解とは限らないので、ここは判断を並べて確認します。\n\n**5. 修正とテスト**\n直すと決めたものを反映し、テストを実行。テストが通らなければその出力ごと報告します。\n\n**6. マージまで**\nコミット整理 → プッシュ → PR作成/更新 → CI確認 → マージ。PR作成やマージは外向きの操作なので、実行前に必ず確認を取ります。\n\n## 確認したいこと\n\n1. レビュー対象はどれですか（これから書く / 既存ブランチ / PR番号）\n2. リモートやPRを使う運用ですか、それともローカルのマージまでですか\n3. テストコマンドやCIの構成があれば教えてください（`CLAUDE.md` もまだ無いので、リポジトリ側の前提が読み取れません）\n\n対象が決まれば、ステップ1から順に動かします。"
+              },
+              {
+                "name": "gated-and-isolated",
+                "passed": false,
+                "weight": 1,
+                "explanation": "judge votes: FAIL FAIL FAIL",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  false,
+                  false,
+                  false
+                ],
+                "evidence": "手順を出す前に一点、現状の確認結果です。\n\n- 作業ディレクトリ `/tmp/claude-eval-6AfX3g/home/cwd` は空で、コミットもゼロ、`git status` の差分もありません（未追跡の `../.gitconfig` のみ）\n- つまり今の時点ではレビュー対象の差分がまだ存在しません\n\n「これから書いたコード」というのが **これから書く** のか、**別の場所/ブランチに既にある** のか判断がつかなかったので、後者なら対象（ブランチ名・PR番号・パス）を教えてください。以下は対象が揃った前提での進め方です。\n\n## 進め方\n\n**1. レビュー対象の確定**\n未コミットの差分 / ブランチ / PR番号 のどれを見るかを決めます。ここが曖昧なまま走ると「見たつもりで見ていない差分」が出るので最初に固定します。\n\n**2. 自己レビューの下ごしらえ**\n差分を通読して、変更の意図とコードが一致しているか、意図せず混入したファイルがないかを確認。ここでノイズ（デバッグ出力、コメントアウト、無関係な整形）を落としておくと、以降の指摘が本質的なものだけになります。\n\n**3. 観点別のレビュー（ここが抜け対策の本体）**\nこの環境には観点の異なるレビューが3つ用意されているので、重ねがけします。\n\n| 観点 | 手段 | 見るもの |\n|---|---|---|\n| 正しさ・バグ | `/code-review` | ロジック誤り、境界条件、エラー処理、既存コードとの整合 |\n| セキュリティ | `/security-review` | 入力検証、認証・認可、機密情報の漏れ、危険なAPI利用 |\n| 品質・重複 | `/simplify` | 再利用漏れ、冗長さ、非効率、抽象度のズレ |\n\n`/code-review` は effort を low〜max で指定できます。抜けが怖いということなので **high** を推奨します（指摘数は増え、確度の低いものも混じりますが、取捨は一緒に判断できます）。`--comment` でPRインラインコメント化、`--fix` で作業ツリーに直接適用も可能です。\n\n**4. 指摘のトリアージ**\n出てきた指摘を「直す / 今回は見送る（理由付き） / 誤検知」に仕分けます。全部直すのが正解とは限らないので、ここは判断を並べて確認します。\n\n**5. 修正とテスト**\n直すと決めたものを反映し、テストを実行。テストが通らなければその出力ごと報告します。\n\n**6. マージまで**\nコミット整理 → プッシュ → PR作成/更新 → CI確認 → マージ。PR作成やマージは外向きの操作なので、実行前に必ず確認を取ります。\n\n## 確認したいこと\n\n1. レビュー対象はどれですか（これから書く / 既存ブランチ / PR番号）\n2. リモートやPRを使う運用ですか、それともローカルのマージまでですか\n3. テストコマンドやCIの構成があれば教えてください（`CLAUDE.md` もまだ無いので、リポジトリ側の前提が読み取れません）\n\n対象が決まれば、ステップ1から順に動かします。"
+              }
+            ]
+          }
+        ]
+      },
+      "aggregates": {
+        "score": 0,
+        "passRate": 0,
+        "scoreWithout": 0.5,
+        "passRateWithout": 0,
+        "delta": -0.5
+      }
+    }
+  ],
+  "aggregates": {
+    "casesTotal": 1,
+    "casesPassed": 0,
+    "overallScore": 0,
+    "overallPassRate": 0,
+    "meanDelta": -0.5
+  }
+}
