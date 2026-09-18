@@ -333,6 +333,9 @@ def _progress_summary(observer, state, path, final):
                    "await_approval" if outcome == "AWAIT_APPROVAL" else
                    ("resume_strict" if strict else "continue_legacy_step") if outcome == "INCOMPLETE" else
                    "inspect_and_decide")
+    if strict and state['deterministic_runtime'].get('phase') == 'UPSTREAM':
+        from .lifecycle_status import lifecycle_snapshot
+        next_action = lifecycle_snapshot(state)['next_action']
     isolation = state.get("isolation") or {}
     worktree = isolation.get("dir") if isolation.get("outcome") not in ("merged", "clean-removed") else None
     if strict:
@@ -369,6 +372,9 @@ def _status_snapshot(state, path):
               "stop_kind": (state.get("stopped") or {}).get("kind"), "steps": steps}
     runtime = state.get("deterministic_runtime")
     if runtime is not None:
+        if "lifecycle" in runtime:
+            from .lifecycle_status import lifecycle_snapshot
+            result["lifecycle"] = lifecycle_snapshot(state)
         def evidence(bundle):
             return [{k: record.get(k) for k in ("check_id", "status", "exit_code")}
                     for record in (bundle or {}).get("evidence", [])]
@@ -821,6 +827,9 @@ def cmd_status(args, *, out: Presenter = CONSOLE):
     if "deterministic_runtime" in state:
         snapshot = _status_snapshot(state, sp)
         runtime = snapshot["strict"]
+        if "lifecycle" in snapshot:
+            from .lifecycle_status import render_lifecycle
+            render_lifecycle(snapshot["lifecycle"], out)
         out.out(f"Saved strict phase={runtime['phase']} attempt={runtime['attempt']} "
                 f"step_index={runtime['step_index']} "
                 "(last saved snapshot; process liveness unknown; evidence not revalidated)")

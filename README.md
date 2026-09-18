@@ -1381,6 +1381,7 @@ What is left, and it is worth naming exactly because it is less than what was th
 - [`docs/evaluation-cases.md`](./docs/evaluation-cases.md) — the capture / execution / comparison / promotion boundary behind the prompt evaluation gate
 - [`docs/deterministic-gate-foundation.md`](./docs/deterministic-gate-foundation.md) — machine-evidence evaluation and bounded recovery policy APIs
 - [`docs/deterministic-runtime.md`](./docs/deterministic-runtime.md) — opt-in strict execution, task-bound acceptance, resume and isolation limits
+- [`docs/lifecycle-modes.md`](./docs/lifecycle-modes.md) — explicit waterfall/iterative proposals, revision-bound decisions and change handling
 - [`docs/packs.md`](./docs/packs.md) — pack authoring (`pack.yaml` / `compatibility.yaml`) and the init / validate / doctor / install / test commands
 - [`docs/pack-migration.md`](./docs/pack-migration.md) — taking a pack out to its own repository and installing it back through a named source, from both sides
 - [`docs/v3-architecture-design-brief.ja.md`](./docs/v3-architecture-design-brief.ja.md) — the V3 architecture design brief: the agreed internal rearchitecture (capability registry, ports, provenance typing) and the order the migration runs in

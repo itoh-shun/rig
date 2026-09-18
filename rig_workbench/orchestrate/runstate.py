@@ -676,8 +676,8 @@ def load_state(path: pathlib.Path) -> dict:
         if secure_payload != payload:
             raise OSError("secure run-state changed during verification")
         state = json.loads(secure_payload.decode("utf-8"))
-    if "deterministic_binding" in state and "deterministic_runtime" not in state:
-        raise ValueError("deterministic task state lost runtime marker")
+    if ("deterministic_binding" in state or "lifecycle_schema_version" in state) and "deterministic_runtime" not in state:
+        raise ValueError("deterministic task or lifecycle state lost runtime marker")
     if "deterministic_runtime" in state:
         from .deterministic_runtime import validate_state
         validate_state(state)

@@ -53,7 +53,8 @@ Scopes are `shared` and a feature ID; stages are `shared`, `requirements`, `desi
 Records contain unique ID, scope, stage, digest, actor, decision and nonempty reason.
 The latest decision for a scope/stage is authoritative. A rejection cannot reveal an older
 approval. Design approval must follow the current requirements approval. Digests bind the
-appropriate shared/requirements/design content so refining an unrelated later draft does
+appropriate shared/requirements/design content (including integration checks in the shared
+digest) so refining an unrelated later draft does
 not invalidate an approved earlier feature unnecessarily.
 
 CLI decisions require expected revision and digest. Decisions and revisions are applied
@@ -78,7 +79,8 @@ checks rerun against the current full subject and contract.
 
 Preserve failure events, replan events, plan history and cumulative limits. A revision must
 not escape an inflight operation or an exhausted recovery budget. A revision used to resolve
-a mandatory replan must consume a valid replan event rather than bypass it. Retain old
+a mandatory replan must preserve that obligation and return to the real REPLAN operation;
+an upstream edit is not evidence that replanning was performed. Retain old
 evidence for audit in revision history while removing it from current acceptance eligibility.
 
 Final verification runs all feature checks and the dedicated integration checks without a

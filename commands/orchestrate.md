@@ -13,6 +13,15 @@ $ARGUMENTS
 
 ## Two ways to use it
 
+For an explicitly requested waterfall or iterative lifecycle, use
+`scripts/orchestrate.py lifecycle template|init|decide|revise|status` and
+the [lifecycle guide](../docs/lifecycle-modes.md). Prepare a structured proposal,
+show its revision, scope and stage digest, and obtain the user's decision about
+that proposal before recording it. Do not infer approval from generated prose.
+Initialization calls no provider; `resume <state> --progress` starts only work
+permitted by the upstream gate. Preserve the same state through revisions and
+rejections. This is separate from ordinary `plan` and legacy `approve`.
+
 **1. Semi-automatic (the model does each step's work)**
 The runner decides the transitions; the model executes each step by delegation:
 ```

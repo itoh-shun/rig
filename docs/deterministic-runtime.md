@@ -90,7 +90,8 @@ failure in a single-step run enters recovery; a multi-step final failure stops a
 AWAIT_DECISION because the runner cannot safely infer the responsible unit.
 All checks run again at final verification, and acceptance rechecks the current
 subject against the evidence. The two upper-stage lifecycle modes are separate
-from this runtime foundation and are not implemented by this flag.
+from this runtime foundation and are not selected by this flag. Use the explicit
+[`lifecycle` commands](lifecycle-modes.md) to create a run with upstream gates.
 
 ## Trust and execution scope
 

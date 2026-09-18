@@ -28,6 +28,9 @@ The model does each step's "work", but this runner decides "what happens next":
   resume <state.json> [--progress]   Verify-first resume: print a digest, RE-RUN the current step's checks
                                      (refuse to advance if the world drifted), then continue via `next`
   status <state.json> [--json]       Print the last saved snapshot (not process liveness)
+  lifecycle <template|init|decide|revise|status> ...
+                                     Explicit waterfall/iterative planning and revision-bound decisions.
+                                     Use lifecycle <action> --help for required arguments; resume executes.
   runs   [--limit N] [--recipe R] [--personas] [--cost]  Run telemetry (.rig/runs.jsonl): listing, per-recipe aggregates,
                                      per-verifier vote tallies, and (--cost) per-recipe/provider token rollups for
                                      HTTP providers (ollama/lmstudio; claude/codex have no structured usage — #271/#296)
@@ -122,6 +125,7 @@ from .queueing import cmd_queue
 from .graph import cmd_graph
 from .mcp_scan import cmd_mcp_scan
 from .selftest import cmd_selftest
+from .lifecycle_commands import cmd_lifecycle
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 COMMANDS = {
@@ -129,6 +133,7 @@ COMMANDS = {
     "verdict": cmd_verdict, "approve": cmd_approve, "next": cmd_next, "status": cmd_status,
     "run": cmd_run, "models": cmd_models, "probe": cmd_probe, "queue": cmd_queue,
     "resume": cmd_resume,
+    "lifecycle": cmd_lifecycle,
     "runs": cmd_runs, "graph": cmd_graph, "perf": cmd_perf, "otel": cmd_otel,
     "install-shim": cmd_install_shim, "selftest": cmd_selftest,
     "mcp-scan": cmd_mcp_scan, "ab": cmd_ab, "fleet": cmd_fleet,

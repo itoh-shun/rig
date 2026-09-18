@@ -321,6 +321,11 @@ SHELL_MODULES: dict[str, dict[str, str]] = {
         ),
     },
     "orchestrate": {
+        f"{PACKAGE}.orchestrate.lifecycle_commands": (
+            "Explicit operator CLI adapter: parses lifecycle proposals and decisions, "
+            "creates isolated runs and delegates guarded mutations to strict runtime. "
+            "Lifecycle policy stays pure and never imports this shell."
+        ),
         f"{PACKAGE}.orchestrate.deterministic_binding": (
             "The strict-run workbench adapter: it holds a workbench task lock, "
             "records the task/run association outside the writable worktree, and "
