@@ -2842,6 +2842,11 @@ def run_loop(state: dict, sp: pathlib.Path | None, gen: str, ver: str,
              max_parallel: int = 4, quorum: str = "all",
              generators: list[str] | None = None) -> str:
     """Autonomous loop. If any step has needs:, switch automatically to DAG-parallel mode (independent steps run concurrently)."""
+    if "deterministic_runtime" in state or cfg.get("deterministic"):
+        from .deterministic_runtime import run_strict
+        if sp is None:
+            raise ValueError("deterministic run requires persistent state path")
+        return run_strict(state, sp, max_steps=max_steps)
     log = (lambda *a: None) if quiet else print
     gen_list = generators or [gen]
     # A fresh timing accumulator per run, on a copy of cfg: run_loop owns its own lifetime so

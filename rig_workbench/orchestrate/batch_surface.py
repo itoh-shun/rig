@@ -100,3 +100,40 @@ def _known_projects() -> list[str]:
 #: function whose module it would have to know — as `ports.local`'s adapter instances are.
 WORKBENCH_BATCH = _WorkbenchBatch()
 KNOWN_PROJECTS = _known_projects
+
+
+class _StrictTaskStore:
+    """Task locking/storage effects used by deterministic task binding."""
+
+    @staticmethod
+    def root():
+        from ..workbench.state import repo_root
+        return repo_root()
+
+    @staticmethod
+    def lock(root, task_id):
+        from ..workbench.state import task_lock
+        return task_lock(root, task_id)
+
+    @staticmethod
+    def load(root, task_id):
+        from ..workbench.state import load_task
+        return load_task(root, task_id)
+
+    @staticmethod
+    def save(directory, task):
+        from ..workbench.state import save_task
+        return save_task(directory, task)
+
+    @staticmethod
+    def write_json(path, payload):
+        from ..workbench.state import save_json
+        return save_json(path, payload)
+
+    @staticmethod
+    def worktrees(root):
+        from ..workbench.state import git
+        return git(["worktree", "list", "--porcelain"], cwd=root).stdout
+
+
+STRICT_TASK_STORE = _StrictTaskStore()

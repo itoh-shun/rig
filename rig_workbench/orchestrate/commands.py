@@ -377,6 +377,8 @@ def _read_state(path: pathlib.Path) -> dict:
         raise Refusal(
             [f"[ERROR] run-state {path} is not JSON: {broken.msg} (line {broken.lineno})"],
             code=2) from broken
+    except ValueError as broken:
+        raise Refusal([f"[BLOCKED] invalid deterministic or malformed state: {broken}"], code=2) from broken
     except OSError as unreadable:
         raise Refusal([f"[ERROR] run-state {path} cannot be read: {unreadable}"],
                       code=2) from unreadable
@@ -391,6 +393,8 @@ def _locked_secure_state_mutation(path_from_args):
             if state_path is None:
                 return command(args, **kwargs)
             initial = _read_state(state_path)
+            if "deterministic_runtime" in initial and command.__name__ != "cmd_resume":
+                raise Refusal(["[BLOCKED] deterministic state only permits resume; manual mutation is forbidden"], code=2)
             if not initial.get("secure_runtime"):
                 return command(args, **kwargs)
             try:
@@ -526,6 +530,14 @@ def cmd_resume(args, *, out: Presenter = CONSOLE, clock: Clock = SYSTEM_CLOCK):
     """
     sp = _state_path(args)
     state = _read_state(sp)
+    if "deterministic_runtime" in state:
+        from .deterministic_runtime import resume_strict
+        try:
+            final = resume_strict(sp)
+        except (ValueError, OSError, RuntimeError) as error:
+            raise Refusal([f"[BLOCKED] deterministic resume: {error}"], code=2) from error
+        out.out(f"=== Finished: {final} === run-state: {sp}")
+        raise SystemExit(0 if final == "DONE" else 1)
     _refuse_blocked_state(state)
     steps = state["steps"]
     total = len(steps)
@@ -775,6 +787,8 @@ def cmd_approve(args, *, out: Presenter = CONSOLE,
             i += 1
     sp = _state_path(positional)
     state = _read_state(sp)
+    if "deterministic_runtime" in state:
+        raise Refusal(["[BLOCKED] deterministic state forbids manual approve"], code=2)
     step = next((s for s in state["steps"] if s["id"] == sid), None)
     if step is None:
         out.out(f"[ERROR] no step `{sid}` in this run (steps: "
@@ -851,6 +865,22 @@ def cmd_run(args, *, out: Presenter = CONSOLE, env: Env = OS_ENV):
                 "[--out f] [--timeout seconds] [--isolate] [--auto-route] "
                 "[--auto-route-learn [--auto-route-mode shadow|active] [--exploration-pct N] [--exploration-date D]]")
         sys.exit(1)
+    strict = "--deterministic" in args or "--deterministic-task" in args
+    if strict:
+        valued = {"--provider", "--verifier-provider", "--provider-cmd", "--model",
+                  "--timeout", "--goal", "--check", "--out", "--max-steps", "--deterministic-task"}
+        switches = {"--deterministic", "--isolate", "--goal-stdin"}
+        cursor = 1
+        while cursor < len(args):
+            flag = args[cursor]
+            if flag in valued and cursor + 1 < len(args):
+                cursor += 2
+            elif flag in switches:
+                cursor += 1
+            else:
+                raise Refusal([f"[BLOCKED] deterministic mode refuses unsupported or incomplete option {flag}"], code=2)
+        if ("--isolate" in args) == ("--deterministic-task" in args):
+            raise Refusal(["[BLOCKED] deterministic mode requires exactly one of --isolate or --deterministic-task"], code=2)
     path = resolve_recipe(args[0])
     fm, _warns = resolve_extends(parse_frontmatter(path, out=out), path)
     artifact_stdout = fm.get("name", path.stem) in JAPANESE_WRITING_RECIPES
@@ -882,12 +912,19 @@ def cmd_run(args, *, out: Presenter = CONSOLE, env: Env = OS_ENV):
     max_parallel = 4
     quorum = "all"
     cfg: dict = {"_token_usage": {}}  # per-run token accumulator (#271/#296); never merged across runs
+    cfg["deterministic"] = strict
+    deterministic_task = None
     step_models: dict[str, str] = {}
     cli_checks: list[str] = []
     i = 1
     while i < len(args):
         a = args[i]
-        if a == "--provider" and i + 1 < len(args):
+        if a == "--deterministic":
+            i += 1
+        elif a == "--deterministic-task" and i + 1 < len(args):
+            deterministic_task = args[i + 1]
+            i += 2
+        elif a == "--provider" and i + 1 < len(args):
             gen = args[i + 1]
             i += 2
         elif a == "--generators" and i + 1 < len(args):
@@ -1009,7 +1046,11 @@ def cmd_run(args, *, out: Presenter = CONSOLE, env: Env = OS_ENV):
             i += 2
         else:
             i += 1
-    if cli_checks:
+    if strict and cli_checks:
+        if not steps:
+            raise Refusal(["[BLOCKED] deterministic recipe must contain steps"], code=2)
+        steps[-1]["checks"].extend(cli_checks)
+    if cli_checks and not strict:
         cfg["checks"] = list(cli_checks)
         # Was `executor == "checks-only" and gate == "acceptance-gate"`. That pair is now
         # refused before the run starts (a verdict-less executor cannot carry a runtime
@@ -1231,7 +1272,12 @@ def cmd_run(args, *, out: Presenter = CONSOLE, env: Env = OS_ENV):
     manifest_budget = load_manifest().get("perf_budget")
     if isinstance(manifest_budget, dict):
         cfg["perf_budget"] = manifest_budget
-    diagnostic(render_plan(state["recipe"], steps, execution))
+    if strict:
+        diagnostic(f"## deterministic run: {state['recipe']} / {len(steps)} sequential step(s)")
+        diagnostic("All declared machine checks and independent reviews are required. "
+                   "Runner-owned cumulative recovery limits apply; worktrees are preserved for review.")
+    else:
+        diagnostic(render_plan(state["recipe"], steps, execution))
     panel = f" / judge-panel={','.join(generators)}" if len(generators) > 1 else ""
     if isinstance(ver, list):
         panel += f" / model-quorum={','.join(ver)}"
@@ -1245,10 +1291,26 @@ def cmd_run(args, *, out: Presenter = CONSOLE, env: Env = OS_ENV):
     diagnostic(metering_note([*(generators or [gen]), *(ver if isinstance(ver, list) else [ver])])
                + "\n")
     try:
-        final = run_loop(state, out_path, gen, ver, cfg, max_steps,
-                         max_parallel=max_parallel, quorum=quorum,
-                         generators=(generators or None), quiet=artifact_stdout)
-        if iso:
+        if strict:
+            from .deterministic_binding import bound_task
+            from .deterministic_runtime import initialize
+            try:
+                with bound_task(deterministic_task, config.INVOCATION_CWD, state, out_path) as workspace:
+                    if workspace is not None:
+                        cfg["cwd"] = str(workspace)
+                    provider_config = {"generator": gen, "verifier": ver,
+                                       **{k: cfg[k] for k in ("provider_cmd", "model", "timeout") if k in cfg}}
+                    initialize(state, pathlib.Path(cfg["cwd"]), out_path, provider_config)
+                    final = run_loop(state, out_path, gen, ver, cfg, max_steps)
+            except (ValueError, OSError, RuntimeError) as error:
+                raise Refusal([f"[BLOCKED] deterministic run: {error}"], code=2) from error
+        else:
+            final = run_loop(state, out_path, gen, ver, cfg, max_steps,
+                             max_parallel=max_parallel, quorum=quorum,
+                             generators=(generators or None), quiet=artifact_stdout)
+        if iso and strict:
+            diagnostic(f"◈ Strict worktree preserved for review: {iso['dir']}")
+        if iso and not strict:
             outcome = teardown_isolation(iso, final)
             state["isolation"]["outcome"] = outcome
             save_state(state, out_path)
@@ -1278,7 +1340,7 @@ def cmd_run(args, *, out: Presenter = CONSOLE, env: Env = OS_ENV):
             diagnostic("The run is parked at a human gate. Approve with "
                        f"`rig-wb orchestrate approve <step-id> {out_path}`, then `resume`.")
             sys.exit(3)
-        sys.exit(1 if final in ("ESCALATE", "BLOCKED") else 0)
+        sys.exit((0 if final == "DONE" else 1) if strict else (1 if final in ("ESCALATE", "BLOCKED") else 0))
     finally:
         close_secure_launchers(cfg.pop("_secure_launchers", None))
         release_output_lock(cfg.pop("_secure_output_lock", None))

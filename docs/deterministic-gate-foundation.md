@@ -1,6 +1,6 @@
 # Deterministic gate foundation
 
-This change implements the first stage of the [flow design](superpowers/specs/2026-09-18-deterministic-flow-design.md): two pure Python APIs for evaluating check evidence and choosing recovery actions. Existing `rig-wb run`, recipes, retries and `accept` retain their current behavior. There is no new CLI flag and neither waterfall nor iterative mode is executable yet.
+The first stage of the [flow design](superpowers/specs/2026-09-18-deterministic-flow-design.md) provides two pure Python APIs for evaluating check evidence and choosing recovery actions. The [opt-in deterministic runtime](deterministic-runtime.md) now connects these APIs to execution and task acceptance. Legacy runs retain their behavior. Neither waterfall nor iterative mode is executable yet.
 
 ## Evaluate machine evidence
 

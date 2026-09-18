@@ -321,6 +321,12 @@ SHELL_MODULES: dict[str, dict[str, str]] = {
         ),
     },
     "orchestrate": {
+        f"{PACKAGE}.orchestrate.deterministic_binding": (
+            "The strict-run workbench adapter: it holds a workbench task lock, "
+            "records the task/run association outside the writable worktree, and "
+            "hands the current snapshot to the deterministic acceptance validator. "
+            "The pure evidence and recovery modules do not import workbench."
+        ),
         f"{PACKAGE}.orchestrate.cli": (
             "The command shell: the module docstring that *is* `--help`, the argparse-free "
             "dispatch table `COMMANDS`, and the one `ConsolePresenter` built in `main()` and "
