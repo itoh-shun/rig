@@ -1,5 +1,60 @@
 # Changelog
 
+## [3.2.0] - 2026-09-18
+
+### Added
+
+- **Opt-in deterministic execution:** `run --deterministic --isolate` freezes a
+  sequential recipe's checks and provider configuration, binds machine evidence
+  to the run, unit, attempt, subject, baseline and environment, and fails closed
+  on missing, stale, mismatched or malformed evidence. AI verdicts cannot override
+  machine failures. Final verification reruns all checks; successful isolated runs
+  keep their worktree for inspection rather than automatically merging it.
+- **Bounded rejection and recovery:** structured failed-check evidence drives
+  diagnosis, repair and changed-plan requirements. Two unit failures since the last
+  replan require replanning; six cumulative failures, or another failure after two
+  replans, escalate. AI review rejection stops for a decision. Multi-step final
+  failures also stop for a decision rather than guessing which unit to repair.
+- **Task-bound acceptance:** `--deterministic-task TASK_ID` binds an existing
+  isolated workbench task under its lock. Acceptance requires matching reciprocal
+  binding records and current DONE evidence, including with `accept --force`.
+  Failed initialization remains bound; deleting one marker cannot restore legacy
+  acceptance. Manual state-transition commands cannot bypass strict execution.
+- **Explicit progress and saved status:** `run` and `resume` accept `--progress`
+  for flushed stderr phase events, elapsed-time heartbeats and a terminal summary
+  with paths and a copyable status command. Existing stdout and legacy exit-code
+  semantics are preserved; exit zero alone is not reported as DONE. `status --json`
+  provides a read-only saved-state projection without raw prompts, provider output
+  or check commands. Strict text status shows phase, attempt and recorded evidence.
+  Interactive Claude Code guidance uses an explicitly requested background command
+  and its output file, keeping the same task across tool timeouts.
+
+### Changed
+
+- **Retired automatic RigTalk injection.** Removed its SessionStart registration
+  and compaction reinjection. The old talk hook script remains a silent compatibility
+  shim for stale registrations. Explicitly invoked talk remains available; unrelated
+  safety and continuity hooks remain in place.
+
+### Scope and limitations
+
+- The ordinary runner remains the default. The deterministic lane requires Linux,
+  bubblewrap and a successful write-isolation preflight; unsupported options and
+  recipe features are rejected without a legacy fallback. Every step needs machine
+  checks. DAG/adaptive execution, human gates and richer step policy features are
+  outside this initial lane. See [the runtime contract](docs/deterministic-runtime.md).
+- Filesystem write isolation is not confidentiality isolation or protection against
+  a hostile host operator. Snapshots exclude ignored files; the environment digest
+  covers platform/Python identity and frozen configuration, not the complete toolchain.
+  Mutable test sources still need review. Local fixture tests do not establish live
+  Codex/Claude service compatibility or review quality.
+- Waterfall and agile/scrum lifecycle modes remain design proposals; this release
+  ships the evidence/recovery foundation and strict sequential runtime, not those
+  upper-stage planning modes. Progress is observational, not new gate evidence;
+  saved status does not establish process liveness or revalidate acceptance.
+  Legacy `resume` still verifies and advances one transition, while strict resume
+  continues its bounded runtime. No automatic monitoring hook was added.
+
 ## [3.1.0] - 2026-09-17
 
 ### Added
