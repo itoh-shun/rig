@@ -21,13 +21,13 @@ plan    <recipe>                 ステップ状態機械を算出（モデル�
 init    <recipe> [--goal G] [--out run-state.json]
                                  run-state を作り最初のアクションを出す
 next    <run-state.json>         次の遷移を決定論的に計算・適用（START/ADVANCE/RETRY/AWAIT/BLOCKED/ESCALATE/DONE）
-resume  <run-state.json>         verify-first 再開：ダイジェスト表示 → 現 running step の checks: を**再実行**し、
+resume  <run-state.json> [--progress]  verify-first 再開：ダイジェスト表示 → 現 running step の checks: を**再実行**し、
                                  以前 pass していた check が今 fail するなら「世界がドリフトした」として前進を拒否（exit≠0）、
                                  無事なら `next` と同じ遷移を出す。run-state の mtime が 1h 以上前なら compaction 手がかりを表示
 check   <run-state.json>         現 step の checks:（shell）を実行し pass/fail 記録（計算的センサー）
 verdict <run-state.json> --by <名> --pass|--fail [--criterion N=PASS|FAIL|UNKNOWN]... [--note ...]
                                  独立検証者の推論的判定を記録（採点者≠生成者）。acceptance: 宣言時は、実際に照合した各基準を番号で明示する
-status  <run-state.json>         現在の状態
+status  <run-state.json> [--json] 保存済み状態（プロセスの生存確認ではない）
 selftest                         決定論の自己検証
 ```
 
@@ -80,6 +80,29 @@ orchestrate run <recipe> --provider <claude|codex|cmd|mock> \
 - **step-DAG 並列**：step に `needs: [id…]` を宣言すると、**依存を満たした独立 step を同一 wave で同時プロセス実行**する（例 intake → {design, test 並走} → merge）。ready 集合は id 順・ゲート評価も id 順適用＝**並列でも決定論**。`needs` 未宣言の recipe は従来どおり直列。
 - **自走と安全**：遷移はランナーが決定論的に回す。`--max-steps` で上限、ゲート未達 K 回で `ESCALATE`、自己採点は `BLOCKED`。`run-state.json` に永続＝中断・再開可能。
 - **opt-in / 本物の再帰に注意**：`--provider` は明示必須（既定なし）。`claude` を指定すると**入れ子で claude が起動**する＝コスト・再帰に注意。設計確認やテストは `--provider mock`（別プロセスだが即返す決定論ダミー）で。
+
+## 対話中の長時間実行を見えるようにする
+
+明示的に `run ... --progress` / `resume <state.json> --progress` を選ぶと、
+準備・生成・検査・レビュー・遷移・待機時間・終了結果を stderr に即時出力する。
+stdout の成果物や provider の判定本文には混ぜない。heartbeat は結果待ちの継続であり、
+作業の進展や完了率を意味しない。`status --json` は保存済み snapshot だけを返す。
+strict の phase / attempt / evidence も記録時点の情報で、その場で再検証はしない。
+
+**対話型 Claude Code で明示的に外部ランナーを使う場合だけ**、長いコマンドは
+メイン会話または継続して監視する background agent が Bash の `run_in_background: true`
+で起動する。`--out` と `--progress` を付け、返された task ID と出力ファイルを保持する。
+通常の foreground subagent に起動だけ任せて終了させない。
+出力ファイルの新しい部分を `Read` で量を区切って確認し、観測した工程の変化と長い待機を
+ユーザーへ伝える。`TaskOutput` は利用可能な旧環境だけの互換手段とする。
+
+最初の legacy step が終わる前は state が存在しないことがあるため、まず実行出力を確認する。
+ツールの timeout はコマンド停止を保証しない。同じ background task を確認し、run を
+二重起動したり、実行中の state に resume を重ねたりしない。プロセス終了後は最終結果を
+読み、DONE / 停止・判断待ち / INCOMPLETE と保存先・残された成果物を報告する。
+exit 0 だけで合格とは言わない。legacy resume は再検査と1遷移であり、自走全体の再開ではない。
+非対話の provider・headless・CI に、この対話や監視手順を要求しない。hook は追加しない。
+詳しい運用は `commands/orchestrate.md` の「Observe an interactive Claude Code run」を参照。
 
 ## ガード
 

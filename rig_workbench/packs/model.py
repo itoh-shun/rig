@@ -90,14 +90,16 @@ PROMPT_KINDS = frozenset(set(ASSET_DIRS) - {"eval-case", "eval-result", "resourc
 #: as incompatible. So it tracks the package version, and the reason it is written here
 #: rather than imported is where the coupling is held, not whether it exists.
 #:
-#: What catches a stale one is already in the suite, and outside this pillar: fixtures that
+#: Release metadata validation checks this literal against plugin.json directly.
+#: A focused release test also checks it against the package version.
+#: Further compatibility coverage lives outside this pillar: fixtures that
 #: write `engine: f">={rig_workbench.__version__}"` and then validate the pack they wrote.
 #: `tests/test_pack_disk_contract.py` is the one that matters, because it is frozen and
 #: drives `rig-wb` as a process rather than importing it. Measured, not assumed: setting
 #: this to 2.12.0 fails 46 tests across five pack test files, one of them in that frozen
 #: file. So the constant cannot silently fall behind — which is what makes writing it here
 #: a relocation of the dependency rather than a loss of it.
-ENGINE_VERSION = "3.1.0"
+ENGINE_VERSION = "3.2.0"
 
 TIERS = ("project", "user", "org", "official", "core")
 

@@ -51,6 +51,7 @@ from ..ports import Env, FileStore, Presenter, ProcessRunner
 from ..ports.local import CONSOLE, LOCAL_FILES, OS_ENV, SUBPROCESS
 from . import config
 from . import perf
+from .progress import notify
 from .composition import (                                              # noqa: F401 (re-exported)
     JAPANESE_MATERIAL_MAX_UTF8_BYTES, JAPANESE_MATERIAL_PROFILES, PackComposition,
     _build_artifact_review_prompt, _build_prompt, _build_step_contract,
@@ -506,13 +507,27 @@ def run_provider(provider: str, role: str, prompt: str, cfg: dict, persona: str 
     accounted for" and "the ones somebody remembered". `rig_overhead_ms` is a subtraction
     from the total, and a single missed call would silently become rig's own time.
     """
-    perf.record_context_bytes(cfg, prompt)
-    phase = _ROLE_PHASES.get(role)
-    if phase is None:
-        perf.record_untimed(cfg)
-        return _dispatch_provider(provider, role, prompt, cfg, persona, state, step_id)
-    with perf.timed(cfg, phase):
-        return _dispatch_provider(provider, role, prompt, cfg, persona, state, step_id)
+    observer = cfg.get("_progress_observer")
+    metadata = {"run_id": (state or {}).get("run_id") or cfg.get("_progress_run_id"),
+                "step_id": step_id or cfg.get("_progress_step_id"),
+                "attempt": cfg.get("_progress_attempt"), "provider": provider, "role": role,
+                "phase": "GENERATE" if role == "generator" else "VERIFY"}
+    notify(observer, "operation_started", **metadata)
+    outcome = "ERROR"
+    try:
+        perf.record_context_bytes(cfg, prompt)
+        phase = _ROLE_PHASES.get(role)
+        if phase is None:
+            perf.record_untimed(cfg)
+            result = _dispatch_provider(provider, role, prompt, cfg, persona, state, step_id)
+        else:
+            with perf.timed(cfg, phase):
+                result = _dispatch_provider(provider, role, prompt, cfg, persona, state, step_id)
+        outcome = "RETURNED" if result[0] == 0 else "FAILED"
+        return result
+    finally:
+        # A successful subprocess exit is not a review or gate PASS.
+        notify(observer, "operation_finished", **metadata, outcome=outcome)
 
 
 def _dispatch_provider(provider: str, role: str, prompt: str, cfg: dict, persona: str = "",
@@ -1776,13 +1791,21 @@ def _build_verify_prompt(state: dict, step: dict, product: str, diff: str | None
 def _run_step_checks(step: dict, st: dict, cfg: dict | None = None) -> None:
     st["checks"] = []
     cwd = (cfg or {}).get("cwd") or str(config.INVOCATION_CWD)
-    for cmd in step["checks"]:
+    for index, cmd in enumerate(step["checks"], 1):
+        observer = (cfg or {}).get("_progress_observer")
+        # The check helper historically needs checks only. Optional observation
+        # must not make a step ID a prerequisite for executing those checks.
+        sid = step.get("id")
+        metadata = {"run_id": (cfg or {}).get("_progress_run_id"), "step_id": sid,
+                    "phase": "CHECK", "check_id": f"{sid}:{index}" if sid else str(index)}
+        notify(observer, "operation_started", **metadata)
         with perf.timed(cfg or {}, "checks"):
             # noqa is permanent, same reason as `commands._run_checks`: `shell=True`
             # with the output discarded, and `ProcessRunner` has neither.
             r = subprocess.run(cmd, shell=True, cwd=cwd,  # noqa: TID251
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         st["checks"].append({"cmd": cmd, "ok": r.returncode == 0})
+        notify(observer, "operation_finished", **metadata, outcome="PASS" if r.returncode == 0 else "FAIL")
     failed = [c["cmd"] for c in st["checks"] if not c["ok"]]
     st["last_failure"] = None if not failed else "checks failed: " + "; ".join(failed)
 
@@ -2580,6 +2603,8 @@ def _execute_artifact_review(
 def _execute_step(state: dict, step: dict, st: dict, gen_list: list[str], ver: str,
                   cfg: dict, max_parallel: int, quorum: str, log) -> None:
     """Execute one step: generate (separate process; judge-panel capable) -> record gate evidence (checks or parallel verification)."""
+    cfg = {**cfg, "_progress_step_id": step["id"],
+           "_progress_run_id": state.get("run_id"), "_progress_attempt": st.get("retries", 0) + 1}
     executor = step.get("executor", "generate")
     if step.get("gate") and not is_runtime_gate(step["gate"]):
         state["stopped"] = {
@@ -2840,8 +2865,14 @@ def _seal_run_accounting(state: dict, cfg: dict, started: float, log=None) -> No
 def run_loop(state: dict, sp: pathlib.Path | None, gen: str, ver: str,
              cfg: dict, max_steps: int, quiet: bool = False,
              max_parallel: int = 4, quorum: str = "all",
-             generators: list[str] | None = None) -> str:
+             generators: list[str] | None = None, observer=None) -> str:
     """Autonomous loop. If any step has needs:, switch automatically to DAG-parallel mode (independent steps run concurrently)."""
+    if "deterministic_runtime" in state or cfg.get("deterministic"):
+        from .deterministic_runtime import run_strict
+        if sp is None:
+            raise ValueError("deterministic run requires persistent state path")
+        return run_strict(state, sp, max_steps=max_steps, observer=observer)
+    cfg = {**cfg, "_progress_observer": observer, "_progress_run_id": state.get("run_id")}
     log = (lambda *a: None) if quiet else print
     gen_list = generators or [gen]
     # A fresh timing accumulator per run, on a copy of cfg: run_loop owns its own lifetime so
@@ -2914,6 +2945,8 @@ def run_loop(state: dict, sp: pathlib.Path | None, gen: str, ver: str,
         with perf.timed(cfg, "gate"):
             action, msg = compute_next(state)
         last = action
+        notify(observer, "transition", run_id=state.get("run_id"), outcome=action,
+               step_id=state["steps"][state["cursor"]]["id"] if state["cursor"] < len(state["steps"]) else None)
         log(f"▶ {action}: {msg}")
         if action == "START":
             step = state["steps"][state["cursor"]]
@@ -2994,6 +3027,7 @@ def run_dag(state: dict, sp: pathlib.Path | None, gen_list: list[str], ver: str,
             break
         ids = [s["id"] for s in ready]
         state["waves"].append(ids)
+        notify(cfg.get("_progress_observer"), "transition", run_id=state.get("run_id"), phase="WAVE", attempt=waves)
         log(f"▶ WAVE {waves}: running {ids} in parallel")
         for s in ready:
             ss[s["id"]]["status"] = "running"
@@ -3008,6 +3042,8 @@ def run_dag(state: dict, sp: pathlib.Path | None, gen_list: list[str], ver: str,
             st = ss[s["id"]]
             with perf.timed(cfg, "gate"):
                 outcome = gate_outcome(s, st)
+            notify(cfg.get("_progress_observer"), "transition", run_id=state.get("run_id"),
+                   step_id=s["id"], outcome=outcome.upper())
             if outcome == "pass":
                 # A human gate parks the step without failing it: the machine is
                 # satisfied, a person is not yet. Other branches of the DAG keep going.

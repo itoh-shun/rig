@@ -129,6 +129,40 @@ Even without an explicit `--orchestrate`, a run goes through orchestrate when (�
 - **State persists in `run-state.json`**, so the same state machine resumes across compaction and restarts — the computational version of run-continuity.
 - **Opt-in, engine unchanged.** The inside of each step is still run by ordinary rig: thin harness, fat skills.
 
+## Observe an interactive Claude Code run
+
+Use `run ... --progress` (or `resume <state.json> --progress`) for runner-owned,
+flushed stderr events: preparation, generation, checks, reviews, transitions,
+waiting time and the terminal summary. Raw provider output is not streamed.
+`status <state.json> --json` is a read-only **last saved snapshot**, not proof that
+a process is alive or evidence remains fresh. Before the first legacy step ends,
+there may be no state file yet. Heartbeats mean waiting for a result, not measured
+work completion; never invent a percentage.
+
+For an explicitly requested long run **in interactive Claude Code only**:
+
+1. The main conversation, or a background agent that will stay responsible,
+   launches Bash with `run_in_background: true`, an explicit `--out` path and
+   `--progress`. Keep the returned task ID and output-file path. A foreground
+   subagent must not launch a long command and then end its own turn.
+2. Read bounded new portions of that output file with `Read` at reasonable
+   intervals. Use `TaskOutput` only as a compatibility fallback when available;
+   current Claude Code marks it deprecated. Relay observed phase changes and,
+   during long waits, the reported elapsed waiting time. Before a state exists,
+   use this output; do not infer failure from an absent first checkpoint.
+3. A tool timeout can mean the same command moved into the background. Find and
+   observe that task; **do not launch another run or resume concurrently**.
+4. When the background task actually exits, read its final output and report
+   DONE, stopped/awaiting decision, or INCOMPLETE; include saved-state, preserved
+   worktree and result paths when present. An exit 0 alone is not a gate pass.
+   Legacy `resume` verifies and computes one transition; it does not rerun the
+   whole autonomous loop. Strict `resume` continues its saved strict workflow.
+
+These monitoring instructions do not apply to provider subprocesses, headless
+runs or CI. They introduce no hook or automatic conversation routing.
+See Claude Code's [background command tools](https://code.claude.com/docs/en/tools-reference#background-commands)
+and [interactive background Bash guidance](https://code.claude.com/docs/en/interactive-mode#background-bash-commands).
+
 ## Things to watch
 
 - `--provider rig` and `claude` **start claude nested** — mind the cost and the recursion. Check a design with `--provider mock`, a separate process that returns a deterministic dummy immediately.

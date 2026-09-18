@@ -406,6 +406,12 @@ def cmd_accept(args: argparse.Namespace) -> None:
 
 def _cmd_accept_locked(args: argparse.Namespace, root: pathlib.Path, task_id: str) -> None:
     d, task = load_task(root, task_id)
+    from ..orchestrate.deterministic_binding import validate_task_acceptance
+    from ..orchestrate.deterministic_runtime import validate_acceptance
+    try:
+        validate_task_acceptance(root, task_id, d, task, validate_acceptance)
+    except (ValueError, OSError, RuntimeError) as error:
+        reject(f"deterministic acceptance refused: {error}")
 
     if task["status"] == "accepted":
         die(f"task '{task_id}' has already been accepted")

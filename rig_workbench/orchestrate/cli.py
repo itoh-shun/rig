@@ -25,9 +25,9 @@ The model does each step's "work", but this runner decides "what happens next":
                                      and freshness come from the governance layer; the record lands in the run-state
                                      beside that step's checks/verdicts and in the tamper-evident ledger
   next   <state.json>                Deterministically compute, apply, and print the next transition
-  resume <state.json>                Verify-first resume: print a digest, RE-RUN the current step's checks
+  resume <state.json> [--progress]   Verify-first resume: print a digest, RE-RUN the current step's checks
                                      (refuse to advance if the world drifted), then continue via `next`
-  status <state.json>                Print the current state
+  status <state.json> [--json]       Print the last saved snapshot (not process liveness)
   runs   [--limit N] [--recipe R] [--personas] [--cost]  Run telemetry (.rig/runs.jsonl): listing, per-recipe aggregates,
                                      per-verifier vote tallies, and (--cost) per-recipe/provider token rollups for
                                      HTTP providers (ollama/lmstudio; claude/codex have no structured usage — #271/#296)
@@ -84,6 +84,7 @@ The model does each step's "work", but this runner decides "what happens next":
                                      picks the cheapest candidate that covers the measured diff size (#264). A fallback only:
                                      runtime --step-model and the recipe's own model: both still win outright. The decision is
                                      recorded in run-state history and runs.jsonl's steps[].auto_route.
+  run ... --progress                Flush phase/wait/result diagnostics to stderr; stdout remains unchanged
   run ... --auto-route-learn          Learns from runs.jsonl's track record (which model actually got used, did the step pass)
     [--auto-route-mode shadow|active] instead of only the static size thresholds (#305; frequency-based, no ML model). Defaults
     [--exploration-pct N]             to shadow mode: predictions are always recorded (steps[].learned_route) but only override

@@ -48,7 +48,7 @@ class ConsolePresenter:
         print(text)
 
     def err(self, text: str = "") -> None:
-        print(text, file=sys.stderr)
+        print(text, file=sys.stderr, flush=True)
 
 
 #: The error handler a text-mode child is given when the operator named none. It is what
