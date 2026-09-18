@@ -67,7 +67,7 @@ Deleting just one marker does not restore legacy acceptance.
 ## Resume and reject handling
 
 ```sh
-rig-wb resume /home/me/rig-runs/fix-state.json
+python3 -m rig_workbench.orchestrate.cli resume /home/me/rig-runs/fix-state.json
 ```
 
 The saved strict contract and provider configuration drive resume. Manual `next`,

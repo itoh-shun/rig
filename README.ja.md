@@ -1288,6 +1288,8 @@ pack のバイトを著者に結びつけるものは、もう何もありませ
 - [`docs/byo-orchestrator.md`](./docs/byo-orchestrator.md) — rig が作っていない変更の import と、外部 orchestrator が分岐するための機械契約（`acceptable` / `not-acceptable` / `pending` / `execution-error`）
 - [`docs/interactive-mission-control.md`](./docs/interactive-mission-control.md) — `rig-mission-control-live`：Mission Control v2のlocalhost限定インタラクティブUI（ブラウザ側はacceptance/ガバナンス/承認/queue/providerの規則を一切自前で実装しない）
 - [`docs/evaluation-cases.md`](./docs/evaluation-cases.md) — プロンプト評価ゲートの土台となる評価ケースのcapture/実行/比較/昇格の境界
+- [`docs/deterministic-gate-foundation.md`](./docs/deterministic-gate-foundation.md) — 機械証拠の評価と回数制限付き復旧ポリシーのAPI
+- [`docs/deterministic-runtime.md`](./docs/deterministic-runtime.md) — opt-inのstrict実行、task連動acceptance、再開手順と隔離の限界
 - [`docs/packs.md`](./docs/packs.md) — packの作り方（`pack.yaml`/`compatibility.yaml`）とinit/validate/doctor/install/testコマンド
 - [`docs/pack-migration.md`](./docs/pack-migration.md) — 同梱packを独自リポジトリへ切り出し、named source 経由で installし直すまでの移行手順（送り手・受け手の両側）
 - [`docs/v3-architecture-design-brief.ja.md`](./docs/v3-architecture-design-brief.ja.md) — V3 アーキテクチャ設計ブリーフ。合意済みの内部再構成（能力レジストリ・ポート化・来歴の型付け）と移行順序

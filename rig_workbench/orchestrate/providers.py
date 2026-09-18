@@ -1793,8 +1793,11 @@ def _run_step_checks(step: dict, st: dict, cfg: dict | None = None) -> None:
     cwd = (cfg or {}).get("cwd") or str(config.INVOCATION_CWD)
     for index, cmd in enumerate(step["checks"], 1):
         observer = (cfg or {}).get("_progress_observer")
-        metadata = {"run_id": (cfg or {}).get("_progress_run_id"), "step_id": step["id"],
-                    "phase": "CHECK", "check_id": f"{step['id']}:{index}"}
+        # The check helper historically needs checks only. Optional observation
+        # must not make a step ID a prerequisite for executing those checks.
+        sid = step.get("id")
+        metadata = {"run_id": (cfg or {}).get("_progress_run_id"), "step_id": sid,
+                    "phase": "CHECK", "check_id": f"{sid}:{index}" if sid else str(index)}
         notify(observer, "operation_started", **metadata)
         with perf.timed(cfg or {}, "checks"):
             # noqa is permanent, same reason as `commands._run_checks`: `shell=True`

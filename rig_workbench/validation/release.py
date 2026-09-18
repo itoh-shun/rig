@@ -36,7 +36,7 @@ def check_release_metadata() -> None:
         _emit("PASS", f"release: plugin.json version ({version}) ⇄ CHANGELOG.md section match")
 
     # plugin.json is the release workflow's source of truth, but the pip package
-    # carries its own two copies of the version — keep all three in lockstep.
+    # and pack compatibility carry their own copies — keep all four in lockstep.
     others = {
         "pyproject.toml": re.search(
             r'^version\s*=\s*"([^"]+)"', (ROOT / "pyproject.toml").read_text(encoding="utf-8"),
@@ -44,6 +44,9 @@ def check_release_metadata() -> None:
         "rig_workbench/__init__.py": re.search(
             r'^__version__\s*=\s*"([^"]+)"',
             (ROOT / "rig_workbench" / "__init__.py").read_text(encoding="utf-8"), re.MULTILINE),
+        "rig_workbench/packs/model.py": re.search(
+            r'^ENGINE_VERSION\s*=\s*"([^"]+)"',
+            (ROOT / "rig_workbench" / "packs" / "model.py").read_text(encoding="utf-8"), re.MULTILINE),
     }
     for label, m in others.items():
         if m is None:

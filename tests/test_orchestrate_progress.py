@@ -161,3 +161,20 @@ def test_copyable_next_command_preserves_quoted_long_paths():
     line = out.lines[-1][1]
     assert line.split('next_command=', 1)[1] == command
     assert shlex.split(line.split('next_command=', 1)[1])[-1] == '--json'
+
+
+@pytest.mark.parametrize('observed', [False, True])
+def test_check_progress_keeps_legacy_idless_check_contract(observed):
+    from rig_workbench.orchestrate.providers import _run_step_checks
+    events = []
+    state = {}
+    cfg = {'_progress_observer': events.append} if observed else {}
+    _run_step_checks({'checks': ['true', 'false']}, state, cfg)
+    assert state['checks'] == [{'cmd': 'true', 'ok': True}, {'cmd': 'false', 'ok': False}]
+    if observed:
+        assert [event['event'] for event in events] == [
+            'operation_started', 'operation_finished', 'operation_started', 'operation_finished']
+        assert all('step_id' not in event for event in events)
+        assert {event['check_id'] for event in events} == {'1', '2'}
+    else:
+        assert events == []
