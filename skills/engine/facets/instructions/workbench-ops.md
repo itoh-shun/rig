@@ -618,7 +618,7 @@ python3 scripts/workbench.py instincts --mute <id> | --expire <id> | --decay | -
 
 **セッション横断の継続的instinct学習層（#306）**。`facets/knowledge`（検証済み知識のwiki）とは完全に別枠——ここに書くのは「このプロジェクトではこう書く」「ここはこう探索すると早い」のような、confidence つきの**未検証パターン**であり、知識層と混同しない。
 
-- **`--add`**：新しいinstinct候補を`.rig/instincts.jsonl`に記録する。secret・トークン・ローカル絶対パス（`/home/…`/`/Users/…`）・`ENV_VAR=value`風の代入・300字超のテキストは**却下**され、理由がそのまま表示される（黙って捨てない）。何を学ぶかの判断（今回のセッションで本当に再利用価値のあるパターンか）は完全にモデル自身の仕事——`hooks/suggest-instincts.sh`（Stop hook）は「提案を検討してください」と促すだけで、抽出そのものは行わない。ほとんどのセッションには提案すべきものが無い、という前提を崩さない。
+- **`--add`**：新しいinstinct候補を`.rig/instincts.jsonl`に記録する。secret・トークン・ローカル絶対パス（`/home/…`/`/Users/…`）・`ENV_VAR=value`風の代入・300字超のテキストは**却下**され、理由がそのまま表示される（黙って捨てない）。自動のStopリマインダーは廃止済み。ユーザーが明示的に記録を依頼した際に、今回のセッションで再利用価値のあるパターンかを確認して手動で記録する。`hooks/suggest-instincts.sh`は古い登録向けの無音互換shimで、終了をブロックしない。起動時の既存instinct注入は継続する。
 - **`--supersedes <old-id>`**：2つのinstinctが矛盾するという判断自体は人/モデルの仕事——このコマンドは**明示された**supersede関係を機械的にmuteするだけで、意味的な矛盾を自動検知しない。既存instinctが古くなった/誤りだったと判断したら必ずこれを使う。
 - **`--decay`**：`last_seen`が30日以上更新されていないactive instinctのconfidenceを0.1下げる。0.2を下回ればstatus=expired。暗黙知は放置すれば腐る、という前提を機械的に扱う——定期実行（例: digest やcron相当）が望ましいが必須ではない。
 - **`--inject-preview [--json]`**：次回セッション開始時に実際に注入される内容をプレビューする。confidence>=0.7のactive instinctのみ、合計500字までに収まる分だけ選ばれる（context-minimal原則）。`--json`は`hooks/inject-instincts.sh`（SessionStart hook）が機械的に読む形式で、人向けには使わない。

@@ -162,7 +162,6 @@ def _exercise_every_shared_command(data, *, project, transcript, env):
         "prompt_reminder": _command_for(
             data, "UserPromptSubmit", "remind-rig-header.sh"
         ),
-        "stop": _command_for(data, "Stop", "suggest-instincts.sh"),
     }
     assert len(_all_commands(data)) == len(commands)
     assert set(_all_commands(data)) == set(commands.values())
@@ -184,18 +183,6 @@ def _exercise_every_shared_command(data, *, project, transcript, env):
             env=env,
             input_text=json.dumps({"transcript_path": str(transcript)}),
         ),
-        "stop": _run_command(
-            commands["stop"],
-            cwd=project,
-            env=env,
-            input_text=json.dumps(
-                {
-                    "stop_hook_active": False,
-                    "session_id": "shared-hook-contract",
-                    "transcript_path": str(transcript),
-                }
-            ),
-        ),
     }
 
     _assert_context_output(
@@ -205,11 +192,6 @@ def _exercise_every_shared_command(data, *, project, transcript, env):
     _assert_context_output(
         results["prompt_reminder"], "UserPromptSubmit", "run-status header"
     )
-    assert results["stop"].returncode == 0, results["stop"].stderr
-    assert results["stop"].stderr == ""
-    stop_output = json.loads(results["stop"].stdout)
-    assert stop_output["decision"] == "block"
-    assert "[rig instincts]" in stop_output["reason"]
     return results["precompact"]
 
 
