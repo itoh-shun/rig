@@ -376,3 +376,53 @@ def test_manual_only_run_cannot_enter_strict_lane(prepared):
     with pytest.raises(ValueError, match="manual-only"):
         runtime.initialize(state, workspace, path.with_name("new.json"),
                            {"generator": "mock", "verifier": "mock"})
+
+
+def test_strict_progress_is_optional_and_does_not_change_frozen_contract(prepared, capsys):
+    state, path, _ = prepared
+    frozen = copy.deepcopy(state['deterministic_runtime']['definition'])
+    events = []
+    assert runtime.run_strict(state, path, observer=events.append) == 'DONE'
+    assert state['deterministic_runtime']['definition'] == frozen
+    assert any(e['event'] == 'operation_started' and e['phase'] == 'GENERATE' for e in events)
+    assert any(e['event'] == 'operation_finished' and e['outcome'] == 'PROCESS_EXITED' for e in events)
+    assert any(e['event'] == 'transition' and e['phase'] == 'DONE' for e in events)
+    assert all('output' not in event and 'command' not in event and 'prompt' not in event for event in events)
+    assert capsys.readouterr().out == ''
+
+
+def test_broken_strict_observer_does_not_change_result(prepared):
+    state, path, _ = prepared
+    def broken(event):
+        raise RuntimeError('UI disconnected')
+    assert runtime.run_strict(state, path, observer=broken) == 'DONE'
+
+
+def test_strict_failure_progress_separates_process_exit_from_gate_result(prepared):
+    state, path, _ = prepared
+    FakeIO.failing = 1
+    events = []
+    assert runtime.run_strict(state, path, observer=events.append) == 'DONE'
+    assert any(e.get('check_id') == 'implement:1' and e.get('outcome') == 'PROCESS_FAILED' for e in events)
+    assert any(e.get('phase') == 'DIAGNOSE' and e['event'] == 'transition' for e in events)
+    assert any(e.get('outcome') == 'MACHINE_GATE_PASSED' for e in events)
+
+
+def test_strict_default_has_no_progress_output(prepared, capsys):
+    state, path, _ = prepared
+    assert runtime.run_strict(state, path) == 'DONE'
+    capture = capsys.readouterr()
+    assert capture.out == capture.err == ''
+
+
+def test_observation_does_not_modify_persisted_workflow_state(prepared):
+    state, path, _ = prepared
+    initial = copy.deepcopy(state)
+    runtime.run_strict(state, path)
+    expected = copy.deepcopy(FakeIO.saved[str(path)])
+    FakeIO.saved[str(path)] = copy.deepcopy(initial)
+    FakeIO.content = 'initial'
+    observed = []
+    runtime.run_strict(initial, path, observer=observed.append)
+    assert observed
+    assert FakeIO.saved[str(path)] == expected

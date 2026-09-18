@@ -18,6 +18,7 @@ from ..ports.local import CONSOLE, OS_ENV, SUBPROCESS, SYSTEM_CLOCK
 from . import config
 from . import otel
 from . import perf
+from .progress import ProgressReporter, notify
 from .recipes import (_record_trust, auto_orchestrate, git_diff_lines, load_manifest,
                       load_steps, parse_frontmatter, resolve_effective, resolve_extends,
                       resolve_plan_json, resolve_recipe)
@@ -282,6 +283,111 @@ def _require_executable_recipe(fm: dict, label: str) -> dict:
     )
 
 
+def _progress_command(command):
+    """Opt-in observation around the entire command, including preparation."""
+    @wraps(command)
+    def observed(args, **kwargs):
+        # A goal or command whose literal value is --progress is not an option.
+        valued = {"--provider", "--verifier-provider", "--provider-cmd", "--model",
+                  "--timeout", "--goal", "--check", "--out", "--max-steps", "--deterministic-task",
+                  "--generators", "--verifier-providers", "--secure-provider-config", "--step-model",
+                  "--base-url", "--review-category", "--material-profile", "--max-parallel", "--quorum",
+                  "--auto-route-mode", "--exploration-pct", "--exploration-date", *_SECURE_PIN_FLAGS}
+        forwarded, enabled, index = [], False, 0
+        while index < len(args):
+            arg = args[index]
+            if arg in valued and index + 1 < len(args):
+                forwarded.extend(args[index:index + 2])
+                index += 2
+            elif arg == "--progress":
+                enabled = True
+                index += 1
+            else:
+                forwarded.append(arg)
+                index += 1
+        if not enabled:
+            return command(args, **kwargs)
+        reporter = ProgressReporter(out=kwargs.get("out", CONSOLE),
+                                    clock=kwargs.get("clock", SYSTEM_CLOCK))
+        with reporter.running():
+            notify(reporter, "run_started", phase="PREPARING")
+            return command(forwarded, observer=reporter, **kwargs)
+    return observed
+
+
+def _progress_summary(observer, state, path, final):
+    """A result projection, never a gate or a promise based on the exit code."""
+    if observer is None:
+        return
+    stopped = state.get("stopped") or {}
+    if state.get("done") and not stopped:
+        outcome = "DONE"
+    elif stopped:
+        outcome = stopped.get("kind") or "STOPPED"
+    elif final in ("AWAIT_APPROVAL", "BLOCKED", "ESCALATE", "AWAIT_DECISION", "WORLD_DRIFTED"):
+        outcome = final
+    else:
+        outcome = "INCOMPLETE"
+    strict = "deterministic_runtime" in state
+    next_action = ("inspect_results" if outcome == "DONE" else
+                   "await_approval" if outcome == "AWAIT_APPROVAL" else
+                   ("resume_strict" if strict else "continue_legacy_step") if outcome == "INCOMPLETE" else
+                   "inspect_and_decide")
+    isolation = state.get("isolation") or {}
+    worktree = isolation.get("dir") if isolation.get("outcome") not in ("merged", "clean-removed") else None
+    if strict:
+        worktree = state["deterministic_runtime"].get("workspace", worktree)
+    artifact = state.get("result_artifact") or {}
+    try:
+        source = SCRIPT_LOCATOR.find("orchestrate.py")
+    except (OSError, ValueError):
+        source = None
+    argv = ([sys.executable, str(source)] if source is not None else
+            [sys.executable, "-m", "rig_workbench.orchestrate.cli"])
+    argv += ["status", str(pathlib.Path(path).absolute()), "--json"]
+    next_command = ("& " + " ".join("'" + arg.replace("'", "''") + "'" for arg in argv)
+                    if os.name == "nt" else shlex.join(argv))
+    notify(observer, "run_finished", run_id=state.get("run_id"), outcome=outcome,
+           completed_steps=sum(st.get("status") == "passed" for st in state.get("step_state", {}).values()),
+           total_steps=len(state.get("steps", [])), state_path=str(pathlib.Path(path).absolute()),
+           worktree_path=worktree, result_path=artifact.get("path"), next_action=next_action, next_command=next_command)
+
+
+def _status_snapshot(state, path):
+    """Read-only bounded projection: saved state is not process liveness."""
+    steps = []
+    for step in state["steps"]:
+        saved = state["step_state"][step["id"]]
+        checks, verdicts = saved.get("checks", []), saved.get("verdicts", [])
+        steps.append({"id": step["id"], "status": saved["status"], "retries": saved["retries"],
+                      "checks": {"passed": sum(c.get("ok") is True for c in checks), "total": len(checks)},
+                      "verdicts": {"passed": sum(v.get("ok") is True for v in verdicts), "total": len(verdicts)}})
+    result = {"schema_version": 1, "snapshot": "last_saved", "process_liveness": "unknown",
+              "run_id": state.get("run_id"), "recipe": state["recipe"],
+              "state_path": str(pathlib.Path(path).absolute()), "cursor": state["cursor"],
+              "done": state["done"], "stopped": bool(state.get("stopped")),
+              "stop_kind": (state.get("stopped") or {}).get("kind"), "steps": steps}
+    runtime = state.get("deterministic_runtime")
+    if runtime is not None:
+        def evidence(bundle):
+            return [{k: record.get(k) for k in ("check_id", "status", "exit_code")}
+                    for record in (bundle or {}).get("evidence", [])]
+        result["strict"] = {"schema_version": runtime["schema_version"],
+                            "phase": runtime["phase"], "attempt": runtime["attempt"],
+                            "step_index": runtime.get("step_index", state["cursor"]),
+                            "evidence_freshness": "not_revalidated",
+                            "units": [{"id": sid, "recorded_events": len(unit.get("events", [])),
+                                       "failure_count": sum(e.get("kind") == "failure" for e in unit.get("events", [])),
+                                       "replan_count": sum(e.get("kind") == "replan" for e in unit.get("events", [])),
+                                       "evidence": evidence(unit.get("evidence"))}
+                                      for sid, unit in sorted(runtime.get("units", {}).items())],
+                            "final_evidence": evidence(runtime.get("final_evidence"))}
+    return result
+
+
+
+
+
 def cmd_plan(args, *, out: Presenter = CONSOLE):
     path = resolve_recipe(args[0])
     with_flags: list[str] | None = None
@@ -518,8 +624,9 @@ def _fmt_duration(seconds: float) -> str:
 
 
 @_reports_refusals
+@_progress_command
 @_locked_secure_state_mutation(_state_path)
-def cmd_resume(args, *, out: Presenter = CONSOLE, clock: Clock = SYSTEM_CLOCK):
+def cmd_resume(args, *, out: Presenter = CONSOLE, clock: Clock = SYSTEM_CLOCK, observer=None):
     """Verify-first resume ritual (session-startup ritual for long-running agents).
 
     Re-verifies the world before continuing a persisted run: prints a compact digest,
@@ -533,9 +640,10 @@ def cmd_resume(args, *, out: Presenter = CONSOLE, clock: Clock = SYSTEM_CLOCK):
     if "deterministic_runtime" in state:
         from .deterministic_runtime import resume_strict
         try:
-            final = resume_strict(sp)
+            final = resume_strict(sp, **({"observer": observer} if observer is not None else {}))
         except (ValueError, OSError, RuntimeError) as error:
             raise Refusal([f"[BLOCKED] deterministic resume: {error}"], code=2) from error
+        _progress_summary(observer, _read_state(sp), sp, final)
         out.out(f"=== Finished: {final} === run-state: {sp}")
         raise SystemExit(0 if final == "DONE" else 1)
     _refuse_blocked_state(state)
@@ -575,7 +683,10 @@ def cmd_resume(args, *, out: Presenter = CONSOLE, clock: Clock = SYSTEM_CLOCK):
         out.out(f"## re-verify: re-running {len(step['checks'])} machine check(s) for "
                 f"current step `{step['id']}`")
         prior = {c["cmd"]: c["ok"] for c in st["checks"]}
+        notify(observer, "operation_started", run_id=state.get("run_id"), step_id=step["id"], phase="CHECK")
         results = _run_checks(step["checks"])
+        notify(observer, "operation_finished", run_id=state.get("run_id"), step_id=step["id"], phase="CHECK",
+               outcome="PASS" if all(r["ok"] for r in results) else "FAIL")
         drifted = []
         for r in results:
             note = ""
@@ -590,12 +701,15 @@ def cmd_resume(args, *, out: Presenter = CONSOLE, clock: Clock = SYSTEM_CLOCK):
             out.out(f"✗ WORLD DRIFTED: {len(drifted)} previously-passing check(s) now fail. "
                     f"The recorded state is stale — REFUSING to advance. Re-run step "
                     f"`{step['id']}` before continuing.")
+            _progress_summary(observer, state, sp, "WORLD_DRIFTED")
             sys.exit(1)
         out.out("✓ world still matches the recorded state.")
 
     # ── Continue seamlessly (identical to `next`) ────────────────────────────
     action, msg = compute_next(state)
     save_state(state, sp)
+    notify(observer, "transition", run_id=state.get("run_id"), outcome=action)
+    _progress_summary(observer, state, sp, action)
     out.out(f"▶ {action}: {msg}")
     if action == "ESCALATE":
         sys.exit(1)
@@ -698,8 +812,29 @@ def cmd_next(args, *, out: Presenter = CONSOLE):
 
 @_reports_refusals
 def cmd_status(args, *, out: Presenter = CONSOLE):
-    sp = _state_path(args)
+    positional = [arg for arg in args if arg != "--json"]
+    sp = _state_path(positional)
     state = _read_state(sp)
+    if "--json" in args:
+        out.out(json.dumps(_status_snapshot(state, sp), ensure_ascii=True, sort_keys=True))
+        return
+    if "deterministic_runtime" in state:
+        snapshot = _status_snapshot(state, sp)
+        runtime = snapshot["strict"]
+        out.out(f"Saved strict phase={runtime['phase']} attempt={runtime['attempt']} "
+                f"step_index={runtime['step_index']} "
+                "(last saved snapshot; process liveness unknown; evidence not revalidated)")
+        for unit in runtime["units"]:
+            records = unit["evidence"]
+            passed = sum(record["status"] == "PASS" for record in records)
+            out.out(f"  {unit['id']}: recorded evidence PASS {passed}/{len(records)} "
+                    f"failures={unit['failure_count']} replans={unit['replan_count']}")
+        records = runtime["final_evidence"]
+        passed = sum(record["status"] == "PASS" for record in records)
+        out.out(f"  final: recorded evidence PASS {passed}/{len(records)}")
+        if snapshot["stop_kind"]:
+            out.out(f"  stop_kind={snapshot['stop_kind']}")
+        return
     out.out(f"## run: {state['recipe']}  cursor={state['cursor']}/{len(state['steps'])}  "
             f"done={state['done']}  stopped={bool(state['stopped'])}")
     for s in state["steps"]:
@@ -850,7 +985,8 @@ def _git_head(*, proc: ProcessRunner = SUBPROCESS) -> str | None:
     return result.stdout.strip() or None if result.returncode == 0 else None
 
 @_reports_refusals
-def cmd_run(args, *, out: Presenter = CONSOLE, env: Env = OS_ENV):
+@_progress_command
+def cmd_run(args, *, out: Presenter = CONSOLE, env: Env = OS_ENV, observer=None):
     if not args:
         out.out("[ERROR] usage: run <recipe> --provider <name> [--verifier-provider <name>] "
                 "[--provider-cmd \"...{prompt}...\"] [--step-model <step-id>=<model>] "
@@ -862,7 +998,7 @@ def cmd_run(args, *, out: Presenter = CONSOLE, env: Env = OS_ENV):
                 "[--max-steps N] [--goal G | --goal-stdin] [--check command] "
                 "[--review-category general|incident_report|support_reply] "
                 "[--material-profile none|technical|conversation] "
-                "[--out f] [--timeout seconds] [--isolate] [--auto-route] "
+                "[--out f] [--timeout seconds] [--isolate] [--progress] [--auto-route] "
                 "[--auto-route-learn [--auto-route-mode shadow|active] [--exploration-pct N] [--exploration-date D]]")
         sys.exit(1)
     strict = "--deterministic" in args or "--deterministic-task" in args
@@ -1301,13 +1437,13 @@ def cmd_run(args, *, out: Presenter = CONSOLE, env: Env = OS_ENV):
                     provider_config = {"generator": gen, "verifier": ver,
                                        **{k: cfg[k] for k in ("provider_cmd", "model", "timeout") if k in cfg}}
                     initialize(state, pathlib.Path(cfg["cwd"]), out_path, provider_config)
-                    final = run_loop(state, out_path, gen, ver, cfg, max_steps)
+                    final = run_loop(state, out_path, gen, ver, cfg, max_steps, **({"observer": observer} if observer is not None else {}))
             except (ValueError, OSError, RuntimeError) as error:
                 raise Refusal([f"[BLOCKED] deterministic run: {error}"], code=2) from error
         else:
             final = run_loop(state, out_path, gen, ver, cfg, max_steps,
                              max_parallel=max_parallel, quorum=quorum,
-                             generators=(generators or None), quiet=artifact_stdout)
+                             generators=(generators or None), quiet=artifact_stdout, **({"observer": observer} if observer is not None else {}))
         if iso and strict:
             diagnostic(f"◈ Strict worktree preserved for review: {iso['dir']}")
         if iso and not strict:
@@ -1334,6 +1470,7 @@ def cmd_run(args, *, out: Presenter = CONSOLE, env: Env = OS_ENV):
                     diagnostic("[ERROR] completed deliverable cannot be read safely")
                     sys.exit(1)
                 sys.stdout.write(content)
+        _progress_summary(observer, state, out_path, final)
         if final == "AWAIT_APPROVAL":
             # Parked on a person, not failed. A distinct code so CI can tell "waiting for
             # sign-off" from "the run broke" — reporting either as the other is wrong.

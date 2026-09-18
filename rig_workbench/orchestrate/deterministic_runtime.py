@@ -23,6 +23,7 @@ import sys
 from .deterministic_io import StrictIO
 from .gate_evidence import CheckEvidence, EvidenceContext, RequiredCheck, evaluate_gate
 from .recovery_policy import FailureEvent, ReplanEvent, RecoveryLimits, decide_recovery
+from .progress import notify
 
 _LIMITS = asdict(RecoveryLimits())
 _TERMINAL = {"DONE", "BLOCKED", "AWAIT_DECISION", "ESCALATE", "DESIGN", "REQUIREMENTS"}
@@ -237,13 +238,21 @@ def initialize(state: dict, workspace: Path, state_path: Path, provider_config: 
         io.save(state)
 
 
-def _stop(state, io, action, reason):
+def _progress(state, observer, event, **metadata):
+    rt = state["deterministic_runtime"]
+    notify(observer, event, **{"run_id": state["run_id"],
+           "step_id": state["steps"][rt["step_index"]]["id"], "attempt": rt["attempt"],
+           "phase": rt["phase"], **metadata})
+
+
+def _stop(state, io, action, reason, observer=None):
     rt = state["deterministic_runtime"]
     rt["phase"] = action
     state["done"] = False
     state["stopped"] = {"kind": action, "reason": reason,
                         "at": state["steps"][rt["step_index"]]["id"]}
     io.save(state)
+    _progress(state, observer, "transition", outcome=action)
     return action
 
 
@@ -296,7 +305,7 @@ def _provider_argv(provider, role, cfg):
     return argv
 
 
-def _provider(state, io, operation, payload, writable=False):
+def _provider(state, io, operation, payload, writable=False, observer=None):
     rt = state["deterministic_runtime"]
     cfg = rt["provider_config"]
     role = "generator" if writable else "verifier"
@@ -309,9 +318,15 @@ def _provider(state, io, operation, payload, writable=False):
     before = io.snapshot()
     argv = _provider_argv(provider, role, cfg)
     argv[0] = rt["resolved_executables"][provider]
-    result = io.run(argv, input=json.dumps(request),
-                    timeout=cfg.get("timeout", 600), writable=writable,
-                    network=provider in ("codex", "claude"))
+    _progress(state, observer, "operation_started", phase=operation, provider=provider, role=role)
+    outcome = "PROCESS_INTERRUPTED"
+    try:
+        result = io.run(argv, input=json.dumps(request),
+                        timeout=cfg.get("timeout", 600), writable=writable,
+                        network=provider in ("codex", "claude"))
+        outcome = "PROCESS_EXITED" if result.returncode == 0 else "PROCESS_FAILED"
+    finally:
+        _progress(state, observer, "operation_finished", phase=operation, provider=provider, role=role, outcome=outcome)
     output = _record(state, operation, result)
     if not writable and io.snapshot() != before:
         raise ValueError("read-only provider changed verification subject")
@@ -328,7 +343,7 @@ def _context(state, subject, final=False):
                                   "provider_config": rt["provider_config"]}))
 
 
-def _run_checks(state, io, final=False):
+def _run_checks(state, io, final=False, observer=None):
     rt = state["deterministic_runtime"]
     phase = "FINAL_CHECK" if final else "CHECK"
     steps = state["steps"] if final else [state["steps"][rt["step_index"]]]
@@ -338,10 +353,14 @@ def _run_checks(state, io, final=False):
     context = _context(state, subject, final)
     evidence, outputs, errors = [], [], []
     for check_id, command in declared:
+        metadata = {"phase": phase, "step_id": check_id.rsplit(":", 1)[0], "check_id": check_id}
+        _progress(state, observer, "operation_started", **metadata)
+        outcome = "PROCESS_INTERRUPTED"
         try:
             result = io.run(["/bin/sh", "-c", command], timeout=rt["provider_config"].get("timeout", 600),
                             writable=False, network=False)
             output = _record(state, check_id, result)
+            outcome = "PROCESS_EXITED" if result.returncode == 0 else "PROCESS_FAILED"
             status = "PASS" if result.returncode == 0 else "FAIL"
             if result.returncode in (126, 127):
                 # Shell cannot execute/find a command. Intentional use of these
@@ -352,6 +371,8 @@ def _run_checks(state, io, final=False):
             output = {"stdout": "", "stderr": type(error).__name__, "exit_code": None}
             errors.append(check_id)
             status = "UNKNOWN"
+        finally:
+            _progress(state, observer, "operation_finished", **metadata, outcome=outcome)
         outputs.append({"check_id": check_id, "output": output})
         evidence.append(CheckEvidence(context, check_id, _hash(command), status,
                                       output["exit_code"], _hash(output)))
@@ -427,7 +448,7 @@ def _validate_review(output, criteria):
         raise ValueError("missing verifier criteria")
 
 
-def _verify(state, io, final):
+def _verify(state, io, final, observer=None):
     rt = state["deterministic_runtime"]
     steps = state["steps"] if final else [state["steps"][rt["step_index"]]]
     bundle = rt["final_evidence"] if final else rt["units"][steps[0]["id"]]["evidence"]
@@ -436,7 +457,7 @@ def _verify(state, io, final):
     criteria = _criteria(steps)
     output = _provider(state, io, "FINAL_VERIFY" if final else "VERIFY",
                        {"steps": steps, "criteria": criteria, "criteria_ids": [cid for cid, _ in criteria],
-                        "response_schema": {"status": "PASS|FAIL|UNKNOWN", "criteria": [{"id": "exact ID", "status": "PASS|FAIL|UNKNOWN"}]}})
+                        "response_schema": {"status": "PASS|FAIL|UNKNOWN", "criteria": [{"id": "exact ID", "status": "PASS|FAIL|UNKNOWN"}]}}, observer=observer)
     _validate_review(output, criteria)
     receipt = {"subject_digest": io.snapshot(), "output": output, "artifact_digest": _hash(output)}
     if final:
@@ -485,7 +506,7 @@ def _done(state, io):
     io.save(state)
 
 
-def run_strict(state: dict, state_path: Path, *, max_steps: int = 40) -> str:
+def run_strict(state: dict, state_path: Path, *, max_steps: int = 40, observer=None) -> str:
     """Execute bounded persisted phases. A bounded pause is resumable, not success."""
     validate_state(state)
     if type(max_steps) is not int or max_steps < 1:
@@ -507,32 +528,35 @@ def run_strict(state: dict, state_path: Path, *, max_steps: int = 40) -> str:
             validate_state(state)
             phase = rt["phase"]
             if phase.endswith("_INFLIGHT"):
-                return _stop(state, io, "BLOCKED", "interrupted operation has no completion receipt; refusing duplicate execution")
+                return _stop(state, io, "BLOCKED", "interrupted operation has no completion receipt; refusing duplicate execution", observer)
             if phase in _TERMINAL:
                 if phase == "DONE":
                     try:
                         _validate_final_evidence(state, io)
                     except (ValueError, OSError) as error:
-                        return _stop(state, io, "BLOCKED", str(error))
+                        return _stop(state, io, "BLOCKED", str(error), observer)
+                _progress(state, observer, "transition", outcome=phase)
                 return phase
             step = state["steps"][rt["step_index"]]
             unit = rt["units"][step["id"]]
+            transition_outcome = "READY"
             try:
                 if phase == "GENERATE":
-                    _provider(state, io, phase, {"step": step, "plan": unit["plan"], "diagnosis": unit["diagnosis"]}, writable=True)
+                    _provider(state, io, phase, {"step": step, "plan": unit["plan"], "diagnosis": unit["diagnosis"]}, writable=True, observer=observer)
                     state["step_state"][step["id"]]["status"] = "running"
                     rt["phase"] = "CHECK"
                 elif phase in ("CHECK", "FINAL_CHECK"):
                     final = phase == "FINAL_CHECK"
-                    passed, failed, errors = _run_checks(state, io, final)
+                    passed, failed, errors = _run_checks(state, io, final, observer)
+                    transition_outcome = "MACHINE_GATE_PASSED" if passed else "MACHINE_GATE_FAILED"
                     if not passed:
                         if final:
                             if len(state["steps"]) != 1:
-                                return _stop(state, io, "AWAIT_DECISION", "integration regression scope requires a decision")
+                                return _stop(state, io, "AWAIT_DECISION", "integration regression scope requires a decision", observer)
                             unit["evidence"] = rt["final_evidence"]
                         action = _failed(state, failed, errors)
                         if action not in ("REPAIR", "REPLAN"):
-                            return _stop(state, io, action, "recovery policy: " + action)
+                            return _stop(state, io, action, "recovery policy: " + action, observer)
                         rt["phase"] = "DIAGNOSE" if action == "REPAIR" else "REPLAN"
                     elif final:
                         if any(s.get("gate") for s in state["steps"]):
@@ -548,7 +572,7 @@ def run_strict(state: dict, state_path: Path, *, max_steps: int = 40) -> str:
                     output = _provider(state, io, phase, {**failure, "previous_plan": unit["plan"],
                         "response_schema": {"failure_id": "exact ID", "failed_check_ids": ["all failed IDs"],
                         "hypothesis": "nonempty", "changes": ["concrete changes"],
-                        "verification_checks": ["all failed IDs"], **({"plan": "changed plan"} if phase == "REPLAN" else {})}})
+                        "verification_checks": ["all failed IDs"], **({"plan": "changed plan"} if phase == "REPLAN" else {})}}, observer=observer)
                     try:
                         proposal = _diagnosis(output, failure, phase == "REPLAN")
                         if phase == "REPLAN":
@@ -562,21 +586,24 @@ def run_strict(state: dict, state_path: Path, *, max_steps: int = 40) -> str:
                             unit["events"].append({"kind": "replan", **asdict(ReplanEvent(len(unit["events"]) + 1, failure["failure_id"]))})
                         unit["diagnosis"] = proposal
                     except (ValueError, TypeError) as error:
-                        return _stop(state, io, "AWAIT_DECISION", str(error))
+                        return _stop(state, io, "AWAIT_DECISION", str(error), observer)
+                    transition_outcome = "PLAN_ACCEPTED" if phase == "REPLAN" else "DIAGNOSIS_ACCEPTED"
                     rt["attempt"] += 1
                     rt["phase"] = "GENERATE"
                 elif phase in ("VERIFY", "FINAL_VERIFY"):
                     try:
-                        _verify(state, io, phase == "FINAL_VERIFY")
+                        _verify(state, io, phase == "FINAL_VERIFY", observer)
                     except ValueError as error:
-                        return _stop(state, io, "AWAIT_DECISION", str(error))
+                        return _stop(state, io, "AWAIT_DECISION", str(error), observer)
+                    transition_outcome = "INDEPENDENT_REVIEW_PASSED"
                     if phase == "FINAL_VERIFY":
                         _done(state, io)
                     else:
                         _next_step(state)
                 io.save(state)
+                _progress(state, observer, "transition", outcome=transition_outcome)
             except (OSError, subprocess.TimeoutExpired, ValueError) as error:
-                return _stop(state, io, "BLOCKED", type(error).__name__ + ": " + str(error))
+                return _stop(state, io, "BLOCKED", type(error).__name__ + ": " + str(error), observer)
         return rt["phase"] if rt["phase"] in _TERMINAL else "PAUSED"
 
 
@@ -585,14 +612,14 @@ def _load_state(state_path):
     return load_state(Path(state_path))
 
 
-def resume_strict(state_path: Path, max_steps: int = 40) -> str:
+def resume_strict(state_path: Path, max_steps: int = 40, *, observer=None) -> str:
     # The state loader itself enforces the protected state boundary before the
     # workspace is trusted. A placeholder workspace is not used to execute.
     from .deterministic_binding import resumed_task
     state = _load_state(state_path)
     validate_state(state)
     with resumed_task(state, state_path):
-        return run_strict(state, Path(state_path), max_steps=max_steps)
+        return run_strict(state, Path(state_path), max_steps=max_steps, observer=observer)
 
 
 def validate_acceptance(state_path: Path, workspace: Path) -> None:

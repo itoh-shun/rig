@@ -1197,8 +1197,9 @@ def test_run_state_and_new_run_directory_are_owner_only(tmp_path):
     assert "user@example.com" in path.read_text(encoding="utf-8")
 
 
+@pytest.mark.parametrize("progress", [False, True])
 def test_cmd_run_displays_the_completed_japanese_deliverable(
-    tmp_path, monkeypatch, capsys,
+    tmp_path, monkeypatch, capsys, progress,
 ):
     from rig_workbench.orchestrate import commands
 
@@ -1219,12 +1220,14 @@ def test_cmd_run_displays_the_completed_japanese_deliverable(
             "path": str(artifact), "sha256": digest, "bytes": len(artifact.read_bytes()),
             "provider": gen, "model": cfg.get("model"),
         }
+        state["done"] = True
         return "DONE"
 
     monkeypatch.setattr(commands, "run_loop", fake_run_loop)
     with pytest.raises(SystemExit) as exited:
         commands.cmd_run([
             str(recipe), "--provider", "mock", "--out", str(tmp_path / "run-state.json"),
+            *(["--progress"] if progress else []),
         ])
 
     assert exited.value.code == 0
@@ -1232,6 +1235,8 @@ def test_cmd_run_displays_the_completed_japanese_deliverable(
     assert captured.out == content
     assert f"deliverable: {artifact}" in captured.err
     assert content not in captured.err
+
+    assert ("run_finished" in captured.err) is progress
 
 
 @pytest.mark.parametrize("recipe_name", ["japanese-writing", "japanese-writing-revision"])
