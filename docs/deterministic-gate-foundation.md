@@ -1,6 +1,6 @@
 # Deterministic gate foundation
 
-The first stage of the [flow design](superpowers/specs/2026-09-18-deterministic-flow-design.md) provides two pure Python APIs for evaluating check evidence and choosing recovery actions. The [opt-in deterministic runtime](deterministic-runtime.md) now connects these APIs to execution and task acceptance. Legacy runs retain their behavior. Neither waterfall nor iterative mode is executable yet.
+The first stage of the [flow design](superpowers/specs/2026-09-18-deterministic-flow-design.md) provides two pure Python APIs for evaluating check evidence and choosing recovery actions. The [opt-in deterministic runtime](deterministic-runtime.md) connects these APIs to execution and task acceptance. [Explicit lifecycle modes](lifecycle-modes.md) add upstream waterfall/iterative gates. Legacy runs retain their behavior.
 
 ## Evaluate machine evidence
 
@@ -65,4 +65,4 @@ The classification and stable identity components must come from a runner-owned 
 
 The focused tests exercise exact evidence binding, false-pass attempts, permutation invariance, malformed values, failure identity, transition legality and lifetime bounds. Existing retry-feedback, development-loop and layering tests check that this foundation respects the current package boundaries. Tests run under Linux/WSL because the existing test bootstrap imports POSIX `fcntl`; no shim is added to imply Windows runtime support.
 
-Stage 2 must connect the APIs to the runner, snapshot collection, protected event persistence, actual repair/replan execution, resume, and `accept`. Stage 3 adds upstream requirements/design contracts and the two modes, including integration checks for iterative work. Stage 4 measures outcomes on fixed and held-out tasks. Unit tests for these APIs do not establish completion of those stages.
+Stage 2 connects the APIs to the runner, snapshot collection, protected event persistence, actual repair/replan execution, resume, and `accept`. Stage 3 adds upstream requirements/design contracts and the two explicit lifecycle modes, including integration checks. Those integrations have their own runtime and CLI tests; unit tests for the pure APIs alone do not establish them. Stage 4 outcome measurement on fixed and held-out tasks remains separate and is not established by these tests.

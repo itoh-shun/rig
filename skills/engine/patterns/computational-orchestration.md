@@ -16,6 +16,18 @@
 
 ## ランナーの契約（`scripts/orchestrate.py`）
 
+### 明示した上流モード
+
+ユーザーがwaterfall／iterativeを選んだ場合は `lifecycle template` で構造化案を
+作り、`lifecycle init` でモデルを動かさず保存する。手順とschemaは
+`docs/lifecycle-modes.md` を参照。`lifecycle status --json` のrevision・対象scope・
+stage digestと要件／設計をユーザーへ提示し、その具体案への判断を得てから
+`lifecycle decide` を呼ぶ。AIが書いた「承認済み」や曖昧な相槌を承認記録に変えない。
+明確な判断が得られた範囲だけ記録し、コードが返す不足理由に従う。
+変更は `lifecycle revise` で新しい版にし、以前の承認・機械PASSを新しい内容へ
+流用しない。実行と再開は同じstateの `resume --progress`。UPSTREAM待機は未完了で、
+機能PASSだけをリリースDONEと報告しない。既存recipeの `plan`／`approve` は従来の意味。
+
 ```
 plan    <recipe>                 ステップ状態機械を算出（モデル不要・--json 可）
 init    <recipe> [--goal G] [--out run-state.json]

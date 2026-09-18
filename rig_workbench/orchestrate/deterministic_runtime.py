@@ -24,6 +24,8 @@ from .deterministic_io import StrictIO
 from .gate_evidence import CheckEvidence, EvidenceContext, RequiredCheck, evaluate_gate
 from .recovery_policy import FailureEvent, ReplanEvent, RecoveryLimits, decide_recovery
 from .progress import notify
+from . import lifecycle_runtime as lifecycle
+from .lifecycle_policy import compile_steps, decision_digest, plan_digest, affected_units
 
 _LIMITS = asdict(RecoveryLimits())
 _TERMINAL = {"DONE", "BLOCKED", "AWAIT_DECISION", "ESCALATE", "DESIGN", "REQUIREMENTS"}
@@ -45,10 +47,12 @@ def _definition(state, runtime):
             "binding": state.get("deterministic_binding"), "workspace": runtime["workspace"],
             "state_path": runtime["state_path"], "provider_config": runtime["provider_config"],
             "resolved_executables": runtime["resolved_executables"],
-            "limits": runtime["limits"]}
+            "limits": runtime["limits"], **({"lifecycle": {
+                "plan": runtime['lifecycle']['plan'], "revision": runtime['lifecycle']['revision']}}
+                if runtime.get('schema_version') == 2 else {})}
 
 
-def _validate_contract(state, cfg):
+def _validate_contract(state, cfg, allow_draft=False):
     if state.get("no_orchestrate") or (isinstance(state.get("execution"), dict)
                                        and state["execution"].get("orchestratable") is False):
         raise ValueError("manual-only or nonexecutable run cannot enter strict execution")
@@ -80,7 +84,7 @@ def _validate_contract(state, cfg):
         if step.get("human_gate") or step.get("gate") not in (None, "", "acceptance-gate", "review-gate"):
             raise ValueError("unsupported strict gate")
         checks = step.get("checks")
-        if type(checks) is not list or not checks or not all(_text(c) for c in checks):
+        if type(checks) is not list or (not checks and not allow_draft) or not all(_text(c) for c in checks):
             raise ValueError("each strict step requires nonempty machine checks")
         if len(set(checks)) != len(checks):
             raise ValueError("duplicate check definitions")
@@ -123,9 +127,17 @@ def validate_state(state: dict) -> None:
     """Validate frozen contract and bounded state without performing I/O."""
     try:
         rt = state["deterministic_runtime"]
-        if type(rt) is not dict or type(rt.get("schema_version")) is not int or rt["schema_version"] != 1:
+        if type(rt) is not dict or type(rt.get("schema_version")) is not int or rt["schema_version"] not in (1, 2):
             raise ValueError("unsupported deterministic runtime schema")
-        _validate_contract(state, rt["provider_config"])
+        if rt['schema_version'] == 2:
+            if type(state.get('lifecycle_schema_version')) is not int or state['lifecycle_schema_version'] != 1:
+                raise ValueError('missing lifecycle run marker')
+            lifecycle.validate_lifecycle(state, rt)
+            if rt.get('immutable_definition_digest') != _hash(lifecycle.immutable_definition(state, rt)):
+                raise ValueError('immutable lifecycle run identity changed')
+        elif 'lifecycle_schema_version' in state or 'lifecycle' in rt:
+            raise ValueError('lifecycle runtime downgrade refused')
+        _validate_contract(state, rt["provider_config"], rt['schema_version'] == 2)
         if type(rt["limits"]) is not dict or rt["limits"] != _LIMITS or any(type(v) is not int for v in rt["limits"].values()):
             raise ValueError("strict recovery limits changed")
         if rt["definition_digest"] != _hash(_definition(state, rt)):
@@ -133,7 +145,7 @@ def validate_state(state: dict) -> None:
         if rt["definition"] != _definition(state, rt):
             raise ValueError("strict definition does not match run")
         phase = rt["phase"]
-        if type(phase) is not str or phase not in _PHASES | _TERMINAL | {p + "_INFLIGHT" for p in _PHASES}:
+        if type(phase) is not str or phase not in _PHASES | _TERMINAL | ({'UPSTREAM'} if rt['schema_version'] == 2 else set()) | {p + "_INFLIGHT" for p in _PHASES}:
             raise ValueError("unknown strict runtime phase")
         if type(rt["step_index"]) is not int or not 0 <= rt["step_index"] < len(state["steps"]):
             raise ValueError("invalid strict step index")
@@ -181,11 +193,14 @@ def validate_state(state: dict) -> None:
         raise ValueError("malformed deterministic runtime state") from error
 
 
-def initialize(state: dict, workspace: Path, state_path: Path, provider_config: dict) -> None:
+def initialize(state: dict, workspace: Path, state_path: Path, provider_config: dict, lifecycle_plan=None) -> None:
     """Freeze an explicit strict run before any provider is called."""
     if "deterministic_runtime" in state:
         raise ValueError("strict runtime is already initialized")
-    _validate_contract(state, provider_config)
+    if lifecycle_plan is not None:
+        if state['steps'] != compile_steps(lifecycle_plan) or state.get('goal') != lifecycle_plan['objective']:
+            raise ValueError('initial lifecycle compilation mismatch')
+    _validate_contract(state, provider_config, lifecycle_plan is not None)
     if state.get("done") or state.get("stopped"):
         raise ValueError("cannot initialize a completed or stopped run")
     workspace, state_path = Path(workspace).resolve(), Path(state_path).absolute()
@@ -222,6 +237,12 @@ def initialize(state: dict, workspace: Path, state_path: Path, provider_config: 
                     and (candidate.is_file() or "/" in argument or candidate.suffix in (".py", ".js", ".sh", ".mjs", ".cjs"))):
                 raise ValueError("provider command files must be outside writable workspace")
     rt["resolved_executables"] = resolved
+    if lifecycle_plan is not None:
+        rt.update(schema_version=2, phase='UPSTREAM', upstream_resume_phase='GENERATE',
+                  lifecycle={'schema_version': 1, 'revision': 1, 'plan': copy.deepcopy(lifecycle_plan),
+                             'decisions': [], 'changes': []})
+        state['lifecycle_schema_version'] = 1
+        rt['immutable_definition_digest'] = _hash(lifecycle.immutable_definition(state, rt))
     rt["definition"] = copy.deepcopy(_definition(state, rt))
     rt["definition_digest"] = _hash(rt["definition"])
     state["deterministic_runtime"] = rt
@@ -313,7 +334,8 @@ def _provider(state, io, operation, payload, writable=False, observer=None):
     provider = cfg["generator"] if operation in ("GENERATE", "DIAGNOSE", "REPLAN") else cfg["verifier"]
     request = {"operation": operation, "goal": state.get("goal"), "attempt": rt["attempt"],
                "instruction": "Return only the requested JSON for diagnosis/planning/review. "
-                              "For GENERATE edit the workspace according to the fixed contract.", **payload}
+                              "For GENERATE edit the workspace according to the fixed contract.",
+               **lifecycle.context(state), **payload}
     _begin(state, io, operation)
     before = io.snapshot()
     argv = _provider_argv(provider, role, cfg)
@@ -345,9 +367,11 @@ def _context(state, subject, final=False):
 
 def _run_checks(state, io, final=False, observer=None):
     rt = state["deterministic_runtime"]
+    if final and rt.get('lifecycle'):
+        _archive_final(rt)
     phase = "FINAL_CHECK" if final else "CHECK"
     steps = state["steps"] if final else [state["steps"][rt["step_index"]]]
-    declared = _checks(steps)
+    declared = _checks(steps) + (lifecycle.final_checks(state) if final else [])
     _begin(state, io, phase)
     subject = io.snapshot()
     context = _context(state, subject, final)
@@ -470,10 +494,12 @@ def _next_step(state):
     rt = state["deterministic_runtime"]
     sid = state["steps"][rt["step_index"]]["id"]
     state["step_state"][sid]["status"] = "passed"
-    if rt["step_index"] + 1 < len(state["steps"]):
-        rt["step_index"] += 1
+    pending = [index for index, step in enumerate(state['steps'])
+               if state['step_state'][step['id']]['status'] != 'passed']
+    if pending:
+        rt["step_index"] = pending[0]
         rt["attempt"] += 1
-        rt["phase"] = "GENERATE"
+        rt["phase"] = rt['units'][state['steps'][pending[0]]['id']].pop('resume_phase', 'GENERATE')
     else:
         rt["phase"] = "FINAL_CHECK"
 
@@ -537,12 +563,25 @@ def run_strict(state: dict, state_path: Path, *, max_steps: int = 40, observer=N
                         return _stop(state, io, "BLOCKED", str(error), observer)
                 _progress(state, observer, "transition", outcome=phase)
                 return phase
+            if rt.get('lifecycle'):
+                target_phase = rt.get('upstream_resume_phase') if phase == 'UPSTREAM' else phase
+                readiness = lifecycle.ready(state, target_phase in ('FINAL_CHECK', 'FINAL_VERIFY'))
+                if not readiness['allowed']:
+                    rt.update(phase='UPSTREAM', upstream_resume_phase=target_phase,
+                              upstream_reasons=readiness['reasons'])
+                    io.save(state)
+                    _progress(state, observer, 'transition', outcome='UPSTREAM')
+                    return 'UPSTREAM'
+                if phase == 'UPSTREAM':
+                    rt['phase'] = phase = target_phase
+                    rt.pop('upstream_reasons', None)
+                    io.save(state)
             step = state["steps"][rt["step_index"]]
             unit = rt["units"][step["id"]]
             transition_outcome = "READY"
             try:
                 if phase == "GENERATE":
-                    _provider(state, io, phase, {"step": step, "plan": unit["plan"], "diagnosis": unit["diagnosis"]}, writable=True, observer=observer)
+                    _provider(state, io, phase, {"step": step, "plan": unit["plan"], "diagnosis": unit["diagnosis"], **lifecycle.context(state)}, writable=True, observer=observer)
                     state["step_state"][step["id"]]["status"] = "running"
                     rt["phase"] = "CHECK"
                 elif phase in ("CHECK", "FINAL_CHECK"):
@@ -639,6 +678,8 @@ def validate_acceptance(state_path: Path, workspace: Path) -> None:
 
 def _validate_final_evidence(state, io):
     rt = state["deterministic_runtime"]
+    if rt.get('lifecycle') and not lifecycle.ready(state, True)['allowed']:
+        raise ValueError('current lifecycle approvals or completions are missing')
     subject = io.snapshot()
     bundle = rt.get("final_evidence")
     if type(bundle) is not dict:
@@ -663,7 +704,7 @@ def _validate_final_evidence(state, io):
                     or record["exit_code"] != output["exit_code"]):
                 raise ValueError("evidence artifact changed")
             evidence.append(CheckEvidence(**{**record, "context": EvidenceContext(**record["context"])}))
-        required = tuple(RequiredCheck(cid, _hash(cmd)) for cid, cmd in _checks(state["steps"]))
+        required = tuple(RequiredCheck(cid, _hash(cmd)) for cid, cmd in _checks(state["steps"]) + lifecycle.final_checks(state))
         if not evaluate_gate(context, required, tuple(evidence)).passed:
             raise ValueError("final gate evidence did not pass")
     except (KeyError, TypeError) as error:
@@ -673,3 +714,122 @@ def _validate_final_evidence(state, io):
         if type(review) is not dict or review.get("subject_digest") != subject or review.get("artifact_digest") != _hash(review.get("output")):
             raise ValueError("missing or stale final independent review")
         _validate_review(review["output"], _criteria(state["steps"]))
+
+
+def _archive_final(rt):
+    retained = {key: rt.pop(key) for key in ('final_evidence', 'final_review') if key in rt}
+    if retained:
+        rt.setdefault('superseded_final_evidence', []).append(retained)
+
+
+def _lifecycle_edit(state_path, edit):
+    """Task then state lock, reload, edit and validate one atomic protected state."""
+    from .deterministic_binding import resumed_task
+    state_path = Path(state_path)
+    initial = _load_state(state_path)
+    validate_state(initial)
+    with resumed_task(initial, state_path):
+        io = StrictIO(Path(initial['deterministic_runtime']['workspace']), state_path)
+        with io.locked():
+            state = io.load()
+            validate_state(state)
+            rt = state['deterministic_runtime']
+            if (rt.get('schema_version') != 2 or rt['state_path'] != str(state_path.absolute())
+                    or rt.get('immutable_definition_digest') != initial['deterministic_runtime'].get('immutable_definition_digest')):
+                raise ValueError('lifecycle run binding changed')
+            if rt['phase'].endswith('_INFLIGHT'):
+                raise ValueError('cannot revise an interrupted operation')
+            for unit in rt['units'].values():
+                events = _events(unit)
+                if events and type(events[-1]) is FailureEvent and decide_recovery(events).action not in ('REPAIR', 'REPLAN'):
+                    raise ValueError('terminal recovery history cannot be reset by upstream edits')
+            if rt['phase'] in ('BLOCKED', 'ESCALATE', 'DESIGN', 'REQUIREMENTS'):
+                raise ValueError('terminal run cannot be reset by upstream edits')
+            edit(state)
+            rt['definition'] = copy.deepcopy(_definition(state, rt))
+            rt['definition_digest'] = _hash(rt['definition'])
+            validate_state(state)
+            io.save(state)
+            return copy.deepcopy(rt['lifecycle'])
+
+
+def _expect_revision(lc, revision):
+    if type(revision) is not int or revision != lc['revision']:
+        raise ValueError('stale lifecycle revision')
+
+
+def _wait_upstream(state, phase=None):
+    rt = state['deterministic_runtime']
+    phase = phase or (rt.get('upstream_resume_phase') if rt['phase'] == 'UPSTREAM' else rt['phase'])
+    if phase in ('DONE', 'AWAIT_DECISION'):
+        phase = 'FINAL_CHECK' if all(s['status'] == 'passed' for s in state['step_state'].values()) else 'GENERATE'
+    if phase == 'FINAL_VERIFY':
+        phase = 'FINAL_CHECK'
+    rt.update(phase='UPSTREAM', upstream_resume_phase=phase)
+    state.update(done=False, stopped=None)
+
+
+def lifecycle_decide(state_path, scope, stage, digest, revision, decision, actor, reason):
+    """Record an explicit caller-authorized decision against current content."""
+    def edit(state):
+        rt = state['deterministic_runtime']
+        lc = rt['lifecycle']
+        _expect_revision(lc, revision)
+        if digest != decision_digest(lc['plan'], scope, stage):
+            raise ValueError('stale lifecycle decision digest')
+        lc['decisions'].append({'id': str(len(lc['decisions']) + 1), 'scope': scope,
+                               'stage': stage, 'digest': digest, 'decision': decision,
+                               'actor': actor, 'reason': reason})
+        _archive_final(rt)
+        _wait_upstream(state)
+    return _lifecycle_edit(state_path, edit)
+
+
+def lifecycle_revise(state_path, plan, revision, digest, reason, actor):
+    """Revise a fixed unit set, preserving failures and invalidating dependents."""
+    def edit(state):
+        rt = state['deterministic_runtime']
+        lc = rt['lifecycle']
+        _expect_revision(lc, revision)
+        if digest != plan_digest(lc['plan']):
+            raise ValueError('stale lifecycle plan digest')
+        steps = compile_steps(plan)
+        if [s['id'] for s in steps] != [s['id'] for s in state['steps']]:
+            raise ValueError('lifecycle unit IDs and order are immutable')
+        affected = affected_units(lc['plan'], plan)
+        if plan == lc['plan']:
+            raise ValueError('lifecycle revision must change the plan')
+        lc['changes'].append({'revision': revision + 1, 'previous_plan': copy.deepcopy(lc['plan']),
+                              'previous_digest': digest, 'actor': actor, 'reason': reason,
+                              'affected_units': affected})
+        lc.update(revision=revision + 1, plan=copy.deepcopy(plan))
+        state['steps'], state['goal'] = steps, plan['objective']
+        _archive_final(rt)
+        current_id = steps[rt['step_index']]['id']
+        previous_phase = rt.get('upstream_resume_phase') if rt['phase'] == 'UPSTREAM' else rt['phase']
+        if (previous_phase in ('DIAGNOSE', 'REPLAN') or
+                state['step_state'][current_id]['status'] != 'passed' and previous_phase in ('CHECK', 'VERIFY')):
+            rt['units'][current_id]['resume_phase'] = 'CHECK' if previous_phase == 'VERIFY' else previous_phase
+        for step in steps:
+            sid = step['id']
+            if sid not in affected:
+                continue
+            unit = rt['units'][sid]
+            events = _events(unit)
+            recovery_phase = unit.get('resume_phase')
+            if (events and type(events[-1]) is FailureEvent and decide_recovery(events).action == 'REPLAN'):
+                unit['resume_phase'] = recovery_phase = 'REPLAN'
+            receipts = {key: unit.pop(key) for key in ('evidence', 'review') if key in unit}
+            if receipts:
+                unit.setdefault('superseded_evidence', []).append(receipts)
+            if recovery_phase not in ('REPLAN', 'DIAGNOSE'):
+                unit.update(plan=step.get('instruction') or sid, diagnosis=None)
+                unit.pop('resume_phase', None)
+            state['step_state'][sid]['status'] = 'pending'
+        pending = [i for i, step in enumerate(steps) if state['step_state'][step['id']]['status'] != 'passed']
+        if pending:
+            rt['step_index'] = pending[0]
+        rt['attempt'] += 1
+        phase = rt['units'][steps[pending[0]]['id']].pop('resume_phase', 'GENERATE') if pending else 'FINAL_CHECK'
+        _wait_upstream(state, phase)
+    return _lifecycle_edit(state_path, edit)
