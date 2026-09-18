@@ -138,6 +138,8 @@ The main command is:
 
 Use `/rig:go` for the full gated workbench flow. Use `/rig:talk` when you want a conversational entrypoint into the same underlying engine.
 
+RigTalk is **explicit opt-in**. Session startup, clear and compaction hooks do not start it or restore automatic conversation routing. The retired `inject-talk-mode.sh` remains a silent compatibility shim for old hook registrations; active-run continuity and other safety hooks remain in place. Updating the plugin does not erase instructions already injected into an existing session, so start a fresh session after updating.
+
 ## 5. Core safety flow
 
 ```

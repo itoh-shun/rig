@@ -157,7 +157,6 @@ def _prepare_hook_project(tmp_path):
 def _exercise_every_shared_command(data, *, project, transcript, env):
     commands = {
         "precompact": _command_for(data, "PreCompact", "codex-precompact.sh"),
-        "talk": _command_for(data, "SessionStart", "inject-talk-mode.sh"),
         "instincts": _command_for(data, "SessionStart", "inject-instincts.sh"),
         "continuity": _command_for(data, "SessionStart", "inject-run-continuity.sh"),
         "prompt_reminder": _command_for(
@@ -173,9 +172,6 @@ def _exercise_every_shared_command(data, *, project, transcript, env):
     )
     results = {
         "precompact": _run_command(commands["precompact"], cwd=project, env=env),
-        "talk": _run_command(
-            commands["talk"], cwd=project, env=env, input_text=session_input
-        ),
         "instincts": _run_command(
             commands["instincts"], cwd=project, env=env, input_text=session_input
         ),
@@ -202,7 +198,6 @@ def _exercise_every_shared_command(data, *, project, transcript, env):
         ),
     }
 
-    _assert_context_output(results["talk"], "SessionStart", "rig:talk")
     _assert_context_output(
         results["instincts"], "SessionStart", "shared hook integration pattern"
     )
@@ -351,3 +346,39 @@ def test_codex_skill_md_has_frontmatter_and_points_to_the_real_scripts():
     text = (REPO_ROOT / "codex" / "skills" / "rig" / "SKILL.md").read_text(encoding="utf-8")
     assert text.startswith("---\nname: rig\n")
     assert "scripts/workbench.py" in text and "scripts/orchestrate.py" in text
+
+
+def test_talk_is_not_automatically_registered_in_either_host():
+    for relative in ("hooks/hooks.json", "codex/hooks.json"):
+        config = json.loads((REPO_ROOT / relative).read_text(encoding="utf-8"))
+        assert all("inject-talk-mode.sh" not in command for command in _all_commands(config))
+
+
+def test_legacy_talk_hook_is_silent_even_with_old_registration(tmp_path):
+    script = REPO_ROOT / "hooks" / "inject-talk-mode.sh"
+    for host in ("PLUGIN_ROOT", "CLAUDE_PLUGIN_ROOT"):
+        for source in ("startup", "clear", "compact"):
+            result = subprocess.run(
+                ["sh", str(script)], cwd=tmp_path,
+                env=_clean_hook_env(**{host: REPO_ROOT}),
+                input=json.dumps({"hook_event_name": "SessionStart", "source": source}),
+                text=True, capture_output=True,
+            )
+            assert (result.returncode, result.stdout, result.stderr) == (0, "", "")
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_compaction_hooks_do_not_restore_automatic_talk():
+    for script in (PRESERVE_SCRIPT, CONTINUITY_SCRIPT, CODEX_PRECOMPACT_SCRIPT):
+        result = subprocess.run(["sh", str(script)], env=_clean_hook_env(),
+                                text=True, capture_output=True)
+        assert result.returncode == 0
+        assert "rig:talk" not in result.stdout
+        assert "talk-always-on" not in result.stdout
+        assert "talk-loop" not in result.stdout
+
+
+def test_manual_talk_entrypoint_remains_available():
+    command = (REPO_ROOT / "commands/talk.md").read_text(encoding="utf-8")
+    assert "talk-loop" in command
+    assert "/rig:talk" in command
