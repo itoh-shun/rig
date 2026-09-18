@@ -1,5 +1,15 @@
 # Changelog
 
+## [3.3.1] - 2026-09-18
+
+### Fixed
+
+- Retired the automatic instinct-learning Stop reminder, which could interrupt
+  session completion with a `[rig instincts] Before ending` blocking message.
+  Removed its registration and made the old script a silent, successful no-op
+  for stale hook registrations. Explicit `rig-wb wb instincts` commands remain
+  available; existing instinct loading and run-continuity hooks are unchanged.
+
 ## [3.3.0] - 2026-09-18
 
 ### Added
