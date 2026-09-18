@@ -119,6 +119,10 @@ Extension Catalog はすべてそこにある。ブリックを引くとき・�
 
 ## 4. RESOLVE — 解決順（manifest＋recipe＋flag＋size-aware 既定）
 
+最終ハーネスを **manifest → recipe → flag → size-aware 既定** の順で確定する。後の段が前の段を
+override する。**各段の規定の正本は `RESOLVE.md`。** manifest ロード・recipe の tier 検索と
+`extends` を持つ。flag override・size-aware 既定・autonomy も同じファイル。RESOLVE に入るときに読む。
+
 ### 上流モードの明示選択
 
 ユーザーが「要件定義からwaterfallで」「機能単位のiterativeで」と明示した場合は、
@@ -129,10 +133,6 @@ Extension Catalog はすべてそこにある。ブリックを引くとき・�
 AIの自己判断で承認しない。状態と不足理由は `lifecycle status --json`、実行は同じstateの
 `resume --progress`、変更要求は `lifecycle revise` を使う。明示選択がない既存recipeは
 従来動作を維持する。モード名を未対応のCLI flagへ変換しない。
-
-最終ハーネスを **manifest → recipe → flag → size-aware 既定** の順で確定する。後の段が前の段を
-override する。**各段の規定の正本は `RESOLVE.md`。** manifest ロード・recipe の tier 検索と
-`extends` を持つ。flag override・size-aware 既定・autonomy も同じファイル。RESOLVE に入るときに読む。
 
 ## 5. COMPOSE — ハーネス合成
 
