@@ -1,5 +1,35 @@
 # Changelog
 
+## [3.3.0] - 2026-09-18
+
+### Added
+
+- **Gated upstream lifecycle modes:** `lifecycle template/init/decide/revise/status`
+  adds explicit requirements and design decisions to strict execution. Waterfall
+  requires all features to be ready before generation; iterative permits later
+  independent drafts while enforcing the current feature and its prerequisites.
+- **Content-bound decisions and change control:** stage digests and revision checks
+  reject stale decisions. Revisions invalidate affected approvals and evidence,
+  retain change and failure histories, and preserve pending recovery obligations.
+  AI PASS verdicts cannot replace upstream approval.
+- **Integration acceptance:** final verification includes all feature checks and
+  dedicated integration checks. Feature PASS is not release DONE; stale completion
+  and forced acceptance cannot bypass the current lifecycle contract.
+- **Actionable status:** show the mode, revision, stage digests, latest decisions,
+  rejection reasons, freshness and unmet conditions. Existing `resume --progress`
+  reports execution and upstream waits. No automatic hooks were added.
+
+### Scope and limitations
+
+- Opt-in modes reuse the Linux/bubblewrap strict runtime; legacy recipes retain
+  their existing semantics. Units execute in a fixed declared order. Iterative
+  mode does not implement sprint management or Scrum ceremonies.
+- Structural requirement/design/check coverage does not prove semantic adequacy.
+  The operator label is audit attribution, not authentication. Live Claude Code
+  conversations and paid-provider behavior remain environment-specific checks.
+- See [lifecycle modes](docs/lifecycle-modes.md) for commands, approval boundaries,
+  revision handling and recovery limits.
+
 ## [3.2.0] - 2026-09-18
 
 ### Added
