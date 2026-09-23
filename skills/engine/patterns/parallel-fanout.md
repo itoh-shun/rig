@@ -21,7 +21,8 @@
 
 1. **1つのメッセージ**に複数の `Agent` ツール呼び出しを含めて送信する（ツール呼び出しをメッセージ間で分割しない）。
 2. 各 subagent に対してコンテキスト・評価軸・出力形式を明示する。出力形式は `output-contracts/review-verdict` など機械抽出可能な形式を使う。
-3. すべての subagent の結果が揃うまで待機する（並列実行は自動で完了通知が来る）。
+3. **次の step が全結果に依存するなら（review-gate の集約・verify の fan-in＝通常のケース）、全 `Agent` 呼び出しを `run_in_background: false` で送る**。それでも並列に走り、結果は同じターンの tool result として揃って返る。task-notification は1件も発火しない。
+   - バックグラウンド dispatch は、待つ間に親が**本当に別の仕事を持つ**ときだけ使う。その場合は handback メッセージ**が**結果そのものであり、後から来る task-notification は新しい情報を運ばない（受け取ったら黙って続ける — SKILL.md §6 run-continuity ①の例外）。
 4. 全結果を受け取ったら集約処理へ進む（→ `pattern: review-gate` 参照）。
 
 ## subagent プロンプト設計の注意点

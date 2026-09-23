@@ -134,7 +134,7 @@ The problem of opening several terminals and forgetting which was doing what goe
 
 ## run-continuity (SKILL.md §6)
 
-While a RUN is active, restate this run-status header as a single line at the top of every turn. Do not drop it right after an interruption, a question, or tool output — the visibility is the evidence that the harness is driving:
+While a RUN is active, restate this run-status header as a single line at the top of every turn. Do not drop it right after an interruption, a question, or tool output — the visibility is the evidence that the harness is driving. The one exception is a turn woken only by a `<task-notification>` that carries nothing new (its report was already delivered as a message, or its output was already read): print no header and no narration, and continue pending work silently or end the turn:
 
 ```
 ▸ rig | task: <task_id> | recipe: <name[tier]|ad-hoc> | step: <id> (<n>/<N>) | gate: <none|pending [(try N/K)]|passed|REJECT> | backend: <manual|workflow> | mode: <gated|autonomous>
