@@ -451,3 +451,12 @@ def test_context_without_transcripts_is_byte_identical_to_v331(tmp_path):
     assert result.returncode == 0
     assert len(result.stdout.encode()) == 2103
     assert hashlib.sha256(result.stdout.encode()).hexdigest() == V331_CONTEXT_SHA256
+
+
+def test_the_writer_itself_refuses_to_raise_or_keep_the_ceiling():
+    """Defence in depth: `apply_ratchet` checks the verdict before it tightens, and the
+    one helper that builds the lowered document refuses anything that is not lower."""
+    for value in (100, 101):
+        with pytest.raises(ValueError):
+            wakeups._lowered({"stale_bp_max": 100}, value)
+    assert wakeups._lowered({"stale_bp_max": 100, "k": 1}, 99) == {"stale_bp_max": 99, "k": 1}
