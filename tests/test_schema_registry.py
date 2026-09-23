@@ -112,6 +112,8 @@ FROZEN_SCHEMA_IDS = {
     "rig.resolved-workflow/v1",
     "rig.team-routing/v1",
     "rig.waivers/v2",
+    "rig.wakeups-ceiling/v1",
+    "rig.wakeups/v1",
     "rig.workflow-effectiveness-query/v1",
     "rig.workflow-effectiveness/v1",
     "rig.workflow-resolution-error/v1",

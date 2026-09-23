@@ -621,6 +621,17 @@ def build_parser() -> argparse.ArgumentParser:
                        "output has consumed (`.rig/context.jsonl`) — the measurement "
                        "context-minimal never had")
     p.add_argument("--since-days", type=int, help="restrict to the last N days (default: all)")
+    p.add_argument("--transcripts", nargs="+", metavar="PATH",
+                   help="instead: count stale wake-ups (task-notifications that carried "
+                        "nothing new) in Claude Code transcripts — jsonl files or "
+                        "directories (non-recursive *.jsonl); --since-days filters by mtime")
+    p.add_argument("--json", action="store_true", help="with --transcripts: JSON output")
+    p.add_argument("--ratchet", metavar="FILE",
+                   help="with --transcripts: fail (exit 1) when stale_bp exceeds the "
+                        "ceiling in FILE (suggested: .rig/wakeups-ceiling.json)")
+    p.add_argument("--tighten", action="store_true",
+                   help="with --ratchet: lower the ceiling to the measured value "
+                        "(never raises it); creates FILE when missing")
     p.set_defaults(func=cmd_context)
 
     p = sub.add_parser("audit", help="list the audit log of `accept --force` etc. (`.rig/audit.jsonl`)")

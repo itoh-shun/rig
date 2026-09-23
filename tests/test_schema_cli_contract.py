@@ -673,6 +673,31 @@ def test_group2_wb_compose_options_emits_rig_compose_options_v1_with_all_five_ax
         ["recipe", "step", "gate", "backend", "mode"]
 
 
+def test_group2_wb_context_transcripts_answers_in_rig_wakeups_v1_and_writes_rig_wakeups_ceiling_v1(
+        tmp_path, rig_cli_json):
+    """`context --transcripts` is read by a ratchet in CI and the ceiling file is read by
+    the next run of the same command, so both ids are contract. Twenty fresh notifications
+    are the smallest sample `--tighten` will create a ceiling from."""
+    rows = [json.dumps({"type": "user", "origin": {"kind": "task-notification"},
+                        "message": {"content": f"<task-notification><task-id>t{i}</task-id>"
+                                               f"<status>completed</status></task-notification>"}})
+            for i in range(20)]
+    transcript = tmp_path / "session.jsonl"
+    transcript.write_text("\n".join(rows) + "\n", encoding="utf-8")
+    ceiling = tmp_path / ".rig" / "wakeups-ceiling.json"
+    payload = rig_cli_json("wb", "context", "--transcripts", transcript, "--ratchet", ceiling,
+                           "--tighten", "--json", cwd=tmp_path, expect_returncode=0)
+    assert_document(payload, schema="rig.wakeups/v1",
+                    required={"schema", "state", "total_notifications", "kinds", "stale",
+                              "stale_bp", "stale_reply_chars", "stale_reply_turns",
+                              "unreadable_lines", "per_file", "not_seen", "ratchet"},
+                    what="`wb context --transcripts --json`")
+    assert_document(read_json_file(ceiling, what="`wb context --ratchet --tighten`"),
+                    schema="rig.wakeups-ceiling/v1",
+                    required={"schema", "stale_bp_max", "min_notifications"},
+                    what="the ceiling `wb context --tighten` created")
+
+
 # ══ group3 — the organisational and external surface ═════════════════════════
 # Governance records, the two console scripts that are not `rig-wb` subcommands, and the
 # two documents rig writes into a repository's own state rather than onto stdout.
