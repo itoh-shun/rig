@@ -1,5 +1,42 @@
 # Changelog
 
+## [3.4.0] - 2026-09-24
+
+### Added
+
+- **Stale wake-up meter:** `wb context --transcripts PATH…` reads Claude Code
+  session transcripts and classifies every `<task-notification>` as
+  `handback-dup` (the report already arrived as a handback message),
+  `read-early` (the output was read before the notification), `killed`, or
+  `fresh`. It reports stale wake-ups in integer basis points, the visible reply
+  text they cost, and unreadable lines. It reports zero notifications as
+  `unmeasured`, never as 0. `--json` gives a deterministic document
+  (`rig.wakeups/v1`).
+- **Down-only ceiling:** `--ratchet FILE` exits 1 when stale wake-ups exceed
+  `stale_bp_max` (`rig.wakeups-ceiling/v1`, suggested at
+  `.rig/wakeups-ceiling.json`). `--tighten` lowers the ceiling to the measured
+  value and never raises it. Samples below `min_notifications` (default 20) are
+  neither judged nor used to tighten.
+
+### Changed
+
+- `patterns/parallel-fanout`: when the next step needs every result, dispatch
+  all subagents in one message with `run_in_background: false`. They still run
+  concurrently, their results return in the same turn, and no task-notification
+  fires.
+- `patterns/monitor`: the `until … sleep` polling guidance is removed. After a
+  background launch, do not read or poll its output; the harness notification is
+  the only completion signal. Stop a watcher whose result arrived another way.
+- SKILL.md §6 run-continuity (with `commands/go.md` and the UserPromptSubmit
+  reminder): a turn woken only by a task-notification that carries nothing new
+  gets no run-status header and no narration. Do not resume a subagent that has
+  already handed back just to ask a follow-up question.
+
+### Scope and limitations
+
+- The meter only sees notifications recorded in the transcripts it is given.
+  Subagent transcripts and sessions that were not passed in are not counted.
+
 ## [3.3.1] - 2026-09-18
 
 ### Fixed
