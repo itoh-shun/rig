@@ -6,6 +6,7 @@ neighbours, so that removing the rule that reads the feature flips the answer.
 """
 
 import hashlib
+import itertools
 import json
 import os
 import pathlib
@@ -22,6 +23,13 @@ WORKBENCH = REPO_ROOT / "scripts" / "workbench.py"
 
 OUT = "/tmp/claude-1000/proj/session/tasks/{}.output"
 
+#: Every harness-written row carries a uuid; builders hand out unique ones by default.
+_UUIDS = itertools.count()
+
+
+def _uuid():
+    return f"uuid-{next(_UUIDS)}"
+
 
 # ── row builders ──────────────────────────────────────────────────────────────
 
@@ -33,7 +41,7 @@ def notification(task_id, *, status="completed", result="done", launch=None,
             f"<status>{status}</status>\n<summary>Background command finished</summary>\n"
             f"<result>{result}\n</result>\n</task-notification>")
     content = [{"type": "text", "text": body}] if as_list else body
-    return {"type": "user", "origin": {"kind": "task-notification"},
+    return {"type": "user", "uuid": _uuid(), "origin": {"kind": "task-notification"},
             "message": {"role": "user", "content": content}}
 
 
@@ -97,12 +105,12 @@ def with_uuid(row, uuid):
 def event_notification(task_id="m1", line="ERROR: disk full"):
     body = (f"<task-notification>\n<task-id>{task_id}</task-id>\n"
             f"<event>{line}</event>\n</task-notification>")
-    return {"type": "user", "origin": {"kind": "task-notification"},
+    return {"type": "user", "uuid": _uuid(), "origin": {"kind": "task-notification"},
             "message": {"role": "user", "content": body}}
 
 
 def bare_notification(body):
-    return {"type": "user", "origin": {"kind": "task-notification"},
+    return {"type": "user", "uuid": _uuid(), "origin": {"kind": "task-notification"},
             "message": {"role": "user", "content": body}}
 
 
@@ -307,11 +315,42 @@ def test_rows_repeated_under_the_same_uuid_in_another_file_count_once():
     assert report["duplicate_rows_skipped"] == 2
 
 
-def test_rows_without_a_uuid_are_kept():
-    rows = [notification("a1"), notification("a1")]
-    report = wakeups.measure({"a.jsonl": (rows, 0), "b.jsonl": (list(rows), 0)})
-    assert report["total_notifications"] == 4
-    assert report["duplicate_rows_skipped"] == 0
+def test_repeats_that_differ_only_in_session_metadata_are_duplicates():
+    row = with_uuid(notification("a1"), "u1")
+    resumed = {**row, "sessionId": "other", "cwd": "/elsewhere", "version": "9.9"}
+    report = wakeups.measure({"a.jsonl": ([row], 0), "b.jsonl": ([resumed], 0)})
+    assert report["duplicate_rows_skipped"] == 1 and report["uuid_conflicts"] == 0
+    assert report["total_notifications"] == 1
+
+
+def test_one_uuid_with_different_content_is_a_conflict_not_a_duplicate(tmp_path):
+    first = with_uuid(notification("a1", result=MARKER), "u1")
+    other = with_uuid(notification("a1", result="new findings"), "u1")
+    rows = [first] + [notification(f"f{i}") for i in range(30)]
+    report = wakeups.measure({"a.jsonl": (rows, 0), "b.jsonl": ([other], 0)})
+    assert report["uuid_conflicts"] == 1 and report["duplicate_rows_skipped"] == 0
+    path = ceiling(tmp_path, 5000)
+    before = path.read_bytes()
+    verdict = wakeups.apply_ratchet(report, path, tighten=True)
+    assert (verdict["state"], verdict["exit"]) == ("not-judged", 3)
+    assert "uuid" in verdict["message"]
+    assert path.read_bytes() == before
+
+
+def test_a_notification_without_a_uuid_is_unreadable_and_not_judged(tmp_path):
+    bare = {k: v for k, v in notification("a1").items() if k != "uuid"}
+    rows = [bare] + [notification(f"f{i}") for i in range(30)]
+    report = wakeups.measure({"a.jsonl": (rows, 0)})
+    assert report["unreadable_lines"] == 1
+    assert report["total_notifications"] == 30
+    verdict = wakeups.apply_ratchet(report, ceiling(tmp_path, 5000))
+    assert (verdict["state"], verdict["exit"]) == ("not-judged", 3)
+
+
+def test_other_rows_without_a_uuid_are_kept():
+    rows = [human("hi"), human("hi")]
+    transcripts, skipped, conflicts = wakeups.dedupe({"a.jsonl": (rows, 0)})
+    assert transcripts["a.jsonl"] == (rows, 0) and (skipped, conflicts) == (0, 0)
 
 
 def write_transcript(path, stale, fresh, extra_lines=()):

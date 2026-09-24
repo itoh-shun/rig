@@ -678,7 +678,7 @@ def test_group2_wb_wakeups_answers_in_rig_wakeups_v1_and_writes_rig_wakeups_ceil
     """`wb wakeups` is read by a ratchet in CI and the ceiling file is read by the next run
     of the same command, so both ids are contract. Twenty fresh notifications are the
     smallest sample `--init` will create a ceiling from."""
-    rows = [json.dumps({"type": "user", "origin": {"kind": "task-notification"},
+    rows = [json.dumps({"type": "user", "uuid": f"u{i}", "origin": {"kind": "task-notification"},
                         "message": {"content": f"<task-notification><task-id>t{i}</task-id>"
                                                f"<status>completed</status></task-notification>"}})
             for i in range(20)]
@@ -690,7 +690,7 @@ def test_group2_wb_wakeups_answers_in_rig_wakeups_v1_and_writes_rig_wakeups_ceil
     assert_document(payload, schema="rig.wakeups/v1",
                     required={"schema", "state", "total_notifications", "kinds", "stale",
                               "stale_bp", "stale_reply_chars", "stale_reply_turns",
-                              "unreadable_lines", "duplicate_rows_skipped", "polls",
+                              "unreadable_lines", "duplicate_rows_skipped", "uuid_conflicts", "polls",
                               "events_excluded", "per_file", "not_seen", "ratchet"},
                     what="`wb wakeups --json`")
     assert_document(read_json_file(ceiling, what="`wb wakeups --ratchet --init`"),

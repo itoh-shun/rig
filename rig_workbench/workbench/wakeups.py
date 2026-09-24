@@ -34,8 +34,12 @@ that reaches the file without naming it (a glob, `ls -t | head -1`, a variable, 
 directory) is not counted, and a task id that happens to appear inside unrelated input is.
 
 Rows are de-duplicated by `uuid` across every file (a resumed session repeats earlier
-rows under the same uuids); rows without a uuid are kept. Paths are resolved first, so
-one file reached twice (`../`, a symlink) is read once.
+rows under the same uuids, with only session metadata changed). Two rows under one uuid
+whose `type`, `origin` or `message` differ are a conflict, not a duplicate: nothing is
+collapsed silently, the conflict is reported as `uuid_conflicts`, and the ratchet does
+not judge. A task-notification row without a uuid is counted as unreadable (the harness
+always writes one); other rows without a uuid are kept. Paths are resolved first, so one
+file reached twice (`../`, a symlink) is read once.
 
 What it cannot see is stated in every report: only notifications recorded in the
 transcripts it was given. Stdlib only.
@@ -297,11 +301,21 @@ def collect_files(paths: Iterable[str], since_days: int | None = None,
     return sorted(found, key=str)
 
 
+def _row_content(row: dict) -> str:
+    """What must match for two rows under one uuid to be the same row. Session metadata
+    (`sessionId`, `cwd`, `version`, …) legitimately changes when a session is resumed."""
+    return json.dumps({key: row.get(key) for key in ("type", "origin", "message")},
+                      sort_keys=True, ensure_ascii=False)
+
+
 def dedupe(transcripts: dict[str, tuple[list[dict], int]]
-           ) -> tuple[dict[str, tuple[list[dict], int]], int]:
-    """Drop rows whose `uuid` an earlier row (in name order) already carried."""
-    seen: set[str] = set()
-    skipped = 0
+           ) -> tuple[dict[str, tuple[list[dict], int]], int, int]:
+    """Drop rows whose `uuid` an earlier row (in name order) already carried with the same
+    content. Returns (transcripts, duplicates skipped, uuid conflicts). A conflicting row
+    is dropped too — it is not counted twice — but the conflict is reported so the run is
+    not judged. A task-notification without a uuid is counted as unreadable and dropped."""
+    seen: dict[str, str] = {}
+    skipped = conflicts = 0
     out: dict[str, tuple[list[dict], int]] = {}
     for name in sorted(transcripts):
         rows, unreadable = transcripts[name]
@@ -309,13 +323,20 @@ def dedupe(transcripts: dict[str, tuple[list[dict], int]]
         for row in rows:
             uuid = row.get("uuid")
             if isinstance(uuid, str) and uuid:
+                content = _row_content(row)
                 if uuid in seen:
-                    skipped += 1
+                    if seen[uuid] == content:
+                        skipped += 1
+                    else:
+                        conflicts += 1
                     continue
-                seen.add(uuid)
+                seen[uuid] = content
+            elif _is_notification(row):
+                unreadable += 1
+                continue
             kept.append(row)
         out[name] = (kept, unreadable)
-    return out, skipped
+    return out, skipped, conflicts
 
 
 def _counts(entries: list[dict]) -> dict[str, int]:
@@ -328,7 +349,7 @@ def _counts(entries: list[dict]) -> dict[str, int]:
 def measure(transcripts: dict[str, tuple[list[dict], int]],
             since_days: int | None = None) -> dict:
     """Aggregate per-file (rows, unreadable) into the report dict."""
-    transcripts, duplicates = dedupe(transcripts)
+    transcripts, duplicates, conflicts = dedupe(transcripts)
     per_file: dict[str, dict] = {}
     all_entries: list[dict] = []
     unreadable_total = 0
@@ -353,6 +374,7 @@ def measure(transcripts: dict[str, tuple[list[dict], int]],
         "files": len(transcripts),
         "unreadable_lines": unreadable_total,
         "duplicate_rows_skipped": duplicates,
+        "uuid_conflicts": conflicts,
         "total_notifications": total,
         "events_excluded": kinds["event"],
         "kinds": kinds,
@@ -409,6 +431,9 @@ def _not_judged_reason(report: dict, min_n: int) -> str | None:
         return "no notifications were measured"
     if report["unreadable_lines"]:
         return f"{report['unreadable_lines']} unreadable line(s) in the transcripts"
+    if report["uuid_conflicts"]:
+        return (f"{report['uuid_conflicts']} row(s) share a uuid with a different row; "
+                "the transcripts disagree")
     if total < min_n:
         return f"{total} notification(s) < {min_n} required"
     return None
@@ -424,8 +449,8 @@ def apply_ratchet(report: dict, path: str | os.PathLike, *, tighten: bool = Fals
     * file unreadable / wrong schema / bad values      → invalid, exit 2
     * file present and --init                          → error, exit 2 (never overwritten)
     * file missing without --init                      → missing, exit 2
-    * nothing measured, unreadable lines, or fewer than
-      min_notifications                                → not-judged, exit 3, nothing written
+    * nothing measured, unreadable lines, uuid conflicts,
+      or fewer than min_notifications                  → not-judged, exit 3, nothing written
     * file missing, --init                             → created at the measured value, exit 0
     * measured > stale_bp_max                          → over, exit 1 (never rewritten)
     * measured < stale_bp_max with --tighten           → tightened down to measured, exit 0
@@ -505,7 +530,8 @@ def render_human(report: dict) -> str:
     lines = [f"## rig wake-ups ({window})", ""]
     lines.append(f"transcripts: {report['files']} file(s), "
                  f"{report['unreadable_lines']} unreadable line(s), "
-                 f"{report['duplicate_rows_skipped']} duplicate row(s) skipped")
+                 f"{report['duplicate_rows_skipped']} duplicate row(s) skipped, "
+                 f"{report['uuid_conflicts']} uuid conflict(s)")
     if report["state"] == "unmeasured":
         lines.append("notifications: 0 — unmeasured (nothing to judge, not a clean result)")
     else:
