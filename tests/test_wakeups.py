@@ -157,11 +157,19 @@ def test_an_event_tag_inside_the_result_does_not_make_an_event():
     assert kinds(rows) == ["fresh", "fresh"]
 
 
-def test_a_status_quoted_inside_the_result_does_not_set_the_status():
-    body = ("<task-notification>\n<task-id>a1</task-id>\n<status>completed</status>\n"
-            "<result>the job printed <status>failed</status> once\n</result>\n"
-            "</task-notification>")
+def test_tags_quoted_inside_the_result_do_not_set_the_status_or_the_id():
+    """The result comes first here so that reading the first tag anywhere in the text
+    would pick up the quoted one."""
+    body = ("<task-notification>\n<result><task-id>a9</task-id> printed "
+            "<status>failed</status> once\n</result>\n<task-id>a1</task-id>\n"
+            "<status>completed</status>\n</task-notification>")
     assert kinds([bare_notification(body)]) == ["fresh"]
+    handed_back = body.replace("printed <status>failed</status> once", "") \
+                      .replace("<result><task-id>a9</task-id> ", "<result>" + MARKER)
+    assert kinds([bare_notification(handed_back)]) == ["handback-dup"]
+    no_id = ("<task-notification>\n<result><task-id>a9</task-id></result>\n"
+             "<status>completed</status>\n</task-notification>")
+    assert kinds([bare_notification(no_id)]) == ["event"]
 
 
 def test_an_earlier_handback_message_alone_does_not_make_a_notification_stale():
