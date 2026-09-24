@@ -391,6 +391,17 @@ def test_a_notification_without_a_uuid_is_unreadable_and_not_judged(tmp_path):
     assert (verdict["state"], verdict["exit"]) == ("not-judged", 3)
 
 
+def test_nothing_measured_names_every_other_reason_too(tmp_path):
+    bare = {k: v for k, v in notification("a1").items() if k != "uuid"}
+    report = wakeups.measure({"a.jsonl": ([bare, with_uuid(human("x"), "u1")], 2),
+                              "b.jsonl": ([with_uuid(human("y"), "u1")], 0)})
+    assert report["total_notifications"] == 0
+    verdict = wakeups.apply_ratchet(report, ceiling(tmp_path, 5000))
+    assert (verdict["state"], verdict["exit"]) == ("not-judged", 3)
+    for reason in ("no notifications", "3 unreadable", "1 row(s) share a uuid"):
+        assert reason in verdict["message"]
+
+
 def test_other_rows_without_a_uuid_are_kept():
     rows = [human("hi"), human("hi")]
     transcripts, skipped, conflicts = wakeups.dedupe({"a.jsonl": (rows, 0)})

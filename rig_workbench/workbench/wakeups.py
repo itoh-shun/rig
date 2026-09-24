@@ -463,17 +463,20 @@ def _write_atomic(path: pathlib.Path, doc: dict) -> None:
 
 
 def _not_judged_reason(report: dict, min_n: int) -> str | None:
+    """Every reason the sample cannot be judged, joined; None when it can. All of them
+    are named, so fixing the one reported first does not reveal another on the next run."""
     total = report["total_notifications"]
+    reasons = []
     if report["stale_bp"] is None:
-        return "no notifications were measured"
+        reasons.append("no notifications were measured")
     if report["unreadable_lines"]:
-        return f"{report['unreadable_lines']} unreadable line(s) in the transcripts"
+        reasons.append(f"{report['unreadable_lines']} unreadable line(s) in the transcripts")
     if report["uuid_conflicts"]:
-        return (f"{report['uuid_conflicts']} row(s) share a uuid with a different row; "
-                "the transcripts disagree")
-    if total < min_n:
-        return f"{total} notification(s) < {min_n} required"
-    return None
+        reasons.append(f"{report['uuid_conflicts']} row(s) share a uuid with a different "
+                       "row; the transcripts disagree")
+    if 0 < total < min_n:
+        reasons.append(f"{total} notification(s) < {min_n} required")
+    return "; ".join(reasons) or None
 
 
 def apply_ratchet(report: dict, path: str | os.PathLike, *, tighten: bool = False,
