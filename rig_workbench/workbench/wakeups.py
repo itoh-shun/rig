@@ -45,21 +45,21 @@ file reached twice (`../`, a symlink) is read once.
 
 What it cannot see is stated in every report: only notifications recorded in the
 transcripts it was given. Stdlib only.
+
+This module measures and judges; it neither prints nor exits. `cmd_wakeups`, the shell
+that prints the report and turns the ratchet's verdict into the exit code, lives in
+`context_report` beside `cmd_context`, the other meter of what the parent session pays.
 """
 
 from __future__ import annotations
 
-import argparse
 import json
 import os
 import pathlib
 import re
-import sys
 import tempfile
 from typing import Any, Iterable
 
-from .. import console
-from .state import die, reject
 from ..ports import Clock
 from ..ports.local import SYSTEM_CLOCK
 
@@ -596,34 +596,3 @@ def render_human(report: dict) -> str:
     lines.append(NOT_SEEN)
     return "\n".join(lines)
 
-
-# ── command ───────────────────────────────────────────────────────────────────
-
-def cmd_wakeups(args: argparse.Namespace) -> None:
-    """`wb wakeups`: print the report, then let the ratchet's verdict set the exit code
-    (1 over the ceiling, 2 for a missing/invalid ceiling or bad usage, 3 not judged)."""
-    if (args.init or args.tighten) and not args.ratchet:
-        die("--init and --tighten need --ratchet FILE")
-    if args.since_days is not None and args.since_days < 0:
-        die("--since-days must be 0 or more")
-    try:
-        report = measure_paths(args.transcripts, since_days=args.since_days)
-    except FileNotFoundError as exc:
-        die(f"--transcripts: no such file or directory: {exc}")
-    if args.ratchet:
-        report["ratchet"] = apply_ratchet(report, args.ratchet, tighten=args.tighten,
-                                          init=args.init)
-    print(render_json(report) if args.json else render_human(report))
-    ratchet = report.get("ratchet")
-    if not ratchet:
-        return
-    if ratchet["exit"] == EXIT_OVER:
-        reject(ratchet["message"])
-    if ratchet["exit"] == EXIT_ERROR:
-        die(ratchet["message"])
-    if ratchet["exit"] == EXIT_NOT_JUDGED:
-        # 3, not 0: a sample too small or too damaged to judge is not a pass
-        # (commands/go.md: unmeasured is never success), and not 1 either — nothing was
-        # judged. Same meaning `wb gate` and `wb contract` give 3.
-        console.write_line(f"[NOT JUDGED] {ratchet['message']}", stream=sys.stderr)
-        sys.exit(EXIT_NOT_JUDGED)

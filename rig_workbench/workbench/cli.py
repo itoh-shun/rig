@@ -56,8 +56,7 @@ from .config import (TASK_TYPES, VALID_CRITERION_STATUS, VALID_STEP_STATUS,
                      VALID_VERDICT)
 from .confidence import cmd_confidence
 from ..assurance.compose_options import cmd_compose_options, non_negative_diff
-from .context_report import cmd_context
-from .wakeups import cmd_wakeups
+from .context_report import cmd_context, cmd_wakeups
 from .destructive import cmd_scan_destructive
 from .detection_corpus import cmd_drill_corpus
 from .digest import cmd_digest

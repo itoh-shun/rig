@@ -8,15 +8,23 @@ It also judges what it measured against the budgets `context_meter` declares, an
 prints each budget beside its verdict. It does not report a dispatch rate: no signal
 for that exists (see `context_meter`), and the report says so in the body rather than
 letting a reader assume the missing axis was clean.
+
+`wb wakeups` is the other meter of what the parent pays: task-notification turns that
+carried nothing new, read from Claude Code transcripts. Its measurement and ceiling are
+`wakeups`; only the shell that prints the report and sets the exit code is here.
 """
 
 from __future__ import annotations
 
 import argparse
 import datetime
+import sys
 
-from .. import context_meter
-from .state import repo_root
+from .. import console, context_meter
+from ..ports import Presenter
+from ..ports.local import CONSOLE
+from . import wakeups
+from .state import die, reject, repo_root
 
 
 def _span(first_ts: str, last_ts: str) -> str:
@@ -111,3 +119,35 @@ def cmd_context(args: argparse.Namespace) -> None:
                   f"{record.get('command', '?')}")
         print("\n  These are the ones worth trimming first — one command that dumps a")
         print("  diff into the parent outweighs forty cheap status calls.")
+
+
+# ── wb wakeups ────────────────────────────────────────────────────────────────
+
+def cmd_wakeups(args: argparse.Namespace, out: Presenter = CONSOLE) -> None:
+    """`wb wakeups`: print the report, then let the ratchet's verdict set the exit code
+    (1 over the ceiling, 2 for a missing/invalid ceiling or bad usage, 3 not judged)."""
+    if (args.init or args.tighten) and not args.ratchet:
+        die("--init and --tighten need --ratchet FILE")
+    if args.since_days is not None and args.since_days < 0:
+        die("--since-days must be 0 or more")
+    try:
+        report = wakeups.measure_paths(args.transcripts, since_days=args.since_days)
+    except FileNotFoundError as exc:
+        die(f"--transcripts: no such file or directory: {exc}")
+    if args.ratchet:
+        report["ratchet"] = wakeups.apply_ratchet(report, args.ratchet, tighten=args.tighten,
+                                                  init=args.init)
+    out.out(wakeups.render_json(report) if args.json else wakeups.render_human(report))
+    ratchet = report.get("ratchet")
+    if not ratchet:
+        return
+    if ratchet["exit"] == wakeups.EXIT_OVER:
+        reject(ratchet["message"])
+    if ratchet["exit"] == wakeups.EXIT_ERROR:
+        die(ratchet["message"])
+    if ratchet["exit"] == wakeups.EXIT_NOT_JUDGED:
+        # 3, not 0: a sample too small or too damaged to judge is not a pass
+        # (commands/go.md: unmeasured is never success), and not 1 either — nothing was
+        # judged. Same meaning `wb gate` and `wb contract` give 3.
+        console.write_line(f"[NOT JUDGED] {ratchet['message']}", stream=sys.stderr)
+        sys.exit(wakeups.EXIT_NOT_JUDGED)
