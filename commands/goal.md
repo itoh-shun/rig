@@ -44,4 +44,4 @@ While a RUN is active, restate this run-status header as a single line at the to
 ▸ rig | recipe: <name[tier]|ad-hoc> | step: <id> (<n>/<N>) | gate: <none|pending|passed|REJECT> | backend: <manual|workflow> | mode: <gated|autonomous>
 ```
 
-Exception (SKILL.md §6 ①): a turn woken only by a `<task-notification>` whose status is `completed` and whose result says the report was already delivered to you as a message and is not repeated gets no header and no narration; a `failed`, `killed` or `stopped` notification is never exempt.
+Exception (SKILL.md §6 ①): a turn woken only by a `<task-notification>` whose status is `completed` and whose result is only the harness's already-delivered sentence (the report was delivered to you as a message and is not repeated) gets no header and no narration; a result that merely quotes that sentence is not exempt, and a `failed`, `killed` or `stopped` notification never is.

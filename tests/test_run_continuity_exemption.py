@@ -2,8 +2,8 @@
 
 The rule "restate the run-status header at the top of every turn" is repeated in many
 command bodies, the reminder hook, and (in Japanese, "run-status ヘッダを…再掲") pack commands. SKILL.md §6 ① exempts one kind of turn: a
-`completed` task-notification whose result is the harness's "already delivered as a
-message, not repeated" sentence. A copy that states the rule without the exemption tells
+`completed` task-notification whose result is only the harness's "already delivered as a
+message, not repeated" sentence, not one that merely quotes it. A copy that states the rule without the exemption tells
 the model to narrate exactly the turns the exemption exists to silence, so each copy must
 carry the same sentence in its own language, word for word. The whole repo is scanned, not
 a list of directories, so a copy in a new place is caught too.
@@ -22,16 +22,17 @@ DIRECTIVE_JA = re.compile(r"run-status ヘッダ.*再掲")
 
 #: Written out rather than read from a file, so a copy cannot drift by editing the source.
 EXEMPTION_EN = ("Exception (SKILL.md §6 ①): a turn woken only by a `<task-notification>` whose "
-                "status is `completed` and whose result says the report was already delivered "
-                "to you as a message and is not repeated gets no header and no narration; a "
-                "`failed`, `killed` or `stopped` notification is never exempt.")
+                "status is `completed` and whose result is only the harness's already-delivered "
+                "sentence (the report was delivered to you as a message and is not repeated) gets "
+                "no header and no narration; a result that merely quotes that sentence is not "
+                "exempt, and a `failed`, `killed` or `stopped` notification never is.")
 #: The Japanese copies live in packs, whose assets the pack validator scans for secret-shaped
 #: values; `task-notification` contains `sk-notification`, which it refuses, so the tag is
 #: described ("バックグラウンドタスクの通知") rather than named.
 EXEMPTION_JA = ("例外（SKILL.md §6 ①）は、バックグラウンドタスクの通知だけで起きたターンである。"
-                "その status が `completed` で、result が「報告はメッセージとして届け済みで、"
-                "ここでは繰り返さない」と言うなら、ヘッダもナレーションも出さない。"
-                "`failed`・`killed`・`stopped` の通知は例外にならない。")
+                "その status が `completed` で、result の中身が「報告はメッセージとして届け済みで、"
+                "ここでは繰り返さない」というハーネスの一文だけなら、ヘッダもナレーションも出さない。"
+                "この一文を引用しただけの result や、`failed`・`killed`・`stopped` の通知は例外にならない。")
 
 #: Not prose the model is handed: tests quote the directive, the changelogs and the dated
 #: design history record it, dependencies and build output are not ours.

@@ -61,8 +61,9 @@
 - SKILL.md §6 run-continuity (with every command body that repeats the header
   rule and the UserPromptSubmit reminder, which now carry one identical
   sentence citing §6 ①): a turn woken only by a `completed` task-notification whose result
-  says the report was already delivered as a message and is not repeated gets
-  no run-status header and no narration. A `failed`, `killed` or `stopped`
+  is only the harness's already-delivered sentence (the report was delivered as a
+  message and is not repeated) gets no run-status header and no narration; a
+  result that merely quotes that sentence does not count. A `failed`, `killed` or `stopped`
   notification always gets the header and a report. Do not resume a subagent
   that has already handed back just to ask a follow-up question.
 - `commands/go.md` and the deprecated `commands/rig.md` list `wakeups` in
