@@ -525,6 +525,24 @@ def test_a_ceiling_with_a_bad_value_is_an_error(tmp_path, key, bad):
     assert stored(path)[key] == bad
 
 
+def test_a_ceiling_above_10000_bp_is_an_error_and_10000_is_not(tmp_path):
+    path = ceiling(tmp_path, 10001)
+    verdict = wakeups.apply_ratchet(report_with(1, 19), path, tighten=True)
+    assert (verdict["state"], verdict["exit"]) == ("invalid", 2)
+    assert stored(path)["stale_bp_max"] == 10001
+    path = ceiling(tmp_path, 10000)
+    assert wakeups.apply_ratchet(report_with(1, 19), path)["state"] == "ok"
+
+
+def test_a_ceiling_with_a_duplicate_key_is_an_error(tmp_path):
+    path = tmp_path / "c.json"
+    path.write_text('{"schema": "rig.wakeups-ceiling/v1", "stale_bp_max": 9000, '
+                    '"min_notifications": 20, "stale_bp_max": 100}')
+    verdict = wakeups.apply_ratchet(report_with(1, 19), path, tighten=True)
+    assert (verdict["state"], verdict["exit"]) == ("invalid", 2)
+    assert "duplicate" in verdict["message"]
+
+
 @pytest.mark.parametrize("body", ["not json", "[]", '{"schema": "rig.other/v1"}'])
 def test_an_unreadable_ceiling_is_an_error(tmp_path, body):
     path = tmp_path / "c.json"

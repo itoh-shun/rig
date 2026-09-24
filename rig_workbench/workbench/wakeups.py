@@ -64,6 +64,7 @@ SCHEMA = "rig.wakeups/v1"
 CEILING_SCHEMA = "rig.wakeups-ceiling/v1"
 DEFAULT_MIN_NOTIFICATIONS = 20
 DEFAULT_CEILING_PATH = ".rig/wakeups-ceiling.json"
+MAX_BP = 10000
 
 KINDS = ("handback-dup", "failed", "killed", "fresh", "event")
 STALE_KINDS = ("handback-dup",)
@@ -379,7 +380,7 @@ def measure(transcripts: dict[str, tuple[list[dict], int]],
         "events_excluded": kinds["event"],
         "kinds": kinds,
         "stale": stale,
-        "stale_bp": stale * 10000 // total if total else None,
+        "stale_bp": stale * MAX_BP // total if total else None,
         "stale_reply_chars": sum(e["reply_chars"] for e in stale_entries),
         "stale_reply_turns": sum(1 for e in stale_entries if e["reply_chars"] > 0),
         "polls": sum(e["polls"] for e in counted),
@@ -401,14 +402,26 @@ def measure_paths(paths: Iterable[str], since_days: int | None = None,
 
 # ── ratchet ───────────────────────────────────────────────────────────────────
 
+def _no_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict:
+    doc: dict = {}
+    for key, value in pairs:
+        if key in doc:
+            raise ValueError(f"duplicate key `{key}`")
+        doc[key] = value
+    return doc
+
+
 def _load_ceiling(path: pathlib.Path) -> dict:
-    doc = json.loads(path.read_text(encoding="utf-8"))
+    doc = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=_no_duplicate_keys)
     if not isinstance(doc, dict) or doc.get("schema") != CEILING_SCHEMA:
         raise ValueError(f"not a {CEILING_SCHEMA} document")
     for key in ("stale_bp_max", "min_notifications"):
         value = doc.get(key)
         if not isinstance(value, int) or isinstance(value, bool) or value < 0:
             raise ValueError(f"`{key}` must be a non-negative integer, not {value!r}")
+    if doc["stale_bp_max"] > MAX_BP:
+        raise ValueError(f"`stale_bp_max` is basis points, at most {MAX_BP}, "
+                         f"not {doc['stale_bp_max']}")
     return doc
 
 
