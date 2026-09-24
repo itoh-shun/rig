@@ -12,8 +12,10 @@ task-notification row. The classification makes one staleness claim and no guess
 2. ``killed`` — status `killed` or `stopped`. Never stale, for the same reason.
 3. ``event`` — a notification with an `<event>` tag (a `Monitor` event), or one without a
    `<task-id>` or `<status>` (an untagged batch notice). Not a completion; excluded from
-   the denominator and counted apart. Tags are read outside `<result>…</result>`, so a
-   result that quotes `<event>` does not turn a completion into an event.
+   the denominator and counted apart. Every tag (task id, launch id, output file,
+   status, event) is read outside the result — which runs from the first `<result>` to
+   the last `</result>` — so a result that quotes a tag cannot reclassify the
+   notification or re-attribute it and its polls to another task.
 4. ``handback-dup`` — status `completed` and the whole `<result>` is the harness's own
    sentence saying the report was already delivered as a message from this task's id
    and is not repeated (`HANDBACK_SENTENCE`). The harness saying so is the evidence; a
@@ -97,7 +99,11 @@ POLLS_NOTE = ("polls: tool_uses naming a background task's id or output file bef
               "ratcheted; reads through a glob, `ls -t`, a variable or a directory are not seen.")
 
 _TAG_RE = {tag: re.compile(rf"<{tag}>(.*?)</{tag}>", re.DOTALL)
-           for tag in ("task-id", "tool-use-id", "output-file", "status", "result")}
+           for tag in ("task-id", "tool-use-id", "output-file", "status")}
+#: Greedy: from the first `<result>` to the last `</result>`, so a body that quotes
+#: `</result>` cannot end the result early and leave the rest to be read as the harness's.
+_RESULT_RE = re.compile(r"<result>(.*)</result>", re.DOTALL)
+_NOTIFICATION_END = "</task-notification>"
 _EVENT_RE = re.compile(r"<event[\s>]")
 
 
@@ -197,28 +203,47 @@ def _reply_chars(rows: list[dict], start: int) -> int:
 
 # ── classification ────────────────────────────────────────────────────────────
 
-def _outside_result(text: str) -> str:
-    """The notification with its `<result>` bodies removed: what the harness wrote, not
-    what the task reported."""
-    return _TAG_RE["result"].sub("", text)
+def split_result(text: str) -> tuple[str, str]:
+    """(outside, result): the notification with its result removed — what the harness
+    wrote — and the result body — what the task reported. The result runs from the first
+    `<result>` to the last `</result>` before the last `</task-notification>`, so a
+    report that quotes `</result>` (or any tag) stays inside the result."""
+    end = text.rfind(_NOTIFICATION_END)
+    match = _RESULT_RE.search(text if end < 0 else text[:end])
+    if match is None:
+        return text, ""
+    return text[:match.start()] + text[match.end():], match.group(1).strip()
+
+
+def fields(text: str) -> dict[str, Any]:
+    """Every value read from one notification. Tags are read outside the result only, so
+    a report quoting `<task-id>`, `<status>` or `<event>` cannot re-attribute or reclassify
+    the notification or its polls."""
+    outside, result = split_result(text)
+    return {"task_id": _tag(outside, "task-id"), "launch_id": _tag(outside, "tool-use-id"),
+            "output_file": _tag(outside, "output-file"),
+            "status": _tag(outside, "status").lower(),
+            "event": bool(_EVENT_RE.search(outside)), "result": result}
 
 
 def classify(text: str) -> str:
-    """The kind of one notification, from its text alone. Status is read before the
-    sentence (and before the event test), so a failed or killed task is never filed as a
-    repeat nor dropped from the denominator. Tags other than `<result>` are read outside
-    the result body. A status not listed here (`running`, a future one) is ``fresh``:
-    never stale, and still in the denominator."""
-    outside = _outside_result(text)
-    task_id = _tag(outside, "task-id")
-    status = _tag(outside, "status").lower()
+    """The kind of one notification, from its text alone (see `fields`)."""
+    return classify_fields(fields(text))
+
+
+def classify_fields(values: dict[str, Any]) -> str:
+    """Status is read before the sentence (and before the event test), so a failed or
+    killed task is never filed as a repeat nor dropped from the denominator. A status not
+    listed here (`running`, a future one) is ``fresh``: never stale, and still in the
+    denominator."""
+    task_id, status = values["task_id"], values["status"]
     if status == "failed":
         return "failed"
     if status in ("killed", "stopped"):
         return "killed"
-    if _EVENT_RE.search(outside) or not task_id or not status:
+    if values["event"] or not task_id or not status:
         return "event"
-    if status == "completed" and is_handback_sentence(_tag(text, "result"), task_id):
+    if status == "completed" and is_handback_sentence(values["result"], task_id):
         return "handback-dup"
     return "fresh"
 
@@ -237,17 +262,16 @@ def classify_rows(rows: list[dict]) -> list[dict]:
     for i, row in enumerate(rows):
         if not _is_notification(row):
             continue
-        text = _text(row)
-        task_id = _tag(text, "task-id")
-        launch_id = _tag(text, "tool-use-id")
-        kind = classify(text)
+        values = fields(_text(row))
+        task_id, launch_id = values["task_id"], values["launch_id"]
+        kind = classify_fields(values)
         polls = 0
         if kind != "event":
-            polls = count_polls(rows, i, task_id, launch_id, _tag(text, "output-file"),
+            polls = count_polls(rows, i, task_id, launch_id, values["output_file"],
                                 launch_pos.get(launch_id), previous_notification.get(task_id))
         if task_id:
             previous_notification[task_id] = i
-        results.append({"row": i, "task_id": task_id, "status": _tag(text, "status").lower(),
+        results.append({"row": i, "task_id": task_id, "status": values["status"],
                         "kind": kind, "polls": polls, "reply_chars": _reply_chars(rows, i)})
     return results
 

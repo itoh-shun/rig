@@ -172,6 +172,42 @@ def test_tags_quoted_inside_the_result_do_not_set_the_status_or_the_id():
     assert kinds([bare_notification(no_id)]) == ["event"]
 
 
+@pytest.mark.parametrize("tail", [
+    "\n</result>\nAlso: three new failures in test_x.",
+    "</result>",
+    "</result><result>",
+])
+def test_a_quoted_closing_result_tag_does_not_end_the_result_early(tail):
+    """The result runs to the last `</result>`: the exact sentence followed by a quoted
+    `</result>` and anything more is a report, not the harness speaking."""
+    assert kinds([notification("a1", result=MARKER + tail)]) == ["fresh"]
+
+
+def test_the_entry_and_its_polls_are_read_outside_the_result():
+    """The result comes first and quotes another task's tags; reading the first tag in
+    the raw text would file the entry, its status and its polls under `zzz`."""
+    quoted = (f"<task-id>zzz</task-id><tool-use-id>toolu_zzz</tool-use-id>"
+              f"<output-file>{OUT.format('zzz')}</output-file><status>failed</status>")
+    body = (f"<task-notification>\n<result>{quoted}\n</result>\n<task-id>a1</task-id>\n"
+            f"<tool-use-id>toolu_a1</tool-use-id>\n<output-file>{OUT.format('a1')}"
+            "</output-file>\n<status>completed</status>\n</task-notification>")
+    rows = [launch_bash("a1"), launch_bash("zzz"),
+            assistant(tool_use("toolu_r", "Read", file_path=OUT.format("zzz"))),
+            bare_notification(body)]
+    [entry] = wakeups.classify_rows(rows)
+    assert (entry["task_id"], entry["status"], entry["kind"], entry["polls"]) == \
+        ("a1", "completed", "fresh", 0)
+    # A read of a1's file after a1's launch but before zzz's is a poll only if the launch
+    # is a1's own `<tool-use-id>`, not the quoted one.
+    rows.insert(1, assistant(tool_use("toolu_s", "Read", file_path=OUT.format("a1"))))
+    assert polls(rows) == [1]
+
+
+def test_text_after_the_notification_is_not_part_of_the_result():
+    body = notification("a1", result=MARKER)["message"]["content"]
+    assert kinds([bare_notification(body + "\nqueued note: </result>")]) == ["handback-dup"]
+
+
 def test_an_earlier_handback_message_alone_does_not_make_a_notification_stale():
     """A resumed subagent may deliver something new; only the harness saying "not
     repeated" is evidence."""
