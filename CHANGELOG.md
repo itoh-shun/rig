@@ -1,5 +1,85 @@
 # Changelog
 
+## [3.4.0] - 2026-09-24
+
+### Added
+
+- **`wb wakeups`: a stale wake-up meter.** `wb wakeups --transcripts PATH…`
+  reads Claude Code session transcripts and classifies every
+  `<task-notification>`, reading the status first. `failed` and `killed`
+  (`killed`/`stopped`) are never stale. `event` covers `Monitor` events and
+  notices without a task id or status; these are counted apart and left out of
+  the denominator. `handback-dup` is a `completed` notification whose whole
+  result is the harness's own "delivered to you as a message from "<id>" … not
+  repeated" sentence, with `<id>` equal to the notification's task id, matched
+  case-insensitively with whitespace collapsed. A report that quotes the
+  sentence is not a repeat. Every tag (task id, tool-use id, output file,
+  status, `<event>`) is read outside the result, which runs from the first
+  `<result>` to the last `</result>` before `</task-notification>`. A result
+  that quotes a tag or a `</result>` therefore cannot reclassify the
+  notification or move it and its polls to another task. Everything else, including an
+  unknown status, is `fresh`. Only `handback-dup` is stale. The report gives the stale
+  share in integer basis points and the visible reply text those wake-ups cost.
+  It also reports unreadable lines and rows skipped as duplicates: paths are
+  resolved and rows are de-duplicated by `uuid` across files, because a resumed
+  session repeats its earlier rows. Two rows under one uuid that differ in
+  `type`, `origin` or `message` are reported as `uuid_conflicts`, not
+  collapsed, and a task-notification without a uuid counts as unreadable. A run with no notifications is reported as
+  `unmeasured`, never as 0. `--json` emits `rig.wakeups/v1`, and
+  `--since-days N` filters by file mtime.
+- **`polls`, reported beside it and not as staleness.** This counts tool_uses
+  that name a background task's id or output file before its notification,
+  which is what `patterns/monitor` now forbids. Reads the user asked for under
+  `orchestrate … --progress` are counted too; the meter cannot tell them apart. A poll does not make the
+  notification redundant, since the output may still have been incomplete, so
+  polls are neither stale nor ratcheted. Reads through a glob, `ls -t`, a
+  variable, or a directory go unseen.
+- **A down-only ceiling (`rig.wakeups-ceiling/v1`).** `--ratchet FILE` exits 1
+  when stale wake-ups exceed `stale_bp_max` and 0 when they do not. It exits 3
+  (not judged, the same meaning `wb gate` gives 3) when nothing was measured,
+  a line could not be read, rows conflict under one uuid, or the sample is below
+  `min_notifications` (default 20); every reason that applies is named. It exits 2 when the ceiling is missing,
+  unreadable, has a duplicate key, holds a value that is not a non-negative
+  integer, or sets `stale_bp_max` above 10000. `--init` creates a missing ceiling
+  from a sample that can be judged and refuses to overwrite one. `--tighten`
+  only lowers an existing ceiling.
+
+### Changed
+
+- `patterns/parallel-fanout`: when the next step needs every result, dispatch
+  all subagents in one message with `run_in_background: false`. They still run
+  concurrently, their results return in the same turn, and no task-notification
+  fires.
+- `patterns/monitor`: the `until … sleep` polling guidance is removed. After a
+  background launch, do not read or poll its output; the harness notification
+  is the completion signal. The one exception is when the user explicitly asked
+  for progress (`orchestrate … --progress`); `patterns/computational-orchestration`,
+  `commands/orchestrate.md` and `knowledge/orchestration-patterns` now say the
+  same. Stop a watcher whose result arrived another way.
+  `facets/instructions/loop-driver` now delegates waiting on a background
+  process to that single notification instead of a `Monitor` + `until` loop.
+- SKILL.md §6 run-continuity (with every command body that repeats the header
+  rule and the UserPromptSubmit reminder, which now carry one identical
+  sentence citing §6 ①): a turn woken only by a `completed` task-notification whose result
+  is only the harness's already-delivered sentence (the report was delivered as a
+  message and is not repeated) gets no run-status header and no narration; a
+  result that merely quotes that sentence does not count. A `failed`, `killed` or `stopped`
+  notification always gets the header and a report. Do not resume a subagent
+  that has already handed back just to ask a follow-up question.
+- `commands/go.md` and the deprecated `commands/rig.md` list `wakeups` in
+  their argument hint.
+
+### Scope and limitations
+
+- The meter only sees notifications recorded in the transcripts it is given.
+  Subagent transcripts and sessions that were not passed in are not counted,
+  nor are notifications delivered mid-turn after a tool_result (queued_command
+  attachments), which are not wake-ups.
+- `handback-dup` depends on the harness's wording. If Claude Code rewords it,
+  the count drops to 0 and the ratchet passes trivially.
+- The ceiling is a local file. Deleting it and running `--init` again resets it,
+  so it catches unnoticed drift and does not protect against tampering.
+
 ## [3.3.1] - 2026-09-18
 
 ### Fixed

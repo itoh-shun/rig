@@ -916,6 +916,38 @@ WB_CAPABILITIES: tuple[Capability, ...] = (
         exit_codes=(ExitCode(code=0, meaning="the measurement is shown"), _ERROR),
     ),
     Capability(
+        id="wb.wakeups",
+        parent="wb",
+        verb="wakeups",
+        intent="find out how often a finished background task woke the session up with nothing new to say",
+        # Reads only the transcripts it is handed; no repository or run state is needed.
+        preconditions=("none",),
+        effect_line="渡された Claude Code transcript を読み、情報のない起床を数えます。書き換えるのは --ratchet に --init / --tighten を付けたときの天井ファイルだけです",
+        # The registry has one effect class per capability, not per flag. Without --init or
+        # --tighten this only reads; with them it writes the ceiling file. Declared by the
+        # strongest thing it can do, so a confirmation is never skipped for the writing form.
+        effect_class="writes-state",
+        network="never",
+        flags=(
+            Flag(name="--transcripts", type="string-list", required=True,
+                 help="Claude Code session transcripts: jsonl files or directories (non-recursive)"),
+            Flag(name="--since-days", type="int",
+                 help="only files whose mtime is within the last N days; all of them by default"),
+            Flag(name="--json", type="bool", help="machine-readable output"),
+            Flag(name="--ratchet", type="string",
+                 help="a ceiling file to judge against: exit 1 over it, 3 when the sample cannot be judged"),
+            Flag(name="--init", type="bool", help="with --ratchet: create the ceiling at the measured value"),
+            Flag(name="--tighten", type="bool", help="with --ratchet: lower the ceiling to the measured value, never raise it"),
+        ),
+        output_schema="rig.wakeups/v1",
+        exit_codes=(
+            ExitCode(code=0, meaning="measured; with --ratchet, within the ceiling (or created / lowered)"),
+            ExitCode(code=1, meaning="with --ratchet: stale wake-ups exceed the ceiling"),
+            ExitCode(code=2, meaning="rig could not answer — bad usage, a missing path, a missing or invalid ceiling"),
+            ExitCode(code=3, meaning="with --ratchet: not judged — nothing measured, unreadable lines, or too small a sample"),
+        ),
+    ),
+    Capability(
         id="wb.note",
         parent="wb",
         verb="note",

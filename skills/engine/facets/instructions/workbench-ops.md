@@ -2,6 +2,8 @@
 
 **`/rig status` / `/rig diff` / `/rig accept` / `/rig confidence` / `/rig discard` / `/rig log` / `/rig board` / `/rig cockpit` / `/rig stats` / `/rig review` / `/rig note` / `/rig gc` / `/rig audit` / `/rig scan-secrets` / `/rig scan-injection` / `/rig scan-ja-prose` / `/rig digest` / `/rig context` / `/rig stream-checks` / `/rig stale-refs` / `/rig scan-destructive` / `/rig scan-anchors` / `/rig instincts` / `/rig gates` / `/rig receipt` / `/rig import` / `/rig contract` / `/rig intent-derive` / `/rig assurance-target` / `/rig assurance-derive` / `/rig synthesise` / `/rig dev-loop` / `/rig route-team` / `/rig budget-plan` / `/rig provenance` / `/rig expected-outcome` / `/rig effectiveness` / `/rig knowledge-candidate` / `/rig compose-options` / `/rig change-graph` / `/rig anomaly-trigger`** の手順。実体は全て `scripts/workbench.py`（`patterns/isolated-worktree` 参照）への薄い委譲で、本ファイルは**表示の整形と安全確認の追加**だけを担う。判定・状態管理をここで再実装しない（§8 Native-first）。
 
+`/rig wakeups`（3.4.0）もこの instruction が扱う。
+
 ## 共通ルール
 
 - task 作成時の `--runtime auto|native|orca` は worktree backend の選択であり provider
@@ -574,6 +576,28 @@ python3 scripts/workbench.py context [--since-days N]
 - **読み取り専用**（集計のみ）。出力はそのまま提示してよい。
 - **計測していないものを計測したことにしない**：セッション全体の context・会話・親が自分で読んだファイル・「親が本当に subagent に dispatch したか」は rig からは見えない。レポート自身がその旨を明記するので、その断り書きを削って「あなたの context 使用量」として提示しない。
 - 使いどころは「出力を増やす変更（step バナー・flow map 等）の予算を決めるとき」。`digest` が実行の質を、`context` が実行の重さを見る。
+
+## `/rig wakeups --transcripts PATH… [--since-days N] [--json] [--ratchet FILE [--init|--tighten]]`
+
+```
+python3 scripts/workbench.py wakeups --transcripts PATH… [--since-days N] [--json] [--ratchet FILE [--init|--tighten]]
+```
+
+情報のない起床（stale wake-up）の実測。Claude Code のセッション transcript（`*.jsonl`）を読む。ディレクトリは直下だけを見て、`subagents/` は含めない。各 `<task-notification>` は status から先に、次のように分類する。
+
+- `failed`（status failed）と `killed`（killed/stopped）：**決して stale にしない**。
+- `event`：`Monitor` のイベント通知と、task-id や status の無い通知。分母から外して別に数える。
+- `handback-dup`：status completed の通知のうち、`<result>` の全体がハーネス自身の一文「報告はメッセージとして届け済みで、ここでは繰り返さない」であるものだけ。その文中の id は通知の `<task-id>` と一致していなければならない。この文を引用しただけの報告は含めない。
+- `fresh`：残りすべて。知らない status も含む。
+- stale = handback-dup のみ。`stale_bp` は整数の basis point。通知が0件なら `unmeasured` であって 0 ではない。
+- `<result>` の範囲：最初の `<result>` から、`</task-notification>` より前の最後の `</result>` までとする。task-id・tool-use-id・出力ファイル・status・`<event>` の各タグは、その外だけを読む。結果が別 task のタグや `</result>` を引用しても、通知の分類も、通知と polls の帰属も変わらない。
+- 入力の重複は数えない。パスは解決してから集めるので、`../` や symlink 経由の同一ファイルは1回だけ読む。resume したセッションは前の行を同じ uuid で繰り返すため、行は `uuid` で全ファイル横断に重複除去する。除いた行数は `duplicate_rows_skipped`。同じ uuid で `type`・`origin`・`message` が違う行は重複ではなく矛盾として `uuid_conflicts` に数え、判定しない。uuid の無い通知行は読めない行として数える。
+- `polls` は stale の判定に使わない。起動から通知までに、その task-id か出力ファイルを名指しした tool_use の数で、`patterns/monitor` が禁じる振る舞いを数える。起動した tool_use と `SendMessage` は除く。glob・`ls -t`・変数・ディレクトリ経由の読みは見えない。ratchet の対象にしない。
+- `--since-days N` は**ファイルの mtime** で絞る（記録の時刻ではない）。
+- `--ratchet FILE`（`rig.wakeups-ceiling/v1`。推奨の置き場所は `.rig/wakeups-ceiling.json`）：`stale_bp_max` を超えたら exit 1。次のときは**判定しない**（exit 3、何も書かない）：通知0件、読めない行、uuid の矛盾、`min_notifications` 未満の通知数。当てはまる理由はすべて表示する。未計測を成功扱いしない。ファイルが無い・壊れている・値が非負整数でない・`stale_bp_max` が 10000 超・キーの重複、のときは exit 2。
+- `--init`：ファイルが無いときだけ、判定できる標本の実測値で作る。既存ファイルは上書きしない。`--tighten`：既存の天井を実測値まで**下げる**だけで、上げない・作らない。
+- 天井はローカルファイルにすぎない。消して `--init` し直せば高い値で作り直せるので、改ざん防止ではなく「気づかない悪化」を止める仕組みとして扱う。
+- 見えるのは渡した transcript に記録された通知だけ。レポート自身がそう明記するので、その断り書きを削らない。
 
 ## `/rig effectiveness --query <json> [--json]`
 

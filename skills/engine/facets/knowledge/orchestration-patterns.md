@@ -8,7 +8,7 @@
 |-------------|-------------|------|
 | 1回きりの並列調査・複数観点の同時収集 | `Agent × N`（直接 dispatch） | 軽量、recipe 化不要、独立したコンテキストで並列実行 |
 | 実装＋設計レビュー＋テストレビュー（3段直列） | `serial` × 3ステップ | 依存関係あり、順番が意味を持つ |
-| 長時間 CI 待ち・ポーリング | `autonomous-loop` または `monitor` | CI 完了を検知するまで待機、親コンテキストを汚染しない |
+| 長時間 CI 待ち | `monitor`（完了通知を1回待つ）、定期的な再確認が要件なら `autonomous-loop` | `monitor` は出力をポーリングせずハーネスの完了通知を待つ。進捗を読むのは user が明示的に求めたときだけ |
 | 定型並列レビュー（security/design/test） | `parallel-fanout` + `review-gate` | N 観点を1メッセージで dispatch し verdict を機械集約 |
 | 大規模実装・独立タスクが多数ある場合 | subagent-driven（Agent を複数）| タスクを独立分割し並列または逐次に dispatch |
 

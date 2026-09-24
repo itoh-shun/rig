@@ -56,7 +56,7 @@ from .config import (TASK_TYPES, VALID_CRITERION_STATUS, VALID_STEP_STATUS,
                      VALID_VERDICT)
 from .confidence import cmd_confidence
 from ..assurance.compose_options import cmd_compose_options, non_negative_diff
-from .context_report import cmd_context
+from .context_report import cmd_context, cmd_wakeups
 from .destructive import cmd_scan_destructive
 from .detection_corpus import cmd_drill_corpus
 from .digest import cmd_digest
@@ -622,6 +622,24 @@ def build_parser() -> argparse.ArgumentParser:
                        "context-minimal never had")
     p.add_argument("--since-days", type=int, help="restrict to the last N days (default: all)")
     p.set_defaults(func=cmd_context)
+
+    p = sub.add_parser("wakeups", help="count task-notification wake-ups that carried nothing "
+                       "new, in Claude Code transcripts; optionally judge them against a "
+                       "down-only ceiling")
+    p.add_argument("--transcripts", nargs="+", metavar="PATH", required=True,
+                   help="Claude Code session transcripts: jsonl files or directories "
+                        "(non-recursive *.jsonl)")
+    p.add_argument("--since-days", type=int,
+                   help="only files whose mtime is within the last N days (default: all)")
+    p.add_argument("--json", action="store_true", help="machine-readable output (rig.wakeups/v1)")
+    p.add_argument("--ratchet", metavar="FILE",
+                   help="judge against the ceiling in FILE (suggested: .rig/wakeups-ceiling.json): "
+                        "exit 1 over it, 3 when the sample cannot be judged")
+    p.add_argument("--init", action="store_true",
+                   help="with --ratchet: create FILE at the measured value; refuses an existing FILE")
+    p.add_argument("--tighten", action="store_true",
+                   help="with --ratchet: lower the ceiling to the measured value; never raises it")
+    p.set_defaults(func=cmd_wakeups)
 
     p = sub.add_parser("audit", help="list the audit log of `accept --force` etc. (`.rig/audit.jsonl`)")
     p.add_argument("--limit", type=int, help="show only the latest N entries")

@@ -59,3 +59,5 @@ RUN 中は各ターン冒頭に次の run-status ヘッダを1行必ず再掲す
 ```
 ▸ rig | recipe: <name[tier]|ad-hoc> | step: <id> (<n>/<N>) | gate: <none|pending|passed|REJECT> | backend: <manual|workflow> | mode: <gated|autonomous>
 ```
+
+例外（SKILL.md §6 ①）は、バックグラウンドタスクの通知だけで起きたターンである。その status が `completed` で、result の中身が「報告はメッセージとして届け済みで、ここでは繰り返さない」というハーネスの一文だけなら、ヘッダもナレーションも出さない。この一文を引用しただけの result や、`failed`・`killed`・`stopped` の通知は例外にならない。

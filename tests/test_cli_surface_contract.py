@@ -66,7 +66,7 @@ WB_SUBCOMMANDS = frozenset({
     "review", "route", "route-team", "scan-anchors", "scan-destructive",
     "scan-injection", "scan-ja-prose", "scan-secrets", "stale-refs", "stats",
     "status", "step", "stream-checks", "synthesise", "trace-commit",
-    "verify-provenance",
+    "verify-provenance", "wakeups",
 })
 
 # `rig-wb govern --help` — the org/team layer.

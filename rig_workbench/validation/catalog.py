@@ -474,7 +474,7 @@ PACK_ROW_ONLY = frozenset({
     "accept", "audit", "board", "cockpit", "confidence", "context", "diff", "digest",
     "discard", "gates", "gc", "instincts", "log", "note", "review", "scan-anchors",
     "scan-destructive", "scan-injection", "scan-secrets", "stale-refs", "stats", "status",
-    "stream-checks",
+    "stream-checks", "wakeups",
 })
 
 
