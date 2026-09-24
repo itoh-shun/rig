@@ -13,8 +13,11 @@
   result is the harness's own "delivered to you as a message from "<id>" … not
   repeated" sentence, with `<id>` equal to the notification's task id, matched
   case-insensitively with whitespace collapsed. A report that quotes the
-  sentence is not a repeat, and tags are read outside `<result>`, so a result
-  that quotes `<event>` stays a completion. Everything else, including an
+  sentence is not a repeat. Every tag (task id, tool-use id, output file,
+  status, `<event>`) is read outside the result, which runs from the first
+  `<result>` to the last `</result>` before `</task-notification>`. A result
+  that quotes a tag or a `</result>` therefore cannot reclassify the
+  notification or move it and its polls to another task. Everything else, including an
   unknown status, is `fresh`. Only `handback-dup` is stale. The report gives the stale
   share in integer basis points and the visible reply text those wake-ups cost.
   It also reports unreadable lines and rows skipped as duplicates: paths are
@@ -35,7 +38,7 @@
   when stale wake-ups exceed `stale_bp_max` and 0 when they do not. It exits 3
   (not judged, the same meaning `wb gate` gives 3) when nothing was measured,
   a line could not be read, rows conflict under one uuid, or the sample is below
-  `min_notifications` (default 20). It exits 2 when the ceiling is missing,
+  `min_notifications` (default 20); every reason that applies is named. It exits 2 when the ceiling is missing,
   unreadable, has a duplicate key, holds a value that is not a non-negative
   integer, or sets `stale_bp_max` above 10000. `--init` creates a missing ceiling
   from a sample that can be judged and refuses to overwrite one. `--tighten`
