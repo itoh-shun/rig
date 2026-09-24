@@ -51,6 +51,7 @@ import tempfile
 import time
 from typing import Any, Iterable
 
+from .. import console
 from .state import die, reject
 
 SCHEMA = "rig.wakeups/v1"
@@ -538,5 +539,5 @@ def cmd_wakeups(args: argparse.Namespace) -> None:
         # 3, not 0: a sample too small or too damaged to judge is not a pass
         # (commands/go.md: unmeasured is never success), and not 1 either — nothing was
         # judged. Same meaning `wb gate` and `wb contract` give 3.
-        print(f"[NOT JUDGED] {ratchet['message']}", file=sys.stderr)
+        console.write_line(f"[NOT JUDGED] {ratchet['message']}", stream=sys.stderr)
         sys.exit(EXIT_NOT_JUDGED)
