@@ -135,8 +135,10 @@ The problem of opening several terminals and forgetting which was doing what goe
 
 ## run-continuity (SKILL.md §6)
 
-While a RUN is active, restate this run-status header as a single line at the top of every turn. Do not drop it right after an interruption, a question, or tool output — the visibility is the evidence that the harness is driving. The one exception is a turn woken only by a `<task-notification>` whose status is `completed` and whose result says the report was already delivered to you as a message and is not repeated: print no header and no narration, and continue pending work silently or end the turn. A `failed`, `killed` or `stopped` notification is never exempt — it always gets the header and a report, even if you looked at the output earlier:
+While a RUN is active, restate this run-status header as a single line at the top of every turn. Do not drop it right after an interruption, a question, or tool output — the visibility is the evidence that the harness is driving:
 
 ```
 ▸ rig | task: <task_id> | recipe: <name[tier]|ad-hoc> | step: <id> (<n>/<N>) | gate: <none|pending [(try N/K)]|passed|REJECT> | backend: <manual|workflow> | mode: <gated|autonomous>
 ```
+
+Exception (SKILL.md §6 ①): a turn woken only by a `<task-notification>` whose status is `completed` and whose result says the report was already delivered to you as a message and is not repeated gets no header and no narration; a `failed`, `killed` or `stopped` notification is never exempt. In that turn continue pending work silently or end the turn; a failure gets the header and a report even if you looked at the output earlier.

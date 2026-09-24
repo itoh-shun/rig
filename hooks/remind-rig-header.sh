@@ -21,7 +21,7 @@ if tail -n 200 "$transcript_path" 2>/dev/null | grep -q '▸ rig |'; then
 
 ▸ rig | recipe: <name[tier]|ad-hoc> | step: <id> (<n>/<N>) | gate: <none|pending|passed|REJECT> | backend: <manual|workflow> | mode: <gated|autonomous>
 
-If the RUN has already ended (the user returned to normal mode with "that is enough / exit / stop", or the flow completion report was delivered), you may ignore this directive. Plain conversational turns by talk itself (short chit-chat not delegated to a flow) are also exempt. So is a turn woken only by a <task-notification> with status completed whose result says the report was already delivered to you as a message and is not repeated: print no header and no narration. A failed, killed or stopped notification is never exempt: it always gets the header and a report.
+If the RUN has already ended (the user returned to normal mode with "that is enough / exit / stop", or the flow completion report was delivered), you may ignore this directive. Plain conversational turns by talk itself (short chit-chat not delegated to a flow) are also exempt. Exception (SKILL.md §6 ①): a turn woken only by a `<task-notification>` whose status is `completed` and whose result says the report was already delivered to you as a message and is not repeated gets no header and no narration; a `failed`, `killed` or `stopped` notification is never exempt.
 EOF
   )
 
