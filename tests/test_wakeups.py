@@ -432,7 +432,8 @@ def test_cli_transcript_flags_need_transcripts(tmp_path, flag):
 
 #: sha256 of what `workbench.py context` printed for CONTEXT_FIXTURE at v3.3.1, before
 #: `--transcripts` existed (2103 bytes). Without `--transcripts` the output must not move
-#: by a byte. Regenerate only by running the v3.3.1 tree, never this one.
+#: by a byte. An intentional change to the legacy output must regenerate this from the
+#: new expected output on purpose — never by re-running whatever this tree prints.
 V331_CONTEXT_SHA256 = "c881cca248dd9fb94ffa93ce2e7c6029464485ecad69717cdff2e6eff6691c4b"
 CONTEXT_FIXTURE = "\n".join([
     '{"ts": "2026-09-01T10:00:00+00:00", "command": "wb board", "bytes": 1200}',

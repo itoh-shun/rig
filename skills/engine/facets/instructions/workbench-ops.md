@@ -572,7 +572,7 @@ python3 scripts/workbench.py context --transcripts PATH… [--since-days N] [--j
 
 `context-minimal` の実測。rig が親セッションへ印字した stdout は tool result としてそのまま親 context に戻るので、**rig の stdout こそが rig の context 消費**——そこだけを invocation 単位で `.rig/context.jsonl`（gitignore 済み・`runs.jsonl` と同格）に記録し、コマンド別に集計して出す。既定は全期間、`--since-days N` で期間を絞る。`RIG_NO_CONTEXT_METER=1` で記録自体を止められる。
 
-- **読み取り専用**（集計のみ）。出力はそのまま提示してよい。
+- `--ratchet … --tighten` で天井ファイルを下げるとき以外は**読み取り専用**（集計のみ）。出力はそのまま提示してよい。
 - **計測していないものを計測したことにしない**：セッション全体の context・会話・親が自分で読んだファイル・「親が本当に subagent に dispatch したか」は rig からは見えない。レポート自身がその旨を明記するので、その断り書きを削って「あなたの context 使用量」として提示しない。
 - 使いどころは「出力を増やす変更（step バナー・flow map 等）の予算を決めるとき」。`digest` が実行の質を、`context` が実行の重さを見る。
 
