@@ -21,8 +21,8 @@
 
 1. **1つのメッセージ**に複数の `Agent` ツール呼び出しを含めて送信する（ツール呼び出しをメッセージ間で分割しない）。
 2. 各 subagent に対してコンテキスト・評価軸・出力形式を明示する。出力形式は `output-contracts/review-verdict` など機械抽出可能な形式を使う。
-3. **次の step が全結果に依存するなら、全 `Agent` 呼び出しを `run_in_background: false` で送る**。review-gate の集約や verify の fan-in がこの通常のケースにあたる。それでも並列に走り、結果は同じターンの tool result として揃って返る。task-notification は1件も発火しない。
-   - バックグラウンド dispatch は、待つ間に親が**本当に別の仕事を持つ**ときだけ使う。その場合は handback メッセージ**が**結果そのものである。後から来る task-notification の status が `completed` で、「メッセージとして届け済み・繰り返さない」と言うなら黙って続ける。これは SKILL.md §6 run-continuity ①の例外にあたる。`failed`・`killed`・`stopped` の通知は必ず報告する。
+3. **次の step が全結果に依存するなら、全 `Agent` 呼び出しを `run_in_background: false` で送る**。review-gate の集約や verify の fan-in がこれにあたり、ふつうはこちらを使う。それでも並列に走り、結果は同じターンの tool result として揃って返る。task-notification は1件も発火しない。
+   - バックグラウンド dispatch は、待つ間、親にやることが別にあるときだけ使う。その場合は handback メッセージが結果そのものだ。後から task-notification が status `completed` で届いたら、result を見る。その中身が「報告はメッセージとして届け済みで、ここでは繰り返さない」というハーネスの一文だけなら黙って続ける。これは SKILL.md §6 run-continuity ①の例外にあたる。この一文を引用しただけの result は例外にならない。`failed`・`killed`・`stopped` の通知は必ず報告する。
 4. 全結果を受け取ったら集約処理へ進む（→ `pattern: review-gate` 参照）。
 
 ## subagent プロンプト設計の注意点

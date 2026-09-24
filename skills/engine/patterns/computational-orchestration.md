@@ -107,7 +107,7 @@ strict の phase / attempt / evidence も記録時点の情報で、その場で
 通常の foreground subagent に起動だけ任せて終了させない。
 ユーザーが `--progress` で進捗を明示的に求めているので、`patterns/monitor` の「出力を覗かない」の
 例外にあたる。出力ファイルの新しい部分を `Read` で量を区切って確認する。観測した工程の変化と長い待機を
-ユーザーへ伝える。`--progress` の無い起動では出力を覗かず、完了通知を待つ。`TaskOutput` は利用可能な旧環境だけの互換手段とする。
+ユーザーへ伝える。`--progress` の無い起動では出力を覗かず、完了通知を待つ。`TaskOutput` は、使える古い環境でだけ使う。
 
 最初の legacy step が終わる前は state が存在しないことがあるため、まず実行出力を確認する。
 ツールの timeout はコマンド停止を保証しない。同じ background task を確認し、run を
