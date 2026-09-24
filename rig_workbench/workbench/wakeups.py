@@ -56,11 +56,12 @@ import pathlib
 import re
 import sys
 import tempfile
-import time
 from typing import Any, Iterable
 
 from .. import console
 from .state import die, reject
+from ..ports import Clock
+from ..ports.local import SYSTEM_CLOCK
 
 SCHEMA = "rig.wakeups/v1"
 CEILING_SCHEMA = "rig.wakeups-ceiling/v1"
@@ -307,10 +308,12 @@ def count_polls(rows: list[dict], at: int, task_id: str, launch_id: str,
 # ── aggregation ───────────────────────────────────────────────────────────────
 
 def collect_files(paths: Iterable[str], since_days: int | None = None,
-                  now: float | None = None) -> list[pathlib.Path]:
+                  now: float | None = None,
+                  clock: Clock = SYSTEM_CLOCK) -> list[pathlib.Path]:
     """Expand files and directories (non-recursive `*.jsonl`) into a sorted list of
     resolved paths, so one file reached twice is read once. `since_days` keeps files whose
-    mtime is at or after now - N days. Raises FileNotFoundError for a missing path."""
+    mtime is at or after now - N days; `now` is read from `clock` unless it is given.
+    Raises FileNotFoundError for a missing path."""
     found: set[pathlib.Path] = set()
     for raw in paths:
         path = pathlib.Path(raw)
@@ -321,7 +324,7 @@ def collect_files(paths: Iterable[str], since_days: int | None = None,
         else:
             raise FileNotFoundError(raw)
     if since_days is not None:
-        cutoff = (time.time() if now is None else now) - since_days * 86400
+        cutoff = (clock.now().timestamp() if now is None else now) - since_days * 86400
         found = {p for p in found if p.stat().st_mtime >= cutoff}
     return sorted(found, key=str)
 
