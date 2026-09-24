@@ -1,4 +1,4 @@
-"""`wb context --transcripts`: stale wake-ups, classified and ratcheted.
+"""`wb wakeups`: stale wake-ups, classified and ratcheted.
 
 Every fixture is synthetic and built here — real transcripts are private. Each fixture
 carries exactly the one feature that separates the branch under test from its
@@ -75,205 +75,251 @@ def kinds(rows):
     return [entry["kind"] for entry in wakeups.classify_rows(rows)]
 
 
-# ── classification branches ───────────────────────────────────────────────────
-
-def test_a_result_saying_it_was_delivered_as_a_message_is_a_handback_dup():
-    rows = [notification("a1", result="This agent's report was delivered to you as a "
-                                      "message from \"a1\". Read it there; it is not "
-                                      "repeated here.")]
-    assert kinds(rows) == ["handback-dup"]
+#: The harness's wording for a subagent that already handed back (see
+#: `wakeups.HANDBACK_MARKER`). Synthetic id; the sentence is Claude Code's, not a transcript's.
+MARKER = ("This agent's report was delivered to you as a message from \"a1\" "
+          "(its SubagentHandback call). Read it there; it is not repeated here.")
 
 
-def test_an_earlier_handback_from_the_same_task_is_a_handback_dup_without_the_marker():
-    assert kinds([handback("a1"), notification("a1")]) == ["handback-dup"]
+def polls(rows):
+    return [entry["polls"] for entry in wakeups.classify_rows(rows)]
 
 
-def test_a_handback_from_another_task_or_after_the_notification_does_not_count():
-    assert kinds([handback("other"), notification("a1")]) == ["fresh"]
-    assert kinds([notification("a1"), handback("a1")]) == ["fresh"]
+def with_uuid(row, uuid):
+    return {**row, "uuid": uuid}
 
 
-def test_reading_the_output_file_before_the_notification_is_read_early():
-    rows = [launch_bash("b1"), tool_result("toolu_b1"),
-            assistant(tool_use("r1", "Read", file_path=OUT.format("b1"))),
-            tool_result("r1"), notification("b1")]
-    assert kinds(rows) == ["read-early"]
+def event_notification(task_id="m1", line="ERROR: disk full"):
+    body = (f"<task-notification>\n<task-id>{task_id}</task-id>\n"
+            f"<event>{line}</event>\n</task-notification>")
+    return {"type": "user", "origin": {"kind": "task-notification"},
+            "message": {"role": "user", "content": body}}
 
 
-def test_naming_the_task_id_in_any_tool_input_is_read_early():
-    rows = [launch_bash("b1"), assistant(tool_use("t1", "TaskOutput", task_id="b1")),
-            notification("b1")]
-    assert kinds(rows) == ["read-early"]
+def bare_notification(body):
+    return {"type": "user", "origin": {"kind": "task-notification"},
+            "message": {"role": "user", "content": body}}
 
 
-def test_resuming_with_sendmessage_is_not_consuming_the_result():
-    rows = [launch_bash("b1"), assistant(tool_use("s1", "SendMessage", to="b1",
-                                                  message="one more thing")),
-            notification("b1")]
-    assert kinds(rows) == ["fresh"]
+# ── classification ────────────────────────────────────────────────────────────
+
+def test_completed_with_the_harness_marker_is_a_handback_dup():
+    assert kinds([notification("a1", result=MARKER)]) == ["handback-dup"]
 
 
-def test_the_launching_tool_use_does_not_count_as_reading_its_own_output():
-    """A background command may name its own output path; launching is not reading."""
-    rows = [assistant(tool_use("toolu_b1", "Bash", run_in_background=True,
-                               command=f"make test | tee {OUT.format('b1')}")),
-            notification("b1")]
-    assert kinds(rows) == ["fresh"]
+@pytest.mark.parametrize("variant", [
+    MARKER.upper(),
+    MARKER.replace(" ", "\n  "),
+    "report was DELIVERED  to\tyou as a message.  It is Not\nRepeated here.",
+])
+def test_the_marker_matches_regardless_of_case_and_whitespace(variant):
+    assert kinds([notification("a1", result=variant)]) == ["handback-dup"]
 
 
-def test_a_read_before_the_previous_notification_of_the_same_task_is_already_spent():
-    rows = [launch_bash("m1"), assistant(tool_use("r1", "Read", file_path=OUT.format("m1"))),
-            notification("m1"), notification("m1")]
-    assert kinds(rows) == ["read-early", "fresh"]
+@pytest.mark.parametrize("partial", [
+    "the report was delivered to you as a message",
+    "it is not repeated here",
+])
+def test_half_of_the_marker_is_not_the_marker(partial):
+    assert kinds([notification("a1", result=partial)]) == ["fresh"]
 
 
-def test_a_read_after_the_previous_notification_counts_for_the_next_one():
-    rows = [launch_bash("m1"), notification("m1"),
-            assistant(tool_use("r1", "Read", file_path=OUT.format("m1"))),
-            notification("m1")]
-    assert kinds(rows) == ["fresh", "read-early"]
+def test_an_earlier_handback_message_alone_does_not_make_a_notification_stale():
+    """A resumed subagent may deliver something new; only the harness saying "not
+    repeated" is evidence."""
+    assert kinds([handback("a1"), notification("a1", result="new findings")]) == ["fresh"]
 
 
-def test_a_tool_use_before_the_launch_does_not_count():
-    rows = [assistant(tool_use("r0", "Read", file_path=OUT.format("b1"))),
-            launch_bash("b1"), notification("b1")]
-    assert kinds(rows) == ["fresh"]
+def test_failed_is_never_stale_even_after_a_handback_and_with_the_marker():
+    rows = [handback("a1"), notification("a1", status="failed", result=MARKER)]
+    assert kinds(rows) == ["failed"]
+    report = wakeups.measure({"s.jsonl": (rows, 0)})
+    assert report["stale"] == 0 and report["kinds"]["failed"] == 1
+    assert report["total_notifications"] == 1
 
 
 @pytest.mark.parametrize("status", ["killed", "stopped", "KILLED"])
-def test_killed_and_stopped_are_their_own_kind(status):
-    assert kinds([launch_bash("k1"), notification("k1", status=status)]) == ["killed"]
+def test_killed_after_a_poll_is_killed_and_never_stale(status):
+    rows = [launch_bash("b1"),
+            assistant(tool_use("toolu_r", "Read", file_path=OUT.format("b1"))),
+            notification("b1", status=status, result=MARKER)]
+    assert kinds(rows) == ["killed"]
+    assert polls(rows) == [1]
+    assert wakeups.measure({"s.jsonl": (rows, 0)})["stale"] == 0
 
 
-def test_killed_is_not_stale():
-    report = wakeups.measure({"s.jsonl": ([launch_bash("k1"),
-                                           notification("k1", status="killed")], 0)})
-    assert report["kinds"]["killed"] == 1
-    assert report["stale"] == 0
-    assert report["stale_bp"] == 0
+def test_an_unknown_status_is_fresh():
+    assert kinds([notification("a1", status="running", result=MARKER)]) == ["fresh"]
 
 
-def test_failed_is_fresh():
-    assert kinds([launch_bash("f1"), notification("f1", status="failed")]) == ["fresh"]
+def test_monitor_events_and_untagged_notices_are_events():
+    rows = [event_notification(),
+            bare_notification("<task-notification>3 background tasks finished</task-notification>"),
+            bare_notification("<task-notification><task-id>x</task-id></task-notification>"),
+            bare_notification("<task-notification><status>completed</status></task-notification>")]
+    assert kinds(rows) == ["event"] * 4
 
 
-# ── precedence ────────────────────────────────────────────────────────────────
-
-def test_handback_dup_wins_over_read_early():
-    rows = [launch_bash("a1"), assistant(tool_use("r1", "Read", file_path=OUT.format("a1"))),
-            notification("a1", result="delivered to you as a message")]
+def test_events_are_left_out_of_the_denominator():
+    rows = [notification("a1", result=MARKER), notification("a2")]
+    rows += [event_notification(f"m{i}") for i in range(6)]
     report = wakeups.measure({"s.jsonl": (rows, 0)})
-    assert report["kinds"]["handback-dup"] == 1
-    assert report["kinds"]["read-early"] == 0
-
-
-def test_read_early_wins_over_killed():
-    rows = [launch_bash("k1"), assistant(tool_use("r1", "Read", file_path=OUT.format("k1"))),
-            notification("k1", status="killed")]
-    assert kinds(rows) == ["read-early"]
-
-
-# ── robustness ────────────────────────────────────────────────────────────────
-
-def test_malformed_lines_are_counted_never_dropped():
-    good = json.dumps(notification("x1"))
-    rows, unreadable = wakeups.parse_lines([good, "{not json", "", "[1, 2]", "  \n", good])
-    assert len(rows) == 2
-    assert unreadable == 2
-
-
-def test_unreadable_lines_reach_the_report_per_file_and_in_total(tmp_path):
-    (tmp_path / "a.jsonl").write_text(json.dumps(notification("x1")) + "\n{broken\n",
-                                      encoding="utf-8")
-    report = wakeups.measure_paths([str(tmp_path)])
-    assert report["unreadable_lines"] == 1
-    assert report["per_file"][str(tmp_path / "a.jsonl")]["unreadable_lines"] == 1
+    assert report["total_notifications"] == 2
+    assert report["events_excluded"] == 6
+    assert report["stale_bp"] == 5000
 
 
 def test_list_content_reads_the_same_as_string_content():
-    rows = [launch_bash("b1"), assistant(tool_use("r1", "Read", file_path=OUT.format("b1"))),
-            notification("b1", as_list=True)]
-    assert kinds(rows) == ["read-early"]
-    assert kinds([notification("a1", result="delivered to you as a message",
-                               as_list=True)]) == ["handback-dup"]
+    assert kinds([notification("a1", result=MARKER, as_list=True)]) == ["handback-dup"]
 
 
-def test_a_notification_missing_every_tag_is_fresh_and_does_not_match_everything():
-    bare = {"type": "user", "origin": {"kind": "task-notification"},
-            "message": {"content": "<task-notification></task-notification>"}}
-    rows = [assistant(tool_use("r1", "Read", file_path="/anything")), bare,
-            {"type": "user", "origin": {"kind": "task-notification"}}, {"origin": "odd"}]
-    assert kinds(rows) == ["fresh", "fresh"]
+def test_rows_that_are_not_task_notifications_are_ignored():
+    rows = [human(MARKER), assistant(text(MARKER)), handback("a1")]
+    assert kinds(rows) == []
 
 
-# ── what the user felt ────────────────────────────────────────────────────────
+# ── polls: behaviour, not staleness ───────────────────────────────────────────
+
+def test_reading_only_the_output_file_path_counts_as_a_poll():
+    """The output path here does not contain the task id, so only the output-file needle
+    can see this read."""
+    path = "/tmp/elsewhere/build.log"
+    rows = [launch_bash("b1"),
+            assistant(tool_use("toolu_r", "Bash", command=f"tail -n 5 {path}")),
+            notification("b1", output_file=path)]
+    assert polls(rows) == [1]
+
+
+def test_naming_the_task_id_counts_as_a_poll():
+    rows = [launch_bash("b1"),
+            assistant(tool_use("toolu_r", "TaskOutput", task_id="b1")),
+            notification("b1", output_file="/tmp/x.log")]
+    assert polls(rows) == [1]
+
+
+def test_every_poll_is_counted_not_just_the_first():
+    rows = [launch_bash("b1")]
+    rows += [assistant(tool_use(f"toolu_r{i}", "Read", file_path=OUT.format("b1")))
+             for i in range(3)]
+    rows.append(notification("b1"))
+    assert polls(rows) == [3]
+
+
+def test_the_launch_and_sendmessage_are_not_polls():
+    rows = [assistant(tool_use("toolu_b1", "Bash", command=f"make > {OUT.format('b1')}",
+                               run_in_background=True)),
+            assistant(tool_use("toolu_s", "SendMessage", to="b1", message="and also?")),
+            notification("b1")]
+    assert polls(rows) == [0]
+
+
+def test_a_tool_use_before_the_launch_is_not_a_poll():
+    rows = [assistant(tool_use("toolu_r", "Read", file_path=OUT.format("b1"))),
+            launch_bash("b1"), notification("b1")]
+    assert polls(rows) == [0]
+
+
+def test_the_window_restarts_after_each_notification_of_the_same_task():
+    """A handback-dup, then a read, then a re-notification: the read belongs to the second
+    notification's window only."""
+    rows = [launch_bash("a1"),
+            notification("a1", result=MARKER),
+            assistant(tool_use("toolu_r", "Read", file_path=OUT.format("a1"))),
+            notification("a1", result="more")]
+    assert kinds(rows) == ["handback-dup", "fresh"]
+    assert polls(rows) == [0, 1]
+
+
+def test_polls_never_make_a_notification_stale():
+    rows = [launch_bash("b1"),
+            assistant(tool_use("toolu_r", "Read", file_path=OUT.format("b1"))),
+            notification("b1")]
+    report = wakeups.measure({"s.jsonl": (rows, 0)})
+    assert report["kinds"]["fresh"] == 1
+    assert report["stale"] == 0 and report["stale_bp"] == 0
+    assert report["polls"] == 1 and report["polled_notifications"] == 1
+
+
+# ── reading and aggregation ───────────────────────────────────────────────────
+
+def test_malformed_lines_are_counted_never_dropped():
+    rows, unreadable = wakeups.parse_lines(['{"type": "user"}', "not json", "[1, 2]", "", "  "])
+    assert len(rows) == 1 and unreadable == 2
+
 
 def test_reply_chars_sum_visible_text_until_the_next_real_user_turn():
-    rows = [notification("a1", result="delivered to you as a message"),
-            assistant(text("abc"), tool_use("t1", "Bash", command="ls")),
-            tool_result("t1"),
-            assistant(text("de")),
+    rows = [notification("a1", result=MARKER),
+            assistant(text("12345"), tool_use("toolu_x", "Bash", command="ls")),
+            tool_result("toolu_x"),
+            assistant(text("678")),
             human("next"),
             assistant(text("not counted"))]
-    [entry] = wakeups.classify_rows(rows)
-    assert entry["reply_chars"] == 5
-
-
-def test_stale_reply_totals_count_only_stale_wakeups_with_visible_text():
-    rows = [notification("a1", result="delivered to you as a message"),
-            assistant(text("中身は先ほど伝えたとおり")),
-            notification("a2", result="delivered to you as a message"),
-            notification("f1"), assistant(text("fresh reply, not counted"))]
     report = wakeups.measure({"s.jsonl": (rows, 0)})
-    assert report["stale"] == 2
-    assert report["stale_reply_turns"] == 1
-    assert report["stale_reply_chars"] == len("中身は先ほど伝えたとおり")
+    assert report["stale_reply_chars"] == 8 and report["stale_reply_turns"] == 1
 
 
-# ── aggregation ───────────────────────────────────────────────────────────────
-
-def test_stale_bp_is_integer_basis_points():
-    rows = [notification("a1", result="delivered to you as a message"),
-            notification("f1"), notification("f2")]
-    report = wakeups.measure({"s.jsonl": (rows, 0)})
-    assert report["state"] == "measured"
-    assert report["stale_bp"] == 3333
+def test_stale_bp_is_integer_basis_points_and_zero_notifications_is_unmeasured():
+    rows = [notification("a1", result=MARKER)] + [notification(f"f{i}") for i in range(2)]
+    assert wakeups.measure({"s.jsonl": (rows, 0)})["stale_bp"] == 3333
+    empty = wakeups.measure({"s.jsonl": ([human("hi")], 0)})
+    assert empty["state"] == "unmeasured" and empty["stale_bp"] is None
 
 
-def test_nothing_measured_is_unmeasured_not_zero():
-    report = wakeups.measure({})
-    assert report["state"] == "unmeasured"
-    assert report["stale_bp"] is None
-    assert "unmeasured" in wakeups.render_human(report)
+def test_rows_repeated_under_the_same_uuid_in_another_file_count_once():
+    first = [with_uuid(notification("a1", result=MARKER), "u1"),
+             with_uuid(notification("a2"), "u2")]
+    resumed = first + [with_uuid(notification("a3"), "u3")]
+    report = wakeups.measure({"a.jsonl": (first, 0), "b.jsonl": (resumed, 0)})
+    assert report["total_notifications"] == 3
+    assert report["stale"] == 1
+    assert report["duplicate_rows_skipped"] == 2
 
 
-def test_the_report_states_what_it_does_not_see():
-    report = wakeups.measure({})
-    assert "Only task-notifications recorded in the given transcripts" in report["not_seen"]
-    assert report["not_seen"] in wakeups.render_human(report)
+def test_rows_without_a_uuid_are_kept():
+    rows = [notification("a1"), notification("a1")]
+    report = wakeups.measure({"a.jsonl": (rows, 0), "b.jsonl": (list(rows), 0)})
+    assert report["total_notifications"] == 4
+    assert report["duplicate_rows_skipped"] == 0
 
 
-def test_directories_are_searched_non_recursively_and_output_is_sorted(tmp_path):
-    (tmp_path / "subagents").mkdir()
-    (tmp_path / "subagents" / "agent.jsonl").write_text(json.dumps(notification("s")) + "\n")
-    (tmp_path / "b.jsonl").write_text(json.dumps(notification("b")) + "\n")
-    (tmp_path / "a.jsonl").write_text(json.dumps(notification("a")) + "\n")
-    (tmp_path / "notes.txt").write_text("x")
-    report = wakeups.measure_paths([str(tmp_path)])
-    assert list(report["per_file"]) == [str(tmp_path / "a.jsonl"), str(tmp_path / "b.jsonl")]
+def write_transcript(path, stale, fresh, extra_lines=()):
+    rows = [notification(f"d{i}", result=MARKER) for i in range(stale)]
+    rows += [notification(f"f{i}") for i in range(fresh)]
+    lines = [json.dumps(r) for r in rows] + list(extra_lines)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
+def test_one_file_reached_through_dotdot_and_a_symlink_is_read_once(tmp_path):
+    (tmp_path / "d").mkdir()
+    real = write_transcript(tmp_path / "d" / "s.jsonl", stale=1, fresh=1)
+    link = tmp_path / "link.jsonl"
+    link.symlink_to(real)
+    dotted = tmp_path / "d" / ".." / "d" / "s.jsonl"
+    report = wakeups.measure_paths([str(real), str(dotted), str(link), str(tmp_path / "d")])
+    assert report["files"] == 1
     assert report["total_notifications"] == 2
-    assert wakeups.render_json(report) == wakeups.render_json(
-        wakeups.measure_paths([str(tmp_path / "b.jsonl"), str(tmp_path)]))
 
 
-def test_since_days_filters_files_by_mtime(tmp_path):
-    old = tmp_path / "old.jsonl"
-    new = tmp_path / "new.jsonl"
-    for path in (old, new):
-        path.write_text(json.dumps(notification(path.stem)) + "\n")
-    ten_days_ago = time.time() - 10 * 86400
-    os.utime(old, (ten_days_ago, ten_days_ago))
-    assert [p.name for p in wakeups.collect_files([str(tmp_path)], since_days=7)] == ["new.jsonl"]
+def test_directories_are_searched_non_recursively(tmp_path):
+    write_transcript(tmp_path / "b.jsonl", 0, 1)
+    write_transcript(tmp_path / "a.jsonl", 0, 1)
+    (tmp_path / "sub").mkdir()
+    write_transcript(tmp_path / "sub" / "c.jsonl", 0, 1)
+    (tmp_path / "notes.txt").write_text("x")
+    names = [p.name for p in wakeups.collect_files([str(tmp_path)])]
+    assert names == ["a.jsonl", "b.jsonl"]
+
+
+def test_since_days_keeps_a_file_exactly_at_the_cutoff_and_drops_one_second_older(tmp_path):
+    now = 2_000_000_000.0
+    cutoff = now - 3 * 86400
+    at = write_transcript(tmp_path / "at.jsonl", 0, 1)
+    older = write_transcript(tmp_path / "older.jsonl", 0, 1)
+    os.utime(at, (cutoff, cutoff))
+    os.utime(older, (cutoff - 1, cutoff - 1))
+    names = [p.name for p in wakeups.collect_files([str(tmp_path)], since_days=3, now=now)]
+    assert names == ["at.jsonl"]
 
 
 def test_a_missing_path_is_an_error_not_an_empty_measurement(tmp_path):
@@ -281,12 +327,20 @@ def test_a_missing_path_is_an_error_not_an_empty_measurement(tmp_path):
         wakeups.collect_files([str(tmp_path / "nope.jsonl")])
 
 
+def test_the_report_states_what_it_does_not_see():
+    report = wakeups.measure({"s.jsonl": ([notification("a1")], 0)})
+    assert report["not_seen"] == wakeups.NOT_SEEN
+    assert "not a staleness claim" in report["polls_note"].lower()
+    human_text = wakeups.render_human(report)
+    assert wakeups.NOT_SEEN in human_text and wakeups.POLLS_NOTE in human_text
+
+
 # ── ratchet ───────────────────────────────────────────────────────────────────
 
-def report_with(stale, fresh):
-    rows = [notification(f"d{i}", result="delivered to you as a message") for i in range(stale)]
+def report_with(stale, fresh, unreadable=0):
+    rows = [notification(f"d{i}", result=MARKER) for i in range(stale)]
     rows += [notification(f"f{i}") for i in range(fresh)]
-    return wakeups.measure({"s.jsonl": (rows, 0)})
+    return wakeups.measure({"s.jsonl": (rows, unreadable)})
 
 
 def ceiling(tmp_path, stale_bp_max, min_notifications=20, **extra):
@@ -302,88 +356,123 @@ def stored(path):
     return json.loads(path.read_text())
 
 
-def test_a_small_sample_is_never_judged_and_never_tightens(tmp_path):
-    path = ceiling(tmp_path, 0, min_notifications=20)
-    verdict = wakeups.apply_ratchet(report_with(stale=5, fresh=0), path, tighten=True)
-    assert verdict["state"] == "insufficient-sample"
-    assert verdict["exit"] == 0
-    assert stored(path)["stale_bp_max"] == 0
+def test_over_the_ceiling_exits_1_and_leaves_the_file(tmp_path):
+    path = ceiling(tmp_path, 1000)
+    verdict = wakeups.apply_ratchet(report_with(3, 17), path, tighten=True)
+    assert (verdict["state"], verdict["exit"]) == ("over", 1)
+    assert stored(path)["stale_bp_max"] == 1000
 
 
-def test_over_the_ceiling_fails(tmp_path):
-    path = ceiling(tmp_path, 1000, min_notifications=4)
-    verdict = wakeups.apply_ratchet(report_with(stale=2, fresh=2), path, tighten=False)
-    assert (verdict["state"], verdict["exit"]) == ("fail", 1)
-
-
-def test_exactly_at_the_ceiling_passes(tmp_path):
-    path = ceiling(tmp_path, 5000, min_notifications=4)
-    verdict = wakeups.apply_ratchet(report_with(stale=2, fresh=2), path, tighten=True)
+def test_exactly_at_the_ceiling_exits_0(tmp_path):
+    path = ceiling(tmp_path, 1500)
+    verdict = wakeups.apply_ratchet(report_with(3, 17), path)
     assert (verdict["state"], verdict["exit"]) == ("ok", 0)
-    assert stored(path)["stale_bp_max"] == 5000
+
+
+@pytest.mark.parametrize("stale,fresh,unreadable", [
+    (0, 0, 0),     # nothing measured
+    (1, 18, 0),    # 19 < 20
+    (1, 29, 1),    # enough, but a line could not be read
+])
+def test_what_cannot_be_judged_exits_3_and_writes_nothing(tmp_path, stale, fresh, unreadable):
+    path = ceiling(tmp_path, 5000)
+    before = path.read_bytes()
+    verdict = wakeups.apply_ratchet(report_with(stale, fresh, unreadable), path, tighten=True)
+    assert (verdict["state"], verdict["exit"]) == ("not-judged", 3)
+    assert path.read_bytes() == before
 
 
 def test_tighten_lowers_the_ceiling_and_keeps_other_keys(tmp_path):
-    path = ceiling(tmp_path, 9000, min_notifications=4, note="kept")
-    verdict = wakeups.apply_ratchet(report_with(stale=1, fresh=3), path, tighten=True)
+    path = ceiling(tmp_path, 2000, note="kept")
+    verdict = wakeups.apply_ratchet(report_with(1, 19), path, tighten=True)
     assert (verdict["state"], verdict["exit"]) == ("tightened", 0)
-    assert stored(path) == {"schema": "rig.wakeups-ceiling/v1", "stale_bp_max": 2500,
-                            "min_notifications": 4, "note": "kept"}
+    assert stored(path) == {"schema": "rig.wakeups-ceiling/v1", "stale_bp_max": 500,
+                            "min_notifications": 20, "note": "kept"}
 
 
 def test_below_the_ceiling_without_tighten_leaves_the_file_alone(tmp_path):
-    path = ceiling(tmp_path, 9000, min_notifications=4)
-    verdict = wakeups.apply_ratchet(report_with(stale=1, fresh=3), path, tighten=False)
-    assert (verdict["state"], verdict["exit"]) == ("ok", 0)
-    assert stored(path)["stale_bp_max"] == 9000
+    path = ceiling(tmp_path, 2000)
+    assert wakeups.apply_ratchet(report_with(1, 19), path)["state"] == "ok"
+    assert stored(path)["stale_bp_max"] == 2000
 
 
 def test_tighten_never_raises_the_ceiling(tmp_path):
-    path = ceiling(tmp_path, 100, min_notifications=4)
-    verdict = wakeups.apply_ratchet(report_with(stale=3, fresh=1), path, tighten=True)
-    assert (verdict["state"], verdict["exit"]) == ("fail", 1)
+    path = ceiling(tmp_path, 100)
+    verdict = wakeups.apply_ratchet(report_with(4, 16), path, tighten=True)
+    assert verdict["exit"] == 1
     assert stored(path)["stale_bp_max"] == 100
 
 
-def test_a_missing_ceiling_without_tighten_is_an_error_with_a_hint(tmp_path):
-    verdict = wakeups.apply_ratchet(report_with(1, 30), tmp_path / "c.json", tighten=False)
-    assert (verdict["state"], verdict["exit"]) == ("missing", 2)
-    assert "--tighten" in verdict["message"]
-    assert not (tmp_path / "c.json").exists()
+def test_the_lowering_helper_refuses_anything_not_lower():
+    for value in (100, 101):
+        with pytest.raises(ValueError):
+            wakeups._lowered({"stale_bp_max": 100}, value)
 
 
-def test_a_missing_ceiling_with_tighten_is_created_at_the_measured_value(tmp_path):
+def test_a_missing_ceiling_is_an_error_even_with_tighten(tmp_path):
     path = tmp_path / ".rig" / "wakeups-ceiling.json"
-    verdict = wakeups.apply_ratchet(report_with(stale=1, fresh=19), path, tighten=True)
+    for tighten in (False, True):
+        verdict = wakeups.apply_ratchet(report_with(1, 19), path, tighten=tighten)
+        assert (verdict["state"], verdict["exit"]) == ("missing", 2)
+        assert "--init" in verdict["message"]
+    assert not path.exists()
+
+
+def test_init_creates_a_missing_ceiling_at_the_measured_value(tmp_path):
+    path = tmp_path / ".rig" / "wakeups-ceiling.json"
+    verdict = wakeups.apply_ratchet(report_with(1, 19), path, init=True)
     assert (verdict["state"], verdict["exit"]) == ("created", 0)
     assert stored(path) == {"schema": "rig.wakeups-ceiling/v1", "stale_bp_max": 500,
                             "min_notifications": 20}
 
 
-def test_a_missing_ceiling_is_not_created_from_a_small_sample(tmp_path):
-    path = tmp_path / "c.json"
-    verdict = wakeups.apply_ratchet(report_with(stale=0, fresh=19), path, tighten=True)
-    assert verdict["state"] == "insufficient-sample"
-    assert not path.exists()
+def test_init_never_overwrites_and_never_creates_from_what_cannot_be_judged(tmp_path):
+    path = ceiling(tmp_path, 100)
+    verdict = wakeups.apply_ratchet(report_with(1, 19), path, init=True)
+    assert verdict["exit"] == 2 and stored(path)["stale_bp_max"] == 100
+    fresh_path = tmp_path / "new" / "c.json"
+    assert wakeups.apply_ratchet(report_with(1, 5), fresh_path, init=True)["exit"] == 3
+    assert wakeups.apply_ratchet(report_with(1, 29, 1), fresh_path, init=True)["exit"] == 3
+    assert not fresh_path.exists()
 
 
-def test_nothing_measured_never_tightens_even_when_the_file_asks_for_no_sample(tmp_path):
-    path = ceiling(tmp_path, 500, min_notifications=0)
-    verdict = wakeups.apply_ratchet(wakeups.measure({}), path, tighten=True)
-    assert verdict["state"] == "insufficient-sample"
-    assert verdict["exit"] == 0
-    assert stored(path)["stale_bp_max"] == 500
+def test_init_and_tighten_together_are_refused(tmp_path):
+    verdict = wakeups.apply_ratchet(report_with(1, 19), tmp_path / "c.json",
+                                    init=True, tighten=True)
+    assert verdict["exit"] == 2 and not (tmp_path / "c.json").exists()
 
 
-@pytest.mark.parametrize("body", ["{broken", json.dumps({"schema": "other/v1"}),
-                                  json.dumps({"schema": "rig.wakeups-ceiling/v1",
-                                              "stale_bp_max": "10", "min_notifications": 1})])
+@pytest.mark.parametrize("key", ["stale_bp_max", "min_notifications"])
+@pytest.mark.parametrize("bad", [True, False, -1, "x", 1.5, None])
+def test_a_ceiling_with_a_bad_value_is_an_error(tmp_path, key, bad):
+    path = ceiling(tmp_path, 1000)
+    doc = stored(path)
+    doc[key] = bad
+    path.write_text(json.dumps(doc))
+    verdict = wakeups.apply_ratchet(report_with(1, 19), path, tighten=True)
+    assert (verdict["state"], verdict["exit"]) == ("invalid", 2)
+    assert stored(path)[key] == bad
+
+
+@pytest.mark.parametrize("body", ["not json", "[]", '{"schema": "rig.other/v1"}'])
 def test_an_unreadable_ceiling_is_an_error(tmp_path, body):
     path = tmp_path / "c.json"
     path.write_text(body)
-    verdict = wakeups.apply_ratchet(report_with(1, 30), path, tighten=True)
-    assert (verdict["state"], verdict["exit"]) == ("invalid", 2)
-    assert path.read_text() == body
+    assert wakeups.apply_ratchet(report_with(1, 19), path)["exit"] == 2
+
+
+def test_a_failed_write_leaves_the_old_ceiling_and_no_temp_file(tmp_path, monkeypatch):
+    path = ceiling(tmp_path, 2000)
+    before = path.read_bytes()
+
+    def boom(src, dst):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(wakeups.os, "replace", boom)
+    with pytest.raises(OSError):
+        wakeups.apply_ratchet(report_with(1, 19), path, tighten=True)
+    assert path.read_bytes() == before
+    assert sorted(p.name for p in path.parent.iterdir()) == [path.name]
 
 
 # ── the CLI ───────────────────────────────────────────────────────────────────
@@ -394,40 +483,53 @@ def run_cli(args, cwd):
                           capture_output=True, text=True, cwd=cwd, timeout=60, env=env)
 
 
-def write_transcript(path, stale, fresh):
-    rows = [notification(f"d{i}", result="delivered to you as a message") for i in range(stale)]
-    rows += [notification(f"f{i}") for i in range(fresh)]
-    path.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
-    return path
-
-
-def test_cli_ratchet_failure_prints_the_report_then_exits_1(tmp_path):
+def test_cli_over_the_ceiling_prints_the_report_then_exits_1(tmp_path):
     transcript = write_transcript(tmp_path / "s.jsonl", stale=10, fresh=10)
     path = ceiling(tmp_path, 1000)
-    result = run_cli(["context", "--transcripts", transcript, "--ratchet", path,
+    result = run_cli(["wakeups", "--transcripts", transcript, "--ratchet", path,
                       "--tighten", "--json"], tmp_path)
-    assert result.returncode == 1
+    assert result.returncode == 1, result.stderr
     payload = json.loads(result.stdout)
-    assert payload["stale_bp"] == 5000
-    assert payload["ratchet"]["state"] == "fail"
+    assert payload["stale_bp"] == 5000 and payload["ratchet"]["state"] == "over"
     assert "exceed the ceiling" in result.stderr
     assert stored(path)["stale_bp_max"] == 1000
 
 
-def test_cli_human_output_names_the_counts(tmp_path):
+def test_cli_not_judged_exits_3_with_a_line_saying_so(tmp_path):
+    transcript = write_transcript(tmp_path / "s.jsonl", stale=0, fresh=30,
+                                  extra_lines=["{broken"])
+    path = ceiling(tmp_path, 1000)
+    result = run_cli(["wakeups", "--transcripts", transcript, "--ratchet", path], tmp_path)
+    assert result.returncode == 3, result.stderr
+    assert "[NOT JUDGED]" in result.stderr and "unreadable" in result.stderr
+    assert "stale (handback-dup): 0" in result.stdout
+
+
+def test_cli_runs_outside_a_git_repository_and_names_the_counts(tmp_path):
     transcript = write_transcript(tmp_path / "s.jsonl", stale=1, fresh=3)
-    result = run_cli(["context", "--transcripts", transcript], tmp_path)
-    assert result.returncode == 0
-    assert "stale: 1 = 2500 bp" in result.stdout
+    result = run_cli(["wakeups", "--transcripts", transcript], tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert "stale (handback-dup): 1 = 2500 bp" in result.stdout
     assert "Only task-notifications recorded" in result.stdout
 
 
-@pytest.mark.parametrize("flag", [["--json"], ["--ratchet", "c.json"], ["--tighten"]])
-def test_cli_transcript_flags_need_transcripts(tmp_path, flag):
-    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
-    result = run_cli(["context", *flag], tmp_path)
+@pytest.mark.parametrize("flag", ["--init", "--tighten"])
+def test_cli_init_and_tighten_need_ratchet(tmp_path, flag):
+    transcript = write_transcript(tmp_path / "s.jsonl", stale=1, fresh=3)
+    result = run_cli(["wakeups", "--transcripts", transcript, flag], tmp_path)
     assert result.returncode == 2
-    assert "needs --transcripts" in result.stderr
+    assert "need --ratchet" in result.stderr
+
+
+def test_cli_requires_transcripts(tmp_path):
+    assert run_cli(["wakeups"], tmp_path).returncode == 2
+
+
+def test_context_no_longer_carries_the_wakeup_flags(tmp_path):
+    result = run_cli(["context", "--help"], tmp_path)
+    assert result.returncode == 0
+    for flag in ("--transcripts", "--ratchet", "--tighten", "--json"):
+        assert flag not in result.stdout
 
 
 #: sha256 of what `workbench.py context` printed for CONTEXT_FIXTURE at v3.3.1, before
@@ -454,10 +556,3 @@ def test_context_without_transcripts_is_byte_identical_to_v331(tmp_path):
     assert hashlib.sha256(result.stdout.encode()).hexdigest() == V331_CONTEXT_SHA256
 
 
-def test_the_writer_itself_refuses_to_raise_or_keep_the_ceiling():
-    """Defence in depth: `apply_ratchet` checks the verdict before it tightens, and the
-    one helper that builds the lowered document refuses anything that is not lower."""
-    for value in (100, 101):
-        with pytest.raises(ValueError):
-            wakeups._lowered({"stale_bp_max": 100}, value)
-    assert wakeups._lowered({"stale_bp_max": 100, "k": 1}, 99) == {"stale_bp_max": 99, "k": 1}
