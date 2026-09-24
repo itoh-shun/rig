@@ -141,4 +141,4 @@ While a RUN is active, restate this run-status header as a single line at the to
 ▸ rig | task: <task_id> | recipe: <name[tier]|ad-hoc> | step: <id> (<n>/<N>) | gate: <none|pending [(try N/K)]|passed|REJECT> | backend: <manual|workflow> | mode: <gated|autonomous>
 ```
 
-Exception (SKILL.md §6 ①): a turn woken only by a `<task-notification>` whose status is `completed` and whose result says the report was already delivered to you as a message and is not repeated gets no header and no narration; a `failed`, `killed` or `stopped` notification is never exempt. In that turn continue pending work silently or end the turn; a failure gets the header and a report even if you looked at the output earlier.
+Exception (SKILL.md §6 ①): a turn woken only by a `<task-notification>` whose status is `completed` and whose result says the report was already delivered to you as a message and is not repeated gets no header and no narration; a `failed`, `killed` or `stopped` notification is never exempt.
