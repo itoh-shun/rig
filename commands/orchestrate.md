@@ -154,8 +154,10 @@ For an explicitly requested long run **in interactive Claude Code only**:
    launches Bash with `run_in_background: true`, an explicit `--out` path and
    `--progress`. Keep the returned task ID and output-file path. A foreground
    subagent must not launch a long command and then end its own turn.
-2. Read bounded new portions of that output file with `Read` at reasonable
-   intervals. Use `TaskOutput` only as a compatibility fallback when available;
+2. Because the user explicitly asked for progress (`--progress`), this is the
+   one exception to `patterns/monitor`'s "do not poll the output": read bounded
+   new portions of that output file with `Read` at reasonable intervals. Without
+   `--progress`, do not read it; wait for the completion notification. Use `TaskOutput` only as a compatibility fallback when available;
    current Claude Code marks it deprecated. Relay observed phase changes and,
    during long waits, the reported elapsed waiting time. Before a state exists,
    use this output; do not infer failure from an absent first checkpoint.
