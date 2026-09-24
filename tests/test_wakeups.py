@@ -75,10 +75,15 @@ def kinds(rows):
     return [entry["kind"] for entry in wakeups.classify_rows(rows)]
 
 
-#: The harness's wording for a subagent that already handed back (see
-#: `wakeups.HANDBACK_MARKER`). Synthetic id; the sentence is Claude Code's, not a transcript's.
-MARKER = ("This agent's report was delivered to you as a message from \"a1\" "
-          "(its SubagentHandback call). Read it there; it is not repeated here.")
+#: The harness's sentence for a subagent that already handed back (see
+#: `wakeups.HANDBACK_SENTENCE`), written out here rather than imported so a change to the
+#: constant is caught. Synthetic id; the sentence is Claude Code's, not a transcript's.
+def marker(task_id):
+    return (f"This agent's report was delivered to you as a message from \"{task_id}\" "
+            "(its SubagentHandback call). Read it there; it is not repeated here.")
+
+
+MARKER = marker("a1")
 
 
 def polls(rows):
@@ -110,18 +115,45 @@ def test_completed_with_the_harness_marker_is_a_handback_dup():
 @pytest.mark.parametrize("variant", [
     MARKER.upper(),
     MARKER.replace(" ", "\n  "),
-    "report was DELIVERED  to\tyou as a message.  It is Not\nRepeated here.",
+    "\n\t" + MARKER.replace("it is not", "It  is\tNOT") + "  \n",
 ])
-def test_the_marker_matches_regardless_of_case_and_whitespace(variant):
+def test_the_sentence_matches_regardless_of_case_and_whitespace(variant):
     assert kinds([notification("a1", result=variant)]) == ["handback-dup"]
 
 
 @pytest.mark.parametrize("partial", [
     "the report was delivered to you as a message",
     "it is not repeated here",
+    "report was DELIVERED  to\tyou as a message.  It is Not\nRepeated here.",
 ])
-def test_half_of_the_marker_is_not_the_marker(partial):
+def test_part_of_the_sentence_is_not_the_sentence(partial):
     assert kinds([notification("a1", result=partial)]) == ["fresh"]
+
+
+@pytest.mark.parametrize("result", [
+    "Summary of findings. The harness would say: " + MARKER,
+    MARKER + " Also: three new failures in test_x.",
+])
+def test_a_report_quoting_the_sentence_is_fresh(result):
+    assert kinds([notification("a1", result=result)]) == ["fresh"]
+
+
+def test_the_sentence_for_another_task_id_is_fresh():
+    assert kinds([notification("a2", result=MARKER)]) == ["fresh"]
+    assert kinds([notification("a2", result=marker("a2"))]) == ["handback-dup"]
+
+
+def test_an_event_tag_inside_the_result_does_not_make_an_event():
+    rows = [notification("a1", result="log line: <event>disk full</event>"),
+            notification("a2", result="<event>x</event> " + marker("a2"))]
+    assert kinds(rows) == ["fresh", "fresh"]
+
+
+def test_a_status_quoted_inside_the_result_does_not_set_the_status():
+    body = ("<task-notification>\n<task-id>a1</task-id>\n<status>completed</status>\n"
+            "<result>the job printed <status>failed</status> once\n</result>\n"
+            "</task-notification>")
+    assert kinds([bare_notification(body)]) == ["fresh"]
 
 
 def test_an_earlier_handback_message_alone_does_not_make_a_notification_stale():
@@ -283,7 +315,7 @@ def test_rows_without_a_uuid_are_kept():
 
 
 def write_transcript(path, stale, fresh, extra_lines=()):
-    rows = [notification(f"d{i}", result=MARKER) for i in range(stale)]
+    rows = [notification(f"d{i}", result=marker(f"d{i}")) for i in range(stale)]
     rows += [notification(f"f{i}") for i in range(fresh)]
     lines = [json.dumps(r) for r in rows] + list(extra_lines)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -338,7 +370,7 @@ def test_the_report_states_what_it_does_not_see():
 # ── ratchet ───────────────────────────────────────────────────────────────────
 
 def report_with(stale, fresh, unreadable=0):
-    rows = [notification(f"d{i}", result=MARKER) for i in range(stale)]
+    rows = [notification(f"d{i}", result=marker(f"d{i}")) for i in range(stale)]
     rows += [notification(f"f{i}") for i in range(fresh)]
     return wakeups.measure({"s.jsonl": (rows, unreadable)})
 

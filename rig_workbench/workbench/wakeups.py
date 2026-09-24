@@ -12,12 +12,14 @@ task-notification row. The classification makes one staleness claim and no guess
 2. ``killed`` — status `killed` or `stopped`. Never stale, for the same reason.
 3. ``event`` — a notification with an `<event>` tag (a `Monitor` event), or one without a
    `<task-id>` or `<status>` (an untagged batch notice). Not a completion; excluded from
-   the denominator and counted apart.
-4. ``handback-dup`` — status `completed` and the `<result>` carries the harness's own
-   statement that the report was already delivered as a message and is not repeated
-   (`HANDBACK_MARKER`). The harness saying so is the evidence; an earlier handback
-   message alone is not, because a resumed subagent may deliver something new.
-5. ``fresh`` — everything else.
+   the denominator and counted apart. Tags are read outside `<result>…</result>`, so a
+   result that quotes `<event>` does not turn a completion into an event.
+4. ``handback-dup`` — status `completed` and the whole `<result>` is the harness's own
+   sentence saying the report was already delivered as a message from this task's id
+   and is not repeated (`HANDBACK_SENTENCE`). The harness saying so is the evidence; a
+   report that merely quotes the sentence, or an earlier handback message alone, is
+   not, because a resumed subagent may deliver something new.
+5. ``fresh`` — everything else, including a status this module does not know.
 
 stale = handback-dup only. The denominator is every notification except ``event``.
 
@@ -63,12 +65,15 @@ KINDS = ("handback-dup", "failed", "killed", "fresh", "event")
 STALE_KINDS = ("handback-dup",)
 
 #: Harness wording, not rig's: Claude Code's `<result>` for a subagent that already handed
-#: back reads "This agent's report was delivered to you as a message from "<id>" (its
-#: SubagentHandback call). Read it there; it is not repeated here." Every fragment must be
-#: present, matched case-insensitively with whitespace collapsed. If the harness rewords
-#: it, handback-dup drops to 0 and the ratchet passes trivially — so a sudden 0 after a
-#: Claude Code upgrade is a reason to look here, not a win. Kept in this one place.
-HANDBACK_MARKER = ("delivered to you as a message", "not repeated")
+#: back is exactly this sentence, with `{task_id}` the notification's own `<task-id>`. The
+#: whole result must be the sentence, matched case-insensitively with whitespace
+#: collapsed; a report that quotes it among other text is not the harness speaking. If
+#: the harness rewords it, handback-dup drops to 0 and the ratchet passes trivially — so
+#: a sudden 0 after a Claude Code upgrade is a reason to look here, not a win. Kept in
+#: this one place.
+HANDBACK_SENTENCE = ("This agent's report was delivered to you as a message from "
+                     "\"{task_id}\" (its SubagentHandback call). Read it there; "
+                     "it is not repeated here.")
 
 #: Exit statuses of the ratchet. 3 is rig's existing "no verdict was reached" code
 #: (`wb gate` / `wb contract` pending, the orchestrator parked on a human gate): the
@@ -78,7 +83,9 @@ EXIT_OK, EXIT_OVER, EXIT_ERROR, EXIT_NOT_JUDGED = 0, 1, 2, 3
 NOT_SEEN = ("Only task-notifications recorded in the given transcripts are counted. "
             "Transcripts not passed in, subagent transcripts, and wake-ups a session "
             "never wrote down are invisible here; a low number means few stale "
-            "wake-ups in these files, not in every session.")
+            "wake-ups in these files, not in every session. Notifications delivered "
+            "mid-turn after a tool_result (queued_command attachments) are not "
+            "wake-ups and are not counted.")
 
 POLLS_NOTE = ("polls: tool_uses naming a background task's id or output file before its "
               "notification — what patterns/monitor forbids. Not a staleness claim and not "
@@ -93,9 +100,10 @@ def _normalise(text: str) -> str:
     return " ".join(text.split()).lower()
 
 
-def carries_handback_marker(result: str) -> bool:
-    folded = _normalise(result)
-    return all(_normalise(part) in folded for part in HANDBACK_MARKER)
+def is_handback_sentence(result: str, task_id: str) -> bool:
+    """True when the whole result is the harness's handback sentence for `task_id`."""
+    return bool(task_id) and (_normalise(result)
+                              == _normalise(HANDBACK_SENTENCE.format(task_id=task_id)))
 
 
 # ── row access ────────────────────────────────────────────────────────────────
@@ -184,19 +192,28 @@ def _reply_chars(rows: list[dict], start: int) -> int:
 
 # ── classification ────────────────────────────────────────────────────────────
 
+def _outside_result(text: str) -> str:
+    """The notification with its `<result>` bodies removed: what the harness wrote, not
+    what the task reported."""
+    return _TAG_RE["result"].sub("", text)
+
+
 def classify(text: str) -> str:
     """The kind of one notification, from its text alone. Status is read before the
-    marker (and before the event test), so a failed or killed task is never filed as a
-    repeat nor dropped from the denominator."""
-    task_id = _tag(text, "task-id")
-    status = _tag(text, "status").lower()
+    sentence (and before the event test), so a failed or killed task is never filed as a
+    repeat nor dropped from the denominator. Tags other than `<result>` are read outside
+    the result body. A status not listed here (`running`, a future one) is ``fresh``:
+    never stale, and still in the denominator."""
+    outside = _outside_result(text)
+    task_id = _tag(outside, "task-id")
+    status = _tag(outside, "status").lower()
     if status == "failed":
         return "failed"
     if status in ("killed", "stopped"):
         return "killed"
-    if _EVENT_RE.search(text) or not task_id or not status:
+    if _EVENT_RE.search(outside) or not task_id or not status:
         return "event"
-    if status == "completed" and carries_handback_marker(_tag(text, "result")):
+    if status == "completed" and is_handback_sentence(_tag(text, "result"), task_id):
         return "handback-dup"
     return "fresh"
 
