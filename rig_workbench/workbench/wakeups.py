@@ -1,60 +1,100 @@
-"""`wb context --transcripts` — count the wake-ups that told the parent nothing new.
+"""`wb wakeups` — count the wake-ups that told the parent nothing new.
 
 Claude Code re-invokes the parent session when a background task finishes: a
-`<task-notification>` arrives as a user turn. Twice over, that turn carries nothing:
+`<task-notification>` arrives as a user turn. Under rig every such turn costs a
+run-status header plus narration, so a notification that repeats nothing is a turn the
+user pays for and learns nothing from.
 
-* a subagent that handed back already delivered its report as an agent message
-  (`origin.handback`), and the later notification says so and repeats nothing;
-* a background command whose output file the parent already read (or polled) is
-  re-announced after the parent has moved on.
+This module reads Claude Code session transcripts (`*.jsonl`) and classifies every
+task-notification row. The classification makes one staleness claim and no guesses:
 
-Under rig each such turn costs a run-status header plus narration. This module reads
-Claude Code session transcripts (`*.jsonl`) and classifies every task-notification row,
-first match wins:
+1. ``failed`` — status `failed`. Never stale: a failure is always news.
+2. ``killed`` — status `killed` or `stopped`. Never stale, for the same reason.
+3. ``event`` — a notification with an `<event>` tag (a `Monitor` event), or one without a
+   `<task-id>` or `<status>` (an untagged batch notice). Not a completion; excluded from
+   the denominator and counted apart.
+4. ``handback-dup`` — status `completed` and the `<result>` carries the harness's own
+   statement that the report was already delivered as a message and is not repeated
+   (`HANDBACK_MARKER`). The harness saying so is the evidence; an earlier handback
+   message alone is not, because a resumed subagent may deliver something new.
+5. ``fresh`` — everything else.
 
-1. ``handback-dup`` — `<result>` says the report was "delivered to you as a message",
-   or an earlier row is a handback agent message from the same task id;
-2. ``read-early`` — an assistant tool_use after the launch and after the previous
-   notification of the same task id, and before this one, whose serialised input names
-   the task id or the output file. The launching tool_use itself and `SendMessage`
-   (resuming a subagent is not consuming its result) do not count;
-3. ``killed`` — status `killed` or `stopped`;
-4. ``fresh`` — everything else.
+stale = handback-dup only. The denominator is every notification except ``event``.
 
-stale = handback-dup + read-early. ``killed`` is reported apart and is not stale: a
-watcher killed by the OOM killer is a different defect with a different fix.
+Separately, and **not** a staleness claim, ``polls`` counts behaviour
+`patterns/monitor.md` forbids: assistant tool_uses that name a background task's id or
+its output file between the launch (or that task's previous notification) and its
+notification. The launching tool_use and `SendMessage` (resuming a subagent is not
+reading its output) are excluded. Whether a poll made the later notification redundant
+is not knowable from the transcript — the output may have been incomplete when read — so
+polls never make a notification stale and are not ratcheted. Known blind spots: a read
+that reaches the file without naming it (a glob, `ls -t | head -1`, a variable, a parent
+directory) is not counted, and a task id that happens to appear inside unrelated input is.
+
+Rows are de-duplicated by `uuid` across every file (a resumed session repeats earlier
+rows under the same uuids); rows without a uuid are kept. Paths are resolved first, so
+one file reached twice (`../`, a symlink) is read once.
 
 What it cannot see is stated in every report: only notifications recorded in the
-transcripts it was given. Pure functions over parsed rows; stdlib only.
+transcripts it was given. Stdlib only.
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import pathlib
 import re
+import sys
 import tempfile
 import time
 from typing import Any, Iterable
+
+from .state import die, reject
 
 SCHEMA = "rig.wakeups/v1"
 CEILING_SCHEMA = "rig.wakeups-ceiling/v1"
 DEFAULT_MIN_NOTIFICATIONS = 20
 DEFAULT_CEILING_PATH = ".rig/wakeups-ceiling.json"
 
-KINDS = ("handback-dup", "read-early", "killed", "fresh")
-STALE_KINDS = ("handback-dup", "read-early")
+KINDS = ("handback-dup", "failed", "killed", "fresh", "event")
+STALE_KINDS = ("handback-dup",)
 
-DELIVERED_MARKER = "delivered to you as a message"
+#: Harness wording, not rig's: Claude Code's `<result>` for a subagent that already handed
+#: back reads "This agent's report was delivered to you as a message from "<id>" (its
+#: SubagentHandback call). Read it there; it is not repeated here." Every fragment must be
+#: present, matched case-insensitively with whitespace collapsed. If the harness rewords
+#: it, handback-dup drops to 0 and the ratchet passes trivially — so a sudden 0 after a
+#: Claude Code upgrade is a reason to look here, not a win. Kept in this one place.
+HANDBACK_MARKER = ("delivered to you as a message", "not repeated")
+
+#: Exit statuses of the ratchet. 3 is rig's existing "no verdict was reached" code
+#: (`wb gate` / `wb contract` pending, the orchestrator parked on a human gate): the
+#: sample could not be judged, which is neither a pass nor a rejection.
+EXIT_OK, EXIT_OVER, EXIT_ERROR, EXIT_NOT_JUDGED = 0, 1, 2, 3
 
 NOT_SEEN = ("Only task-notifications recorded in the given transcripts are counted. "
             "Transcripts not passed in, subagent transcripts, and wake-ups a session "
             "never wrote down are invisible here; a low number means few stale "
             "wake-ups in these files, not in every session.")
 
+POLLS_NOTE = ("polls: tool_uses naming a background task's id or output file before its "
+              "notification — what patterns/monitor forbids. Not a staleness claim and not "
+              "ratcheted; reads through a glob, `ls -t`, a variable or a directory are not seen.")
+
 _TAG_RE = {tag: re.compile(rf"<{tag}>(.*?)</{tag}>", re.DOTALL)
            for tag in ("task-id", "tool-use-id", "output-file", "status", "result")}
+_EVENT_RE = re.compile(r"<event[\s>]")
+
+
+def _normalise(text: str) -> str:
+    return " ".join(text.split()).lower()
+
+
+def carries_handback_marker(result: str) -> bool:
+    folded = _normalise(result)
+    return all(_normalise(part) in folded for part in HANDBACK_MARKER)
 
 
 # ── row access ────────────────────────────────────────────────────────────────
@@ -143,6 +183,23 @@ def _reply_chars(rows: list[dict], start: int) -> int:
 
 # ── classification ────────────────────────────────────────────────────────────
 
+def classify(text: str) -> str:
+    """The kind of one notification, from its text alone. Status is read before the
+    marker (and before the event test), so a failed or killed task is never filed as a
+    repeat nor dropped from the denominator."""
+    task_id = _tag(text, "task-id")
+    status = _tag(text, "status").lower()
+    if status == "failed":
+        return "failed"
+    if status in ("killed", "stopped"):
+        return "killed"
+    if _EVENT_RE.search(text) or not task_id or not status:
+        return "event"
+    if status == "completed" and carries_handback_marker(_tag(text, "result")):
+        return "handback-dup"
+    return "fresh"
+
+
 def classify_rows(rows: list[dict]) -> list[dict]:
     """Classify every task-notification row in one transcript, in file order."""
     launch_pos: dict[str, tuple[int, int]] = {}
@@ -152,51 +209,40 @@ def classify_rows(rows: list[dict]) -> list[dict]:
             if isinstance(tool_id, str) and tool_id not in launch_pos:
                 launch_pos[tool_id] = (i, b)
 
-    handback_seen: set[str] = set()
     previous_notification: dict[str, int] = {}
     results: list[dict] = []
     for i, row in enumerate(rows):
-        origin = _origin(row)
-        if origin.get("handback") is True and isinstance(origin.get("senderTaskId"), str):
-            handback_seen.add(origin["senderTaskId"])
-            continue
         if not _is_notification(row):
             continue
         text = _text(row)
         task_id = _tag(text, "task-id")
         launch_id = _tag(text, "tool-use-id")
-        output_file = _tag(text, "output-file")
-        status = _tag(text, "status").lower()
-        result = _tag(text, "result")
-
-        if DELIVERED_MARKER in result or (task_id and task_id in handback_seen):
-            kind = "handback-dup"
-        elif _read_early(rows, i, task_id, launch_id, output_file,
-                         launch_pos.get(launch_id), previous_notification.get(task_id)):
-            kind = "read-early"
-        elif status in ("killed", "stopped"):
-            kind = "killed"
-        else:
-            kind = "fresh"
-
+        kind = classify(text)
+        polls = 0
+        if kind != "event":
+            polls = count_polls(rows, i, task_id, launch_id, _tag(text, "output-file"),
+                                launch_pos.get(launch_id), previous_notification.get(task_id))
         if task_id:
             previous_notification[task_id] = i
-        results.append({"row": i, "task_id": task_id, "status": status, "kind": kind,
-                        "reply_chars": _reply_chars(rows, i)})
+        results.append({"row": i, "task_id": task_id, "status": _tag(text, "status").lower(),
+                        "kind": kind, "polls": polls, "reply_chars": _reply_chars(rows, i)})
     return results
 
 
-def _read_early(rows: list[dict], at: int, task_id: str, launch_id: str,
+def count_polls(rows: list[dict], at: int, task_id: str, launch_id: str,
                 output_file: str, launch: tuple[int, int] | None,
-                previous: int | None) -> bool:
+                previous: int | None) -> int:
+    """tool_uses before row `at` that name the task id or the output file, after the
+    launch and after the previous notification of the same task. Behaviour, not staleness."""
     needles = [n for n in (task_id, output_file) if n]
     if not needles:
-        return False
+        return 0
     start = (-1, 0)
     if launch is not None:
         start = launch
     if previous is not None and (previous, 0) > start:
         start = (previous, 0)
+    count = 0
     for i in range(max(start[0], 0), at):
         for b, block in enumerate(_tool_uses(rows[i])):
             if (i, b) < start:
@@ -207,29 +253,51 @@ def _read_early(rows: list[dict], at: int, task_id: str, launch_id: str,
                 continue
             serialised = json.dumps(block.get("input"), sort_keys=True, ensure_ascii=False)
             if any(n in serialised for n in needles):
-                return True
-    return False
+                count += 1
+    return count
 
 
 # ── aggregation ───────────────────────────────────────────────────────────────
 
 def collect_files(paths: Iterable[str], since_days: int | None = None,
                   now: float | None = None) -> list[pathlib.Path]:
-    """Expand files and directories (non-recursive `*.jsonl`) into a sorted list.
-    Raises FileNotFoundError for a path that does not exist."""
+    """Expand files and directories (non-recursive `*.jsonl`) into a sorted list of
+    resolved paths, so one file reached twice is read once. `since_days` keeps files whose
+    mtime is at or after now - N days. Raises FileNotFoundError for a missing path."""
     found: set[pathlib.Path] = set()
     for raw in paths:
         path = pathlib.Path(raw)
         if path.is_dir():
-            found.update(p for p in path.glob("*.jsonl") if p.is_file())
+            found.update(p.resolve() for p in path.glob("*.jsonl") if p.is_file())
         elif path.is_file():
-            found.add(path)
+            found.add(path.resolve())
         else:
             raise FileNotFoundError(raw)
     if since_days is not None:
         cutoff = (time.time() if now is None else now) - since_days * 86400
         found = {p for p in found if p.stat().st_mtime >= cutoff}
     return sorted(found, key=str)
+
+
+def dedupe(transcripts: dict[str, tuple[list[dict], int]]
+           ) -> tuple[dict[str, tuple[list[dict], int]], int]:
+    """Drop rows whose `uuid` an earlier row (in name order) already carried."""
+    seen: set[str] = set()
+    skipped = 0
+    out: dict[str, tuple[list[dict], int]] = {}
+    for name in sorted(transcripts):
+        rows, unreadable = transcripts[name]
+        kept: list[dict] = []
+        for row in rows:
+            uuid = row.get("uuid")
+            if isinstance(uuid, str) and uuid:
+                if uuid in seen:
+                    skipped += 1
+                    continue
+                seen.add(uuid)
+            kept.append(row)
+        out[name] = (kept, unreadable)
+    return out, skipped
 
 
 def _counts(entries: list[dict]) -> dict[str, int]:
@@ -242,6 +310,7 @@ def _counts(entries: list[dict]) -> dict[str, int]:
 def measure(transcripts: dict[str, tuple[list[dict], int]],
             since_days: int | None = None) -> dict:
     """Aggregate per-file (rows, unreadable) into the report dict."""
+    transcripts, duplicates = dedupe(transcripts)
     per_file: dict[str, dict] = {}
     all_entries: list[dict] = []
     unreadable_total = 0
@@ -254,29 +323,37 @@ def measure(transcripts: dict[str, tuple[list[dict], int]],
                           **_counts(entries)}
 
     kinds = _counts(all_entries)
-    total = len(all_entries)
-    stale_entries = [e for e in all_entries if e["kind"] in STALE_KINDS]
+    counted = [e for e in all_entries if e["kind"] != "event"]
+    total = len(counted)
+    stale_entries = [e for e in counted if e["kind"] in STALE_KINDS]
     stale = len(stale_entries)
     return {
         "schema": SCHEMA,
         "state": "measured" if total else "unmeasured",
         "window_days": since_days,
+        "window_basis": "file-mtime",
         "files": len(transcripts),
         "unreadable_lines": unreadable_total,
+        "duplicate_rows_skipped": duplicates,
         "total_notifications": total,
+        "events_excluded": kinds["event"],
         "kinds": kinds,
         "stale": stale,
         "stale_bp": stale * 10000 // total if total else None,
         "stale_reply_chars": sum(e["reply_chars"] for e in stale_entries),
         "stale_reply_turns": sum(1 for e in stale_entries if e["reply_chars"] > 0),
+        "polls": sum(e["polls"] for e in counted),
+        "polled_notifications": sum(1 for e in counted if e["polls"]),
         "per_file": per_file,
         "not_seen": NOT_SEEN,
+        "polls_note": POLLS_NOTE,
     }
 
 
-def measure_paths(paths: Iterable[str], since_days: int | None = None) -> dict:
+def measure_paths(paths: Iterable[str], since_days: int | None = None,
+                  now: float | None = None) -> dict:
     transcripts: dict[str, tuple[list[dict], int]] = {}
-    for path in collect_files(paths, since_days):
+    for path in collect_files(paths, since_days, now=now):
         with path.open(encoding="utf-8", errors="replace") as handle:
             transcripts[str(path)] = parse_lines(handle)
     return measure(transcripts, since_days)
@@ -291,7 +368,7 @@ def _load_ceiling(path: pathlib.Path) -> dict:
     for key in ("stale_bp_max", "min_notifications"):
         value = doc.get(key)
         if not isinstance(value, int) or isinstance(value, bool) or value < 0:
-            raise ValueError(f"`{key}` must be a non-negative integer")
+            raise ValueError(f"`{key}` must be a non-negative integer, not {value!r}")
     return doc
 
 
@@ -308,65 +385,86 @@ def _write_atomic(path: pathlib.Path, doc: dict) -> None:
         raise
 
 
-def apply_ratchet(report: dict, path: str | os.PathLike, tighten: bool) -> dict:
-    """Judge the report against a ceiling file; optionally lower the ceiling.
+def _not_judged_reason(report: dict, min_n: int) -> str | None:
+    total = report["total_notifications"]
+    if report["stale_bp"] is None:
+        return "no notifications were measured"
+    if report["unreadable_lines"]:
+        return f"{report['unreadable_lines']} unreadable line(s) in the transcripts"
+    if total < min_n:
+        return f"{total} notification(s) < {min_n} required"
+    return None
 
-    Returns {"state", "exit", "message", ...}. The matrix:
 
-    * file unreadable / wrong schema                   → invalid, exit 2
-    * file missing, no --tighten                       → missing, exit 2 (with a hint)
-    * nothing measured, or total < min_notifications   → insufficient-sample, exit 0,
-      nothing written (a file that is missing stays missing)
-    * file missing, --tighten, sample sufficient       → created at the measured value
-    * measured > stale_bp_max                          → fail, exit 1 (never rewritten)
-    * measured < stale_bp_max with --tighten           → tightened down to measured
+def apply_ratchet(report: dict, path: str | os.PathLike, *, tighten: bool = False,
+                  init: bool = False) -> dict:
+    """Judge the report against a ceiling file; optionally lower or create it.
+
+    Returns {"state", "exit", "message", ...}. The matrix, first match wins:
+
+    * --init and --tighten together                    → error, exit 2
+    * file unreadable / wrong schema / bad values      → invalid, exit 2
+    * file present and --init                          → error, exit 2 (never overwritten)
+    * file missing without --init                      → missing, exit 2
+    * nothing measured, unreadable lines, or fewer than
+      min_notifications                                → not-judged, exit 3, nothing written
+    * file missing, --init                             → created at the measured value, exit 0
+    * measured > stale_bp_max                          → over, exit 1 (never rewritten)
+    * measured < stale_bp_max with --tighten           → tightened down to measured, exit 0
     * otherwise                                        → ok, exit 0
 
-    The ceiling only ever moves down: the tool has no path that raises it.
+    `--tighten` only lowers. The ceiling is a local file: deleting it and running
+    `--init` resets it, so this is a guard against drift, not against tampering.
     """
     path = pathlib.Path(path)
+    if init and tighten:
+        return {"state": "error", "exit": EXIT_ERROR, "path": str(path),
+                "message": "--init and --tighten are separate steps; pass one"}
     doc: dict | None = None
     if path.exists():
         try:
             doc = _load_ceiling(path)
         except (OSError, ValueError) as exc:
-            return {"state": "invalid", "exit": 2, "path": str(path),
+            return {"state": "invalid", "exit": EXIT_ERROR, "path": str(path),
                     "message": f"{path}: unreadable ceiling ({exc})"}
-    elif not tighten:
-        return {"state": "missing", "exit": 2, "path": str(path),
-                "message": f"{path} does not exist; run once with --tighten to create it "
-                           f"at the measured value (suggested: {DEFAULT_CEILING_PATH})"}
+        if init:
+            return {"state": "error", "exit": EXIT_ERROR, "path": str(path),
+                    "message": f"{path} already exists; --init never overwrites a ceiling"}
+    elif not init:
+        return {"state": "missing", "exit": EXIT_ERROR, "path": str(path),
+                "message": f"{path} does not exist; create it once with --init "
+                           f"(suggested: {DEFAULT_CEILING_PATH})"}
 
     measured = report["stale_bp"]
-    total = report["total_notifications"]
     min_n = doc["min_notifications"] if doc is not None else DEFAULT_MIN_NOTIFICATIONS
-    base = {"path": str(path), "measured_bp": measured, "total_notifications": total,
+    base = {"path": str(path), "measured_bp": measured,
+            "total_notifications": report["total_notifications"],
             "min_notifications": min_n,
             "stale_bp_max": doc["stale_bp_max"] if doc is not None else None}
 
-    if measured is None or total < min_n:
-        return {**base, "state": "insufficient-sample", "exit": 0,
-                "message": f"{total} notification(s) < {min_n} required: not judged, "
-                           f"ceiling untouched"}
+    reason = _not_judged_reason(report, min_n)
+    if reason is not None:
+        return {**base, "state": "not-judged", "exit": EXIT_NOT_JUDGED,
+                "message": f"not judged: {reason}; ceiling untouched"}
 
     if doc is None:
         created = {"schema": CEILING_SCHEMA, "stale_bp_max": measured,
                    "min_notifications": DEFAULT_MIN_NOTIFICATIONS}
         _write_atomic(path, created)
-        return {**base, "state": "created", "exit": 0, "stale_bp_max": measured,
+        return {**base, "state": "created", "exit": EXIT_OK, "stale_bp_max": measured,
                 "message": f"created {path} at stale_bp_max {measured}"}
 
     ceiling = doc["stale_bp_max"]
     if measured > ceiling:
-        return {**base, "state": "fail", "exit": 1,
+        return {**base, "state": "over", "exit": EXIT_OVER,
                 "message": f"stale wake-ups {measured} bp exceed the ceiling "
                            f"{ceiling} bp ({path})"}
     if tighten and measured < ceiling:
         _write_atomic(path, _lowered(doc, measured))
-        return {**base, "state": "tightened", "exit": 0, "stale_bp_max": measured,
+        return {**base, "state": "tightened", "exit": EXIT_OK, "stale_bp_max": measured,
                 "previous_bp_max": ceiling,
                 "message": f"ceiling lowered {ceiling} → {measured} bp ({path})"}
-    return {**base, "state": "ok", "exit": 0,
+    return {**base, "state": "ok", "exit": EXIT_OK,
             "message": f"stale wake-ups {measured} bp within the ceiling {ceiling} bp"}
 
 
@@ -384,25 +482,61 @@ def render_json(report: dict) -> str:
 
 def render_human(report: dict) -> str:
     kinds = report["kinds"]
-    window = (f"last {report['window_days']} days" if report["window_days"] is not None
-              else "all files")
+    window = (f"files modified in the last {report['window_days']} days"
+              if report["window_days"] is not None else "all files")
     lines = [f"## rig wake-ups ({window})", ""]
     lines.append(f"transcripts: {report['files']} file(s), "
-                 f"{report['unreadable_lines']} unreadable line(s)")
+                 f"{report['unreadable_lines']} unreadable line(s), "
+                 f"{report['duplicate_rows_skipped']} duplicate row(s) skipped")
     if report["state"] == "unmeasured":
         lines.append("notifications: 0 — unmeasured (nothing to judge, not a clean result)")
     else:
         bp = report["stale_bp"]
         lines.append(f"notifications: {report['total_notifications']}  "
-                     f"stale: {report['stale']} = {bp} bp ({bp / 100:.2f}%)")
-        lines.append(f"  handback-dup {kinds['handback-dup']}, read-early "
-                     f"{kinds['read-early']} | killed {kinds['killed']} (not stale), "
-                     f"fresh {kinds['fresh']}")
+                     f"stale (handback-dup): {report['stale']} = {bp} bp ({bp / 100:.2f}%)")
+        lines.append(f"  failed {kinds['failed']}, killed {kinds['killed']}, "
+                     f"fresh {kinds['fresh']} (never stale)")
         lines.append(f"felt: {report['stale_reply_turns']} stale wake-up(s) answered with "
                      f"visible text, {report['stale_reply_chars']:,} char(s)")
+    lines.append(f"events excluded from the denominator: {report['events_excluded']}")
+    lines.append(f"polls: {report['polls']} tool_use(s) across "
+                 f"{report['polled_notifications']} notification(s)")
     ratchet = report.get("ratchet")
     if ratchet:
         lines.append(f"ratchet: {ratchet['state']} — {ratchet['message']}")
     lines.append("")
+    lines.append(POLLS_NOTE)
     lines.append(NOT_SEEN)
     return "\n".join(lines)
+
+
+# ── command ───────────────────────────────────────────────────────────────────
+
+def cmd_wakeups(args: argparse.Namespace) -> None:
+    """`wb wakeups`: print the report, then let the ratchet's verdict set the exit code
+    (1 over the ceiling, 2 for a missing/invalid ceiling or bad usage, 3 not judged)."""
+    if (args.init or args.tighten) and not args.ratchet:
+        die("--init and --tighten need --ratchet FILE")
+    if args.since_days is not None and args.since_days < 0:
+        die("--since-days must be 0 or more")
+    try:
+        report = measure_paths(args.transcripts, since_days=args.since_days)
+    except FileNotFoundError as exc:
+        die(f"--transcripts: no such file or directory: {exc}")
+    if args.ratchet:
+        report["ratchet"] = apply_ratchet(report, args.ratchet, tighten=args.tighten,
+                                          init=args.init)
+    print(render_json(report) if args.json else render_human(report))
+    ratchet = report.get("ratchet")
+    if not ratchet:
+        return
+    if ratchet["exit"] == EXIT_OVER:
+        reject(ratchet["message"])
+    if ratchet["exit"] == EXIT_ERROR:
+        die(ratchet["message"])
+    if ratchet["exit"] == EXIT_NOT_JUDGED:
+        # 3, not 0: a sample too small or too damaged to judge is not a pass
+        # (commands/go.md: unmeasured is never success), and not 1 either — nothing was
+        # judged. Same meaning `wb gate` and `wb contract` give 3.
+        print(f"[NOT JUDGED] {ratchet['message']}", file=sys.stderr)
+        sys.exit(EXIT_NOT_JUDGED)

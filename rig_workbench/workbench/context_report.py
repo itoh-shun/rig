@@ -16,8 +16,7 @@ import argparse
 import datetime
 
 from .. import context_meter
-from . import wakeups
-from .state import die, reject, repo_root
+from .state import repo_root
 
 
 def _span(first_ts: str, last_ts: str) -> str:
@@ -42,36 +41,7 @@ def _span(first_ts: str, last_ts: str) -> str:
     return f", over {minutes // 60}h{minutes % 60:02d}m"
 
 
-def cmd_wakeups(args: argparse.Namespace) -> None:
-    """`context --transcripts`: stale wake-ups in Claude Code transcripts, only.
-
-    Reads no `.rig/context.jsonl` and needs no repository — the transcripts are the
-    whole input. With `--ratchet`, the report is printed first and the exit code then
-    carries the verdict (1 over the ceiling, 2 for a missing or unreadable file).
-    """
-    try:
-        report = wakeups.measure_paths(args.transcripts, since_days=args.since_days)
-    except FileNotFoundError as exc:
-        die(f"--transcripts: no such file or directory: {exc}")
-    if args.ratchet:
-        report["ratchet"] = wakeups.apply_ratchet(report, args.ratchet, args.tighten)
-    print(wakeups.render_json(report) if args.json else wakeups.render_human(report))
-    ratchet = report.get("ratchet")
-    if ratchet and ratchet["exit"] == 1:
-        reject(ratchet["message"])
-    if ratchet and ratchet["exit"] == 2:
-        die(ratchet["message"])
-
-
 def cmd_context(args: argparse.Namespace) -> None:
-    if getattr(args, "transcripts", None):
-        cmd_wakeups(args)
-        return
-    for flag, given in (("--json", getattr(args, "json", False)),
-                        ("--ratchet", getattr(args, "ratchet", None)),
-                        ("--tighten", getattr(args, "tighten", False))):
-        if given:
-            die(f"{flag} needs --transcripts")
     root = repo_root()
     records = context_meter.load(root, since_days=args.since_days)
     if not records:

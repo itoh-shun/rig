@@ -563,26 +563,17 @@ python3 scripts/workbench.py digest [--period week|month] [--out <path>]
 - **読み取り専用**（集計のみ・状態を変更しない）。出力 Markdown はそのままユーザーに提示してよい（整形の追加は不要）。
 - 集計は `stats` と同じ helper を再利用しており数字が食い違わない。個別の深掘り（`--recipe`/`--verifier` 絞り込み）は `/rig stats`、期間の定点観測は `digest` と使い分ける。`stats` 同様、ゴム印警告が出た場合は必ずそのまま伝える。
 
-## `/rig context [--since-days N] [--transcripts PATH… [--json] [--ratchet FILE [--tighten]]]`
+## `/rig context [--since-days N]`
 
 ```
 python3 scripts/workbench.py context [--since-days N]
-python3 scripts/workbench.py context --transcripts PATH… [--since-days N] [--json] [--ratchet FILE [--tighten]]
 ```
 
 `context-minimal` の実測。rig が親セッションへ印字した stdout は tool result としてそのまま親 context に戻るので、**rig の stdout こそが rig の context 消費**——そこだけを invocation 単位で `.rig/context.jsonl`（gitignore 済み・`runs.jsonl` と同格）に記録し、コマンド別に集計して出す。既定は全期間、`--since-days N` で期間を絞る。`RIG_NO_CONTEXT_METER=1` で記録自体を止められる。
 
-- `--ratchet … --tighten` で天井ファイルを下げるとき以外は**読み取り専用**（集計のみ）。出力はそのまま提示してよい。
+- **読み取り専用**（集計のみ）。出力はそのまま提示してよい。
 - **計測していないものを計測したことにしない**：セッション全体の context・会話・親が自分で読んだファイル・「親が本当に subagent に dispatch したか」は rig からは見えない。レポート自身がその旨を明記するので、その断り書きを削って「あなたの context 使用量」として提示しない。
 - 使いどころは「出力を増やす変更（step バナー・flow map 等）の予算を決めるとき」。`digest` が実行の質を、`context` が実行の重さを見る。
-
-### `--transcripts PATH… [--since-days N] [--json] [--ratchet FILE [--tighten]]`
-
-情報のない起床（stale wake-up）の実測。Claude Code のセッション transcript（`*.jsonl`・ディレクトリは直下のみ・`subagents/` は含めない）を読み、各 `<task-notification>` を先勝ちで分類する：`handback-dup`（報告は handback メッセージで届け済み）→ `read-early`（通知より前に出力ファイル／task-id を tool_use で読んでいた。起動した tool_use と `SendMessage` は除く）→ `killed`（`killed`/`stopped`）→ `fresh`。stale = handback-dup + read-early（killed は別枠で stale に含めない）。`stale_bp` は整数の basis point。通知が0件なら `unmeasured` であって 0 ではない。stale 通知の後に user が読まされた本文量（`stale_reply_chars`/`stale_reply_turns`）も出す。このモードは `.rig/context.jsonl` を読まず、その報告も出さない。`--since-days` はファイルの mtime で絞る。
-
-- `--ratchet FILE`（`rig.wakeups-ceiling/v1`。置き場所の推奨は `.rig/wakeups-ceiling.json`＝gitignore 済みのローカル実測値）：`stale_bp_max` を超えたら exit 1。通知数が `min_notifications`（新規作成時は 20）未満なら `insufficient-sample` として判定も更新もしない。ファイルが無ければ exit 2。
-- `--tighten`：実測が天井より低ければ天井を実測値まで**下げる**（上げる経路は無い）。ファイルが無く標本が足りていれば実測値で作る。
-- 見えるのは渡した transcript に記録された通知だけ。レポート自身がそう明記するので、その断り書きを削らない。
 
 ## `/rig effectiveness --query <json> [--json]`
 
