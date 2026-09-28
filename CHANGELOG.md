@@ -31,6 +31,20 @@
   have moved. It is silent in provider subprocesses (`RIG_PROVIDER_SUBPROCESS`),
   with `RIG_AUTO_CONTINUE=0`, without `python3`, and on any error. Compare
   `wb nudges`'s `unprompted_bp` before and after to see whether it helps.
+- **Stop, retry and continue rules for a RUN (SKILL.md §6 ⑤).** Ending a turn is
+  judged stop-first, and anything the rules do not recognise is a stop. A RUN that
+  stops on purpose ends with `▸ stop: <code>`: `done`, `waiting`, `step-gate`,
+  `needs-decision:<escalation>` (the `wb dev-loop` escalation vocabulary) or
+  `blocked:<capability-missing|gate-reject|repeated-failure>`. The Stop push now
+  lets the session stop on a declared stop, and when the next move is outward or
+  irreversible: a push, a PR, a deploy, a publish, a migration or a delete named
+  in the last text, or a line tripping the `scan-destructive` patterns. It also
+  lets it stop when the last tool call failed for a missing capability (401/403,
+  auth, a missing command or module) or with the same error as the failure before
+  it. A transient failure (timeout, reset, 429, 502/503/504) is re-run once and no
+  more. A deterministic failure is work, fixed and re-run under the stuck-guard, not
+  retried as-is. `wb nudges` reports `declared_stops` and counts a nudge that
+  answered a declared stop as `after_question`.
 
 ## [3.4.0] - 2026-09-24
 

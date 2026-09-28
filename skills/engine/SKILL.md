@@ -222,6 +222,27 @@ RUN 規律は SKILL.md 指示の recency に依存する。**途中で質疑・�
 - **保存（プラグイン同梱フック）**：rig は `PreCompact` フック（`hooks/hooks.json` → `hooks/preserve-rig-state.sh`）を同梱する。圧縮直前に発火し、stdout が**追加の圧縮指示**として効く。run-status（recipe/現 step/gate/mode）・受け入れ契約・残 step・主要決定・context-minimal 規律を要約に残させる。`/rig:init` は同等の保全文を `CLAUDE.md` の "Compact Instructions" 節にも置ける（毎回自動適用される第2経路）。
 - **復帰（再アンカーの適用）**：**圧縮直後の最初の作業ターンは ② 再アンカー規則を必ず適用**する。ヘッダ再掲＋ハーネス状態の再宣言→現 step に委譲で復帰する。`SessionStart(source=compact)` での自動再注入は既知の不具合があるため当てにせず、② の再アンカーで確実に戻す。
 
+**⑤ 停止・再実行・続行のルール — 止まる理由を先に見る** — RUN 中にターンを終えるとき、何でも続行するのではない。上から順に判定し、最初に当てはまったものに従う。どれにも当てはまらなければ止める。
+
+| 順 | 判定 | 条件 | 動き |
+|---|---|---|---|
+| 1 | 止める（人の判断） | 次の一手が外部に出るか戻せない（push・PR 作成・デプロイ・公開・マイグレーション・削除）、要件が曖昧、方針上の承認が要る、予算切れ | `▸ stop: needs-decision:<code>` を宣言して止める |
+| 2 | 止める（続けても無駄） | 必要な能力が無い（認証・ネットワーク・ツール）、gate が REJECT、同じ失敗が2回 | `▸ stop: blocked:<code>` を宣言して止める |
+| 3 | 再実行 | 直前の失敗が一時的（タイムアウト・接続リセット・429・502/503/504）で、まだ再実行していない | 同じ操作をそのまま1回だけやり直す |
+| 4 | 続行 | 次の一手が計画で決まっていて（recipe の次 step、残りの todo）、worktree の中で戻せる | 確認を取らずに続ける |
+
+- テストの失敗や型エラーのように毎回同じ結果になる失敗は、再実行（3）ではない。直してから流し直す作業（4）であり、詰まりガードが回数を数える。
+- 止めるときは、最後の行に**停止宣言**を1行書く。形式は `▸ stop: <code>[ — <一言>]` とする。`<code>` は次の5種類。
+  - `done`：完了した。
+  - `waiting`：通知や外部の出来事を待つ。
+  - `step-gate`：gated の step 境界で確認を取る。
+  - `needs-decision:<理由>`：人の判断を待つ。語彙は `rig-wb wb dev-loop` の escalation と同じ。
+    - `destructive-operation`・`ambiguous-requirement`・`policy-requires-approval`
+    - `budget-exhausted`・`capability-missing`
+  - `blocked:<理由>`：理由は `capability-missing`・`gate-reject`・`repeated-failure` のいずれか。
+- 同梱の Stop フック（`hooks/continue-rig-run.sh`）がこの表を機械で当てる。停止宣言・質問・REJECT・`stuck: 2/2`・最終 step・gated の step 境界・通知待ち・外部に出る次の一手・能力不足・同じ失敗の2回目では止めさせる。一時的な失敗では1回だけ再実行させる。それ以外で黙って止まったときだけ続行させる。同じ位置で2回止まったら通す。`RIG_AUTO_CONTINUE=0` で無効化できる。
+- `rig-wb wb nudges` は、宣言された停止理由の内訳（`declared_stops`）と、黙って止まった後の催促（`unprompted`）を数える。ルールを緩めるか締めるかは、この数字で決める。
+
 ### **red flags（STOP→委譲）**
 
 - 親が**直接コードを書き始める** / **再実装する**（**中断・質疑の直後に素の作業へ静かに戻る**場合を含む）。
@@ -235,7 +256,7 @@ RUN 規律は SKILL.md 指示の recency に依存する。**途中で質疑・�
 
 ### step ゲートと詰まりガード
 
-- `--autonomous` でない限り、各 step 後に結果を提示し**次へ進む確認**を取る（step ゲート）。
+- `--autonomous` でない限り、各 step 後に結果を提示し**次へ進む確認**を取る（step ゲート）。確認を取って止めるときは `▸ stop: step-gate` を宣言する（§6 ⑤）。
 - **同じ所で2回詰まったら**（同じエラー・同じレビュー REJECT を2巡）勝手に試行を続けず、**正準フォーマットで user に判断を仰ぐ（#12）**：
 
 ```

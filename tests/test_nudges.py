@@ -60,9 +60,15 @@ def test_classify_rows_skips_what_no_person_typed_and_marks_what_the_nudge_answe
         _user("<system-reminder>noise</system-reminder>"),
         _assistant("Plain answer."),
         _user("はい"),
+        _assistant("Tests pass.\n▸ stop: needs-decision:destructive-operation — push next"),
+        _user("進めて"),                                              # answers a declared stop
     ]
     entries = nudges.classify_rows(rows)
-    assert [e["kind"] for e in entries] == ["other", "nudge", "nudge", "ack"]
+    assert [e["kind"] for e in entries] == ["other", "nudge", "nudge", "ack", "nudge"]
+    assert entries[4]["after_question"] is True
+    assert entries[4]["stop"] == "needs-decision:destructive-operation"
+    assert nudges.measure({"t": (rows, 0)})["declared_stops"] == \
+        {"needs-decision:destructive-operation": 1}
     assert [(e["after_question"], e["in_run"]) for e in entries[1:3]] == [(False, True), (True, False)]
 
 

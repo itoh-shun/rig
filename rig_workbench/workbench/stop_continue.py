@@ -1,34 +1,42 @@
-"""Stop hook: do not let a rig RUN end its turn mid-flow without handing the person a
-decision.
+"""Stop hook: when a rig RUN tries to end its turn, decide stop, retry or continue.
 
-A session that stops between steps for no reason costs a turn in which the person types
-「進めて」 (`wb nudges` counts them). This hook reads the transcript when the model tries
-to end its turn and, **only** when every condition below holds, answers
-`{"decision": "block", "reason": …}` so the model carries on with the current step:
+A session that stops mid-flow for no reason costs a turn in which the person types
+「進めて」 (`wb nudges` counts them). A session that is pushed on when it should have
+stopped is worse: it walks into a push, a deploy or the same failure again. So the rules
+are ordered with **stop first**, and anything the rules do not recognise is a stop
+(SKILL.md §6 ⑤). `evaluate` returns `(verdict, rule)`; only `continue` and `retry` block.
 
-1. Not a provider subprocess (`RIG_PROVIDER_SUBPROCESS`) and not switched off
-   (`RIG_AUTO_CONTINUE=0|off|false|no`). A blocking Stop hook inside `claude -p` /
-   `codex exec` replaces the verdict the orchestrator is waiting for (#592).
-2. This turn's assistant text carries a run-status header (`▸ rig | …`) whose step has a
-   position and is not the last (`n < N`). No header — no rig RUN — nothing happens; the
-   Stop reminder retired in 2.2.2/3.3.1 fired in sessions rig had no business in.
-3. The gate is not `REJECT` and the stuck-guard is not at its limit (`stuck: 2/2`): those
-   are escalations the person must answer.
-4. The turn's last text does not ask the person anything (`turns.asks_user`).
-5. In `mode: gated` (the default), the turn did not reach a step boundary
-   (`── step <id> ▸ done`): a gated RUN stops after each step by design (SKILL.md §6, step
-   gates). Only a stop in the middle of a step is premature. `mode: autonomous` never
-   stops between steps, so any such stop is.
-6. No background task launched in this session is still waiting for its notification:
-   ending the turn is how a session waits for one (`patterns/monitor`).
-7. Progress since the last push: when the model is already continuing because of this
-   hook (`stop_hook_active`), it is pushed again only if the header moved (step, position
-   or gate) since the previous push. A model that stops twice at the same place is let go,
-   so the number of pushes per stop chain is bounded by the steps left.
+0. Stand down — provider subprocess (`RIG_PROVIDER_SUBPROCESS`, #592) or
+   `RIG_AUTO_CONTINUE=0|off|false|no`.                                  rule `off`
+1. Not a RUN — no run-status header with a step position in this turn.  rule `no-run`
+2. Declared — the turn ends with `▸ stop: <code>` (`turns.parse_stop`). A declared stop
+   is always honoured; an unknown code is still a declaration.         rule `declared`
+3. Escalation already on screen — gate `REJECT`, `stuck: 2/2`, or the last step (`n >= N`).
+                                                                       rule `escalated`
+4. The person was asked — the last text is a question or hands over a decision.
+                                                                       rule `asked`
+5. Gated step boundary — `mode: gated` and the turn reached `── step … ▸ done`: gated
+   RUNs stop after each step by design.                                 rule `step-gate`
+6. Waiting — a background launch has no task-notification yet.         rule `waiting`
+7. Next move is outward or irreversible — the last text names a push, a PR, a deploy, a
+   publish, a migration or a delete, or a line in it trips the `scan-destructive`
+   patterns. The person decides those, declared or not.                 rule `outward`
+8. The last tool call failed:
+   * capability — auth (401/403), permission denied, a missing command or module, an
+     unreachable host. Retrying cannot help.                            rule `capability`
+   * repeated — the same error text as the failure before it.           rule `repeated`
+   * transient — timeout, connection reset, 429, 502/503/504, rate limit. Retried
+     **once** (verdict `retry`); if the model stops again at the same place it is let go.
+   * anything else (a failing test, a type error) is not retried as-is: it is work — fix
+     and re-run — and falls through to 9, where the stuck-guard counts it.
+9. Continue — the header's step is not the last and nothing above applies (verdict
+   `continue`). When the model is already continuing because of this hook
+   (`stop_hook_active`), it is pushed again only if the header moved since the previous
+   push, so pushes per stop chain are bounded by the steps left.       rule `no-progress`
 
 Anything unexpected — unreadable payload, missing transcript, a parse error — means no
-output and exit 0: this hook fails open. State (the last pushed header, per session) is
-written only when it blocks, under `$XDG_STATE_HOME/rig/continue-rig-run/`.
+output and exit 0: this hook fails open. State (the last push, per session) is written
+only when it blocks, under `$XDG_STATE_HOME/rig/continue-rig-run/`.
 """
 
 from __future__ import annotations
@@ -91,44 +99,121 @@ def pending_background(rows: list[dict]) -> bool:
     return bool(launched)
 
 
-def _signature(header: dict) -> str:
-    return f"{header['step_id']}|{header['n']}/{header['total']}|{header.get('gate', '')}"
+_CAPABILITY_RE = re.compile(
+    r"\b40[13]\b|permission denied|not authenticated|authentication (?:failed|required)"
+    r"|unauthori[sz]ed|forbidden|command not found|not installed|no module named"
+    r"|could not resolve host|network is unreachable|access denied", re.IGNORECASE)
+_TRANSIENT_RE = re.compile(
+    r"timed? ?out|timeout|econnreset|connection reset|\b429\b|rate.?limit|\b50[234]\b"
+    r"|temporarily unavailable|service unavailable|eai_again|remote end hung up|early eof",
+    re.IGNORECASE)
+#: Next moves the person decides. Deliberately broad: a false match only means the stop
+#: is honoured, the cheap direction.
+_OUTWARD_RE = re.compile(
+    r"git push|gh pr (?:create|merge)|pull request|プルリク|\bPR\s*を|npm publish|twine upload"
+    r"|terraform apply|kubectl (?:apply|delete)|deploy|デプロイ|本番|リリース|publish"
+    r"|migrat|マイグレーション|drop (?:table|database)|削除します|force-push|--force\b",
+    re.IGNORECASE)
+
+
+def _signature(header: dict, verdict: str) -> str:
+    return (f"{header['step_id']}|{header['n']}/{header['total']}|{header.get('gate', '')}"
+            f"|{verdict}")
+
+
+def _outward(text: str) -> bool:
+    if _OUTWARD_RE.search(text):
+        return True
+    from .destructive import scan_line  # only reached for a RUN about to be pushed
+    return any(scan_line(line, "stop", i) for i, line in enumerate(text.splitlines(), 1))
+
+
+def _tool_results(rows: list[dict]) -> list[dict]:
+    return [b for row in rows if row.get("type") == "user"
+            for b in _blocks(row) if b.get("type") == "tool_result"]
+
+
+def _normalised_error(text: str) -> str:
+    return " ".join(re.sub(r"\d+", "#", text).split())[:400]
+
+
+def last_failure(turn: list[dict]) -> str | None:
+    """How the turn's last tool call failed: `capability`, `repeated`, `transient`,
+    `deterministic`, or None when the last tool call did not fail."""
+    results = _tool_results(turn)
+    if not results or not results[-1].get("is_error"):
+        return None
+    text = _tool_result_text(results[-1])
+    if _CAPABILITY_RE.search(text):
+        return "capability"
+    earlier = [r for r in results[:-1] if r.get("is_error")]
+    if earlier and _normalised_error(_tool_result_text(earlier[-1])) == _normalised_error(text):
+        return "repeated"
+    if _TRANSIENT_RE.search(text):
+        return "transient"
+    return "deterministic"
+
+
+def evaluate(payload: dict, rows: list[dict], env: dict,
+             previous_signature: str | None) -> tuple[str, str, dict | None]:
+    """(verdict, rule, header). verdict is `stop`, `retry` or `continue`; rule names the
+    numbered rule in the module docstring that decided it."""
+    if env.get("RIG_PROVIDER_SUBPROCESS") or \
+            env.get("RIG_AUTO_CONTINUE", "").strip().lower() in _OFF:
+        return "stop", "off", None
+    turn = turns.current_turn(rows)
+    said = turns.assistant_text(turn)
+    header = turns.parse_header(said)
+    if header is None or header["n"] is None or header["total"] is None:
+        return "stop", "no-run", header
+    last = turns.last_assistant_text(turn)
+    if turns.parse_stop(last) is not None:
+        return "stop", "declared", header
+    gate = header.get("gate", "").lower()
+    if (gate.startswith("reject") or header.get("stuck", "").replace(" ", "") == "2/2"
+            or header["n"] >= header["total"]):
+        return "stop", "escalated", header
+    if turns.asks_user(last):
+        return "stop", "asked", header
+    if not header.get("mode", "").lower().startswith("autonomous") and _DONE_RE.search(said):
+        return "stop", "step-gate", header
+    if pending_background(rows):
+        return "stop", "waiting", header
+    if _outward(last):
+        return "stop", "outward", header
+    failure = last_failure(turn)
+    if failure in ("capability", "repeated"):
+        return "stop", failure, header
+    verdict = "retry" if failure == "transient" else "continue"
+    if payload.get("stop_hook_active") and _signature(header, verdict) == previous_signature:
+        return "stop", "no-progress", header
+    return verdict, verdict, header
+
+
+_DECLARE = ("If you should stop, end with one line `▸ stop: <code>` instead — done | waiting | "
+            "step-gate | needs-decision:<destructive-operation|ambiguous-requirement|"
+            "policy-requires-approval|budget-exhausted|capability-missing> | "
+            "blocked:<capability-missing|gate-reject|repeated-failure>.")
 
 
 def decide(payload: dict, rows: list[dict], env: dict,
            previous_signature: str | None) -> tuple[str, str] | None:
     """(reason, signature) when the stop should be blocked, else None."""
-    if env.get("RIG_PROVIDER_SUBPROCESS"):
-        return None
-    if env.get("RIG_AUTO_CONTINUE", "").strip().lower() in _OFF:
-        return None
-    turn = turns.current_turn(rows)
-    said = turns.assistant_text(turn)
-    header = turns.parse_header(said)
-    if header is None or header["n"] is None or header["total"] is None:
-        return None
-    if header["n"] >= header["total"]:
-        return None
-    gate = header.get("gate", "").lower()
-    if gate.startswith("reject") or header.get("stuck", "").replace(" ", "") == "2/2":
-        return None
-    if turns.asks_user(turns.last_assistant_text(turn)):
-        return None
-    autonomous = header.get("mode", "").lower().startswith("autonomous")
-    if not autonomous and _DONE_RE.search(said):
-        return None
-    if pending_background(rows):
-        return None
-    signature = _signature(header)
-    if payload.get("stop_hook_active") and signature == previous_signature:
+    verdict, _rule, header = evaluate(payload, rows, env, previous_signature)
+    if verdict == "stop" or header is None:
         return None
     step = f"{header['step_id']} ({header['n']}/{header['total']})"
-    reason = (f"[rig run-continuity] The rig RUN is at step {step} and this turn ended "
-              "without handing the person a decision. Carry on with the current step now "
-              "(SKILL.md §6: do not wait for 「進めて」). If you genuinely need the person's "
-              "decision, ask it as an explicit question and stop; if the RUN has actually "
-              "ended, say so in one line.")
-    return reason, signature
+    if verdict == "retry":
+        reason = (f"[rig run-continuity] Step {step}: the last command failed in a way that "
+                  "looks transient (timeout, reset, rate limit, 5xx). Re-run it once, "
+                  "unchanged. If it fails again, stop with `▸ stop: blocked:repeated-failure`. "
+                  + _DECLARE)
+    else:
+        reason = (f"[rig run-continuity] Step {step}: this turn ended without a question, a "
+                  "decision for the person, or a stop reason. If the next move is already "
+                  "fixed by the plan and stays inside the worktree, carry on with it now "
+                  "(SKILL.md §6 ⑤). " + _DECLARE)
+    return reason, _signature(header, verdict)
 
 
 def _state_path(env: dict, session_id: str) -> pathlib.Path:

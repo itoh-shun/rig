@@ -718,7 +718,7 @@ def test_group2_wb_nudges_answers_in_rig_nudges_v1_and_writes_rig_nudges_ceiling
     assert_document(payload, schema="rig.nudges/v1",
                     required={"schema", "state", "total_prompts", "kinds", "nudges", "nudge_bp",
                               "unprompted", "unprompted_bp", "after_question", "in_run",
-                              "unprompted_in_run", "unreadable_lines", "duplicate_rows_skipped",
+                              "unprompted_in_run", "declared_stops", "unreadable_lines", "duplicate_rows_skipped",
                               "uuid_conflicts", "per_file", "not_seen", "ratchet"},
                     what="`wb nudges --json`")
     assert payload["nudges"] == 3 and payload["nudge_bp"] == 1000

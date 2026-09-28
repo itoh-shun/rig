@@ -18,10 +18,14 @@ Code session transcripts (`*.jsonl`) and classifies every prompt a person typed
 Each nudge is further marked by the assistant turn it answered:
 
 * ``after_question`` — that turn ended by asking the person something (`turns.asks_user`),
-  e.g. a gated step asking whether to go on. The nudge answered a question.
+  e.g. a gated step asking whether to go on, or by declaring why it stopped
+  (`▸ stop: <code>`, `turns.parse_stop`). The nudge answered a question.
 * ``unprompted`` — it did not. The session simply stopped. These are the ones the Stop
   hook `hooks/continue-rig-run.sh` exists to remove.
 * ``in_run`` — that turn carried a rig run-status header (a rig RUN was active).
+
+`declared_stops` counts the `▸ stop:` codes that ended the answered turns, for every
+prompt: which reasons a RUN stops for, and so which rule is worth loosening or tightening.
 
 stale = nudge. The denominator is every prompt. The ratchet judges `nudge_bp`.
 
@@ -97,13 +101,25 @@ def classify_rows(rows: list[dict]) -> list[dict]:
             continue
         answered = rows[previous + 1:i]
         kind = classify_prompt(text)
-        entry = {"row": i, "kind": kind, "after_question": False, "in_run": False}
+        last = turns.last_assistant_text(answered)
+        stop = turns.parse_stop(last)
+        entry = {"row": i, "kind": kind, "after_question": False, "in_run": False,
+                 "stop": stop["code"] if stop else None}
         if kind == "nudge":
-            entry["after_question"] = turns.asks_user(turns.last_assistant_text(answered))
+            entry["after_question"] = stop is not None or turns.asks_user(last)
             entry["in_run"] = turns.parse_header(turns.assistant_text(answered)) is not None
         entries.append(entry)
         previous = i
     return entries
+
+
+def _stop_counts(entries: list[dict]) -> dict[str, int]:
+    """How often each `▸ stop:` code ended the turn a prompt answered."""
+    counts: dict[str, int] = {}
+    for entry in entries:
+        if entry["stop"]:
+            counts[entry["stop"]] = counts.get(entry["stop"], 0) + 1
+    return dict(sorted(counts.items()))
 
 
 def measure(transcripts: dict[str, tuple[list[dict], int]],
@@ -141,6 +157,7 @@ def measure(transcripts: dict[str, tuple[list[dict], int]],
         "after_question": len(nudges) - len(unprompted),
         "in_run": sum(1 for e in nudges if e["in_run"]),
         "unprompted_in_run": sum(1 for e in unprompted if e["in_run"]),
+        "declared_stops": _stop_counts(entries),
         "per_file": per_file,
         "not_seen": NOT_SEEN,
     }
@@ -262,6 +279,9 @@ def render_human(report: dict) -> str:
                      f"{ubp} bp ({ubp / 100:.2f}%), {report['unprompted_in_run']} during a rig RUN")
         lines.append(f"  after a question (answering a confirmation): {report['after_question']}")
         lines.append(f"  during a rig RUN: {report['in_run']}")
+        stops = report["declared_stops"]
+        lines.append("declared stops (▸ stop:): " + (", ".join(f"{code} {n}" for code, n
+                                                           in stops.items()) or "none"))
         lines.append(f"acks (はい / ok — not counted as nudges): {kinds['ack']}")
     ratchet = report.get("ratchet")
     if ratchet:

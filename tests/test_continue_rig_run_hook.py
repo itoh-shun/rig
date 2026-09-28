@@ -11,7 +11,8 @@ from pathlib import Path
 
 import pytest
 
-from rig_workbench.workbench import stop_continue
+from rig_workbench.assurance import development_loop
+from rig_workbench.workbench import stop_continue, turns
 
 ROOT = Path(__file__).resolve().parents[1]
 HOOK = ROOT / "hooks" / "continue-rig-run.sh"
@@ -52,7 +53,7 @@ def test_mid_step_stop_without_a_question_is_pushed(mode):
     assert verdict is not None
     reason, signature = verdict
     assert "implement (3/6)" in reason
-    assert signature == "implement|3/6|none"
+    assert signature == "implement|3/6|none|continue"
 
 
 def test_autonomous_stop_after_a_step_boundary_is_pushed():
@@ -132,10 +133,11 @@ def test_a_foreground_agent_is_not_pending():
 def test_a_second_push_needs_the_header_to_have_moved():
     rows = _turn("Still implementing.", mode="autonomous")
     active = {"stop_hook_active": True}
-    assert _decide(rows, active, previous="implement|3/6|none") is None
-    assert _decide(rows, active, previous="implement|2/6|none") is not None
+    assert _decide(rows, active, previous="implement|3/6|none|continue") is None
+    assert _decide(rows, active, previous="implement|2/6|none|continue") is not None
     # A new stop chain (the person typed something) may push once at the same place.
-    assert _decide(rows, {"stop_hook_active": False}, previous="implement|3/6|none") is not None
+    assert _decide(rows, {"stop_hook_active": False},
+                   previous="implement|3/6|none|continue") is not None
 
 
 @pytest.mark.parametrize("env", [{"RIG_PROVIDER_SUBPROCESS": "1"}, {"RIG_AUTO_CONTINUE": "0"},
@@ -149,6 +151,112 @@ def test_stop_hook_feedback_rows_are_not_a_new_prompt():
     rows.append(_user("Stop hook feedback:\n[rig run-continuity] The rig RUN is at step ..."))
     rows.append(_assistant("Continuing the step."))
     assert _decide(rows) is not None
+
+
+# ── the rule table: stop wins, retry once, continue only on a fixed next move ──
+
+def _rule(rows, payload=None, previous=None):
+    verdict, rule, _ = stop_continue.evaluate(payload or {"stop_hook_active": False}, rows, {},
+                                              previous)
+    return verdict, rule
+
+
+def _failed(rows, *errors):
+    """Append tool calls whose results are the given errors, then a closing text."""
+    for i, error in enumerate(errors):
+        rows[-1]["message"]["content"].append(
+            {"type": "tool_use", "id": f"toolu_e{i}", "name": "Bash", "input": {"command": "x"}})
+        rows.append({"type": "user", "message": {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": f"toolu_e{i}", "is_error": True,
+             "content": error}]}})
+        rows.append(_assistant("Hmm."))
+    return rows
+
+
+@pytest.mark.parametrize("line", [
+    "▸ stop: done",
+    "▸ stop: waiting",
+    "▸ stop: step-gate",
+    "▸ stop: needs-decision:destructive-operation — next is a push to main",
+    "▸ stop: blocked:capability-missing — gh is not authenticated",
+    "▸ stop: blocked:something-new",
+])
+def test_a_declared_stop_is_always_honoured(line):
+    assert _rule(_turn("Summary of the step.", line, mode="autonomous")) == ("stop", "declared")
+
+
+def test_parse_stop_knows_its_vocabulary():
+    assert turns.parse_stop("x\n▸ stop: needs-decision:budget-exhausted")["known"] is True
+    assert turns.parse_stop("▸ stop: blocked:something-new")["known"] is False
+    assert turns.parse_stop("no declaration") is None
+
+
+def test_the_escalation_codes_are_the_development_loops():
+    assert turns.STOP_NEEDS_DECISION == development_loop.ESCALATIONS
+
+
+@pytest.mark.parametrize("ending", [
+    "Tests pass. Next: git push origin main.",
+    "実装が終わりました。次は本番へデプロイです。",
+    "Next I will open a pull request.",
+    "Next I will run the migration.",
+    "Cleaning up with rm -rf / next.",
+])
+def test_an_outward_or_irreversible_next_move_is_left_to_the_person(ending):
+    assert _rule(_turn(ending, mode="autonomous")) == ("stop", "outward")
+
+
+@pytest.mark.parametrize("error", [
+    "fatal: Authentication failed for 'https://github.com/o/r'",
+    "HTTP 403 Forbidden",
+    "bash: gh: command not found",
+    "ModuleNotFoundError: No module named 'pytest'",
+])
+def test_a_missing_capability_is_not_retried(error):
+    assert _rule(_failed(_turn("Running it.", mode="autonomous"), error)) == ("stop", "capability")
+
+
+def test_the_same_failure_twice_is_not_retried():
+    rows = _failed(_turn("Running it.", mode="autonomous"),
+                   "AssertionError: expected 3 got 4 (line 12)",
+                   "AssertionError: expected 3 got 4 (line 12)")
+    assert _rule(rows) == ("stop", "repeated")
+
+
+def test_a_transient_failure_is_retried_once():
+    rows = _failed(_turn("Running it.", mode="autonomous"), "ReadTimeout: timed out after 30s")
+    assert _rule(rows) == ("retry", "retry")
+    reason, signature = _decide(rows)
+    assert "Re-run it once" in reason and signature.endswith("|retry")
+    assert _rule(rows, {"stop_hook_active": True}, previous=signature) == ("stop", "no-progress")
+
+
+def test_a_deterministic_failure_is_work_not_a_retry():
+    rows = _failed(_turn("Running it.", mode="autonomous"), "TypeError: 'NoneType' is not callable")
+    assert _rule(rows) == ("continue", "continue")
+
+
+def test_a_failure_that_a_later_call_fixed_does_not_count():
+    rows = _failed(_turn("Running it.", mode="autonomous"), "bash: gh: command not found")
+    rows[-1]["message"]["content"].append(
+        {"type": "tool_use", "id": "toolu_ok", "name": "Bash", "input": {"command": "y"}})
+    rows.append(_tool_result("toolu_ok", "ok"))
+    rows.append(_assistant("Worked around it."))
+    assert _rule(rows) == ("continue", "continue")
+
+
+@pytest.mark.parametrize("header,expected", [
+    ("▸ rig | recipe: bugfix | step: implement (3/6) | gate: REJECT | mode: autonomous", "escalated"),
+    ("▸ rig | recipe: bugfix | step: report (6/6) | gate: passed | mode: autonomous", "escalated"),
+])
+def test_escalations_on_screen_win_over_continue(header, expected):
+    assert _rule(_turn("Stopping.", header=header)) == ("stop", expected)
+
+
+def test_rules_name_why_the_session_was_let_go():
+    assert _rule([_user("hi"), _assistant("hello")]) == ("stop", "no-run")
+    assert _rule(_turn("次へ進みますか？", mode="autonomous")) == ("stop", "asked")
+    assert _rule(_turn("── step implement ▸ done", "Done.")) == ("stop", "step-gate")
 
 
 # ── the shell entry point ───────────────────────────────────────────────────
@@ -172,7 +280,7 @@ def test_hook_blocks_once_then_lets_the_same_stop_through(tmp_path):
     out = json.loads(first.stdout)
     assert out["decision"] == "block" and "implement (3/6)" in out["reason"]
     assert (tmp_path / "state" / "rig" / "continue-rig-run" / "s-1").read_text().strip() \
-        == "implement|3/6|none"
+        == "implement|3/6|none|continue"
 
     again = _run_hook(tmp_path, rows, {"stop_hook_active": True})
     assert (again.returncode, again.stdout, again.stderr) == (0, "", "")

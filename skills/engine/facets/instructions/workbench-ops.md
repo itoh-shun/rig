@@ -607,12 +607,13 @@ python3 scripts/workbench.py nudges --transcripts PATH… [--since-days N] [--js
 
 中身のない催促（「進めて」「続けて」「continue」だけのプロンプト）の実測。セッションが自分で止まり、人が1ターン払って再開させた回数の割合を数える。transcript の読み方・重複除去・`--since-days`・ratchet の判定表は `wakeups` と同じ。
 
-- 分母は人が打ったプロンプトすべて。tool_result だけの行、task-notification、`isMeta`・`isCompactSummary`・sidechain の行、local-command の出力、中断マーカー、Stop hook の差し戻し文は数えない。slash command の起動は分母に入れるが、催促にはしない。
-- `nudge`：正規化（NFKC・小文字化・空白と記号の除去）した全体が、継続の語（進めて・続けて・続行・再開・continue・keep going・go ahead など）に前置き（はい・では）と丁寧語（ください・お願いします）が付いただけのもの。語は閉じた一覧で、ほかの指示を1語でも足したものは `other`。したがってこの数字は下限であって総数ではない。
+- 分母は人が打ったプロンプトすべて。ハーネスが書いた行は数えない。tool_result だけの行、task-notification、`isMeta`・`isCompactSummary`・sidechain の行がそれにあたる。local-command の出力、中断マーカー、Stop hook の差し戻し文も同じ。slash command の起動は分母に入れるが、催促にはしない。
+- `nudge`：正規化（NFKC・小文字化・空白と記号の除去）した全体が、継続の語だけのもの。継続の語は、進めて・続けて・続行・再開・continue・keep going・go ahead などを指す。前置き（はい・では）と丁寧語（ください・お願いします）は付いてよい。語は閉じた一覧で、ほかの指示を1語でも足したものは `other`。したがってこの数字は下限であって総数ではない。
 - `ack`：「はい」「ok」「お願いします」だけのもの。直前の質問への正当な返事であることが多いので、催促に数えない。別に数える。
 - 各 nudge は、それが応じた assistant ターンで分ける。`after_question` はそのターンが人への質問か判断の依頼で終わっていたもの（gated モードの step ゲートへの返事など）。`unprompted` はそうでないもの（黙って止まった）。`in_run` はそのターンに run-status ヘッダがあったもの。
 - `--ratchet FILE`（`rig.nudges-ceiling/v1`。推奨は `.rig/nudges-ceiling.json`）は `nudge_bp` を `nudge_bp_max` と比べる。判定しない条件は `wakeups` と同じで、標本の下限は `min_prompts`（既定 30）。
-- `unprompted` を減らすのが Stop hook `hooks/continue-rig-run.sh` の役目。rig の RUN が step の途中（`n < N`）で、質問も判断の依頼もせずにターンを終えようとしたときだけ、1回差し戻す。gated モードの step 境界、REJECT、`stuck: 2/2`、通知待ちのバックグラウンド task があるときは止めない。同じ位置で2回止まったら通す。`RIG_AUTO_CONTINUE=0` で無効化できる。導入の前後でこのコマンドの `unprompted_bp` を比べれば、効いたかどうかを数字で確かめられる。
+- `unprompted` を減らすのが Stop hook `hooks/continue-rig-run.sh` の役目。判定は SKILL.md §6 ⑤ の表に従い、止まる理由を先に見る。停止宣言（`▸ stop: <code>`）・質問・REJECT・`stuck: 2/2`・gated の step 境界・通知待ちでは止めさせる。外部に出る次の一手・能力不足・同じ失敗の2回目でも止めさせる。一時的な失敗は1回だけ再実行させ、それ以外で黙って止まったときだけ続行させる。`RIG_AUTO_CONTINUE=0` で無効化できる。
+- `declared_stops` は、答えたターンを終えた停止宣言の内訳。停止宣言に答えた催促は `after_question` に数える。導入の前後で `unprompted_bp` と `declared_stops` を比べれば、ルールが効いたかを数字で確かめられる。
 
 ## `/rig effectiveness --query <json> [--json]`
 

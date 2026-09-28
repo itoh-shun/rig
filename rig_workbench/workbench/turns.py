@@ -104,6 +104,34 @@ def parse_header(text: str) -> dict | None:
     return fields
 
 
+#: The stop declaration (SKILL.md §6 ⑤): the one line a RUN writes when it ends its turn
+#: on purpose, `▸ stop: <code>[ — <detail>]`. The escalation codes are
+#: `assurance.development_loop.ESCALATIONS`, copied rather than imported so the Stop hook
+#: does not pay for that package on every stop; tests/test_continue_rig_run_hook.py holds
+#: the two equal.
+STOP_PLAIN = ("done", "waiting", "step-gate")
+STOP_NEEDS_DECISION = ("destructive-operation", "ambiguous-requirement",
+                       "policy-requires-approval", "budget-exhausted", "capability-missing")
+STOP_BLOCKED = ("capability-missing", "gate-reject", "repeated-failure")
+_STOP_RE = re.compile(r"▸ stop:\s*([A-Za-z-]+)(?::([A-Za-z-]+))?")
+
+
+def parse_stop(text: str) -> dict | None:
+    """The last stop declaration in `text`: {"code", "kind", "reason", "known"}, or None.
+
+    `known` is False for a code outside the vocabulary. A misspelt declaration is still a
+    declaration that the stop was meant, so callers let it stop and count it apart."""
+    matches = _STOP_RE.findall(text)
+    if not matches:
+        return None
+    kind, reason = matches[-1][0].lower(), matches[-1][1].lower()
+    known = ((kind in STOP_PLAIN and not reason)
+             or (kind == "needs-decision" and reason in STOP_NEEDS_DECISION)
+             or (kind == "blocked" and reason in STOP_BLOCKED))
+    code = f"{kind}:{reason}" if reason else kind
+    return {"code": code, "kind": kind, "reason": reason, "known": known}
+
+
 #: Phrases that hand the decision to the person. Matching errs towards "it asked": for the
 #: Stop hook a false "asked" only means one push is not given, the cheap direction.
 _ASKING = ("進めますか", "進めてよいですか", "進めてもよいですか", "よろしいですか", "よいですか",
