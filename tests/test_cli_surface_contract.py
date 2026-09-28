@@ -62,7 +62,7 @@ WB_SUBCOMMANDS = frozenset({
     "confidence", "context", "contract", "dev-loop", "diff", "digest", "discard",
     "drill-corpus", "effectiveness", "expected-outcome", "gate", "gates", "gc",
     "import", "instincts", "intent", "intent-derive", "knowledge-candidate", "log",
-    "new", "note", "provenance", "receipt", "record-commit", "record-outcome",
+    "new", "note", "nudges", "provenance", "receipt", "record-commit", "record-outcome",
     "review", "route", "route-team", "scan-anchors", "scan-destructive",
     "scan-injection", "scan-ja-prose", "scan-secrets", "stale-refs", "stats",
     "status", "step", "stream-checks", "synthesise", "trace-commit",

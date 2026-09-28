@@ -162,6 +162,7 @@ def _exercise_every_shared_command(data, *, project, transcript, env):
         "prompt_reminder": _command_for(
             data, "UserPromptSubmit", "remind-rig-header.sh"
         ),
+        "stop_continue": _command_for(data, "Stop", "continue-rig-run.sh"),
     }
     assert len(_all_commands(data)) == len(commands)
     assert set(_all_commands(data)) == set(commands.values())
@@ -183,7 +184,20 @@ def _exercise_every_shared_command(data, *, project, transcript, env):
             env=env,
             input_text=json.dumps({"transcript_path": str(transcript)}),
         ),
+        "stop_continue": _run_command(
+            commands["stop_continue"],
+            cwd=project,
+            env=env,
+            input_text=json.dumps({"hook_event_name": "Stop", "session_id": "shared",
+                                   "stop_hook_active": False,
+                                   "transcript_path": str(transcript)}),
+        ),
     }
+
+    # The shared transcript is not a Claude Code jsonl with a mid-flow header, so the
+    # Stop push must stay silent; tests/test_continue_rig_run_hook.py covers the block.
+    stop = results["stop_continue"]
+    assert (stop.returncode, stop.stdout, stop.stderr) == (0, "", "")
 
     _assert_context_output(
         results["instincts"], "SessionStart", "shared hook integration pattern"

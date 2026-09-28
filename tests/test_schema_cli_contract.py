@@ -699,6 +699,35 @@ def test_group2_wb_wakeups_answers_in_rig_wakeups_v1_and_writes_rig_wakeups_ceil
                     what="the ceiling `wb wakeups --init` created")
 
 
+def test_group2_wb_nudges_answers_in_rig_nudges_v1_and_writes_rig_nudges_ceiling_v1(
+        tmp_path, rig_cli_json):
+    """`wb nudges` has the same two readers as `wb wakeups`: a CI ratchet and the next
+    run's ceiling. Thirty prompts are the smallest sample `--init` will create one from."""
+    rows = []
+    for i in range(30):
+        rows.append(json.dumps({"type": "user", "uuid": f"u{i}",
+                                "message": {"content": "進めて" if i % 10 == 0 else f"task {i}"}},
+                               ensure_ascii=False))
+        rows.append(json.dumps({"type": "assistant", "uuid": f"a{i}",
+                                "message": {"content": [{"type": "text", "text": "done"}]}}))
+    transcript = tmp_path / "session.jsonl"
+    transcript.write_text("\n".join(rows) + "\n", encoding="utf-8")
+    ceiling = tmp_path / ".rig" / "nudges-ceiling.json"
+    payload = rig_cli_json("wb", "nudges", "--transcripts", transcript, "--ratchet", ceiling,
+                           "--init", "--json", cwd=tmp_path, expect_returncode=0)
+    assert_document(payload, schema="rig.nudges/v1",
+                    required={"schema", "state", "total_prompts", "kinds", "nudges", "nudge_bp",
+                              "unprompted", "unprompted_bp", "after_question", "in_run",
+                              "unprompted_in_run", "declared_stops", "unreadable_lines", "duplicate_rows_skipped",
+                              "uuid_conflicts", "per_file", "not_seen", "ratchet"},
+                    what="`wb nudges --json`")
+    assert payload["nudges"] == 3 and payload["nudge_bp"] == 1000
+    assert_document(read_json_file(ceiling, what="`wb nudges --ratchet --init`"),
+                    schema="rig.nudges-ceiling/v1",
+                    required={"schema", "nudge_bp_max", "min_prompts"},
+                    what="the ceiling `wb nudges --init` created")
+
+
 # ══ group3 — the organisational and external surface ═════════════════════════
 # Governance records, the two console scripts that are not `rig-wb` subcommands, and the
 # two documents rig writes into a repository's own state rather than onto stdout.

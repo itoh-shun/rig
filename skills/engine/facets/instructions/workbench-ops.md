@@ -2,7 +2,7 @@
 
 **`/rig status` / `/rig diff` / `/rig accept` / `/rig confidence` / `/rig discard` / `/rig log` / `/rig board` / `/rig cockpit` / `/rig stats` / `/rig review` / `/rig note` / `/rig gc` / `/rig audit` / `/rig scan-secrets` / `/rig scan-injection` / `/rig scan-ja-prose` / `/rig digest` / `/rig context` / `/rig stream-checks` / `/rig stale-refs` / `/rig scan-destructive` / `/rig scan-anchors` / `/rig instincts` / `/rig gates` / `/rig receipt` / `/rig import` / `/rig contract` / `/rig intent-derive` / `/rig assurance-target` / `/rig assurance-derive` / `/rig synthesise` / `/rig dev-loop` / `/rig route-team` / `/rig budget-plan` / `/rig provenance` / `/rig expected-outcome` / `/rig effectiveness` / `/rig knowledge-candidate` / `/rig compose-options` / `/rig change-graph` / `/rig anomaly-trigger`** の手順。実体は全て `scripts/workbench.py`（`patterns/isolated-worktree` 参照）への薄い委譲で、本ファイルは**表示の整形と安全確認の追加**だけを担う。判定・状態管理をここで再実装しない（§8 Native-first）。
 
-`/rig wakeups`（3.4.0）もこの instruction が扱う。
+`/rig wakeups`（3.4.0）と `/rig nudges` もこの instruction が扱う。
 
 ## 共通ルール
 
@@ -598,6 +598,22 @@ python3 scripts/workbench.py wakeups --transcripts PATH… [--since-days N] [--j
 - `--init`：ファイルが無いときだけ、判定できる標本の実測値で作る。既存ファイルは上書きしない。`--tighten`：既存の天井を実測値まで**下げる**だけで、上げない・作らない。
 - 天井はローカルファイルにすぎない。消して `--init` し直せば高い値で作り直せるので、改ざん防止ではなく「気づかない悪化」を止める仕組みとして扱う。
 - 見えるのは渡した transcript に記録された通知だけ。レポート自身がそう明記するので、その断り書きを削らない。
+
+## `/rig nudges --transcripts PATH… [--since-days N] [--json] [--ratchet FILE [--init|--tighten]]`
+
+```
+python3 scripts/workbench.py nudges --transcripts PATH… [--since-days N] [--json] [--ratchet FILE [--init|--tighten]]
+```
+
+中身のない催促（「進めて」「続けて」「continue」だけのプロンプト）の実測。セッションが自分で止まり、人が1ターン払って再開させた回数の割合を数える。transcript の読み方・重複除去・`--since-days`・ratchet の判定表は `wakeups` と同じ。
+
+- 分母は人が打ったプロンプトすべて。ハーネスが書いた行は数えない。tool_result だけの行、task-notification、`isMeta`・`isCompactSummary`・sidechain の行がそれにあたる。local-command の出力、中断マーカー、Stop hook の差し戻し文も同じ。slash command の起動は分母に入れるが、催促にはしない。
+- `nudge`：正規化（NFKC・小文字化・空白と記号の除去）した全体が、継続の語だけのもの。継続の語は、進めて・続けて・続行・再開・continue・keep going・go ahead などを指す。前置き（はい・では）と丁寧語（ください・お願いします）は付いてよい。語は閉じた一覧で、ほかの指示を1語でも足したものは `other`。したがってこの数字は下限であって総数ではない。
+- `ack`：「はい」「ok」「お願いします」だけのもの。直前の質問への正当な返事であることが多いので、催促に数えない。別に数える。
+- 各 nudge は、それが応じた assistant ターンで分ける。`after_question` はそのターンが人への質問か判断の依頼で終わっていたもの（gated モードの step ゲートへの返事など）。`unprompted` はそうでないもの（黙って止まった）。`in_run` はそのターンに run-status ヘッダがあったもの。
+- `--ratchet FILE`（`rig.nudges-ceiling/v1`。推奨は `.rig/nudges-ceiling.json`）は `nudge_bp` を `nudge_bp_max` と比べる。判定しない条件は `wakeups` と同じで、標本の下限は `min_prompts`（既定 30）。
+- `unprompted` を減らすのが Stop hook `hooks/continue-rig-run.sh` の役目。判定は SKILL.md §6 ⑤ の表に従い、止まる理由を先に見る。停止宣言（`▸ stop: <code>`）・質問・REJECT・`stuck: 2/2`・gated の step 境界・通知待ちでは止めさせる。外部に出る次の一手・能力不足・同じ失敗の2回目でも止めさせる。一時的な失敗は1回だけ再実行させ、それ以外で黙って止まったときだけ続行させる。`RIG_AUTO_CONTINUE=0` で無効化できる。
+- `declared_stops` は、答えたターンを終えた停止宣言の内訳。停止宣言に答えた催促は `after_question` に数える。導入の前後で `unprompted_bp` と `declared_stops` を比べれば、ルールが効いたかを数字で確かめられる。
 
 ## `/rig effectiveness --query <json> [--json]`
 

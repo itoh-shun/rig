@@ -23,7 +23,7 @@ import sys
 from .. import console, context_meter
 from ..ports import Presenter
 from ..ports.local import CONSOLE
-from . import wakeups
+from . import nudges, wakeups
 from .state import die, reject, repo_root
 
 
@@ -151,3 +151,32 @@ def cmd_wakeups(args: argparse.Namespace, out: Presenter = CONSOLE) -> None:
         # judged. Same meaning `wb gate` and `wb contract` give 3.
         console.write_line(f"[NOT JUDGED] {ratchet['message']}", stream=sys.stderr)
         sys.exit(wakeups.EXIT_NOT_JUDGED)
+
+
+# ── wb nudges ─────────────────────────────────────────────────────────────────
+
+def cmd_nudges(args: argparse.Namespace, out: Presenter = CONSOLE) -> None:
+    """`wb nudges`: the same shell as `wb wakeups`, over prompts that only said "carry on"
+    (1 over the ceiling, 2 for a missing/invalid ceiling or bad usage, 3 not judged)."""
+    if (args.init or args.tighten) and not args.ratchet:
+        die("--init and --tighten need --ratchet FILE")
+    if args.since_days is not None and args.since_days < 0:
+        die("--since-days must be 0 or more")
+    try:
+        report = nudges.measure_paths(args.transcripts, since_days=args.since_days)
+    except FileNotFoundError as exc:
+        die(f"--transcripts: no such file or directory: {exc}")
+    if args.ratchet:
+        report["ratchet"] = nudges.apply_ratchet(report, args.ratchet, tighten=args.tighten,
+                                                 init=args.init)
+    out.out(nudges.render_json(report) if args.json else nudges.render_human(report))
+    ratchet = report.get("ratchet")
+    if not ratchet:
+        return
+    if ratchet["exit"] == nudges.EXIT_OVER:
+        reject(ratchet["message"])
+    if ratchet["exit"] == nudges.EXIT_ERROR:
+        die(ratchet["message"])
+    if ratchet["exit"] == nudges.EXIT_NOT_JUDGED:
+        console.write_line(f"[NOT JUDGED] {ratchet['message']}", stream=sys.stderr)
+        sys.exit(nudges.EXIT_NOT_JUDGED)

@@ -472,7 +472,7 @@ CATALOG_SECTION = ("## 2. ブリック目録", "## 目録の外 — 次に読む
 #: stopped applying.
 PACK_ROW_ONLY = frozenset({
     "accept", "audit", "board", "cockpit", "confidence", "context", "diff", "digest",
-    "discard", "gates", "gc", "instincts", "log", "note", "review", "scan-anchors",
+    "discard", "gates", "gc", "instincts", "log", "note", "nudges", "review", "scan-anchors",
     "scan-destructive", "scan-injection", "scan-secrets", "stale-refs", "stats", "status",
     "stream-checks", "wakeups",
 })

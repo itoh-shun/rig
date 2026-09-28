@@ -56,7 +56,7 @@ from .config import (TASK_TYPES, VALID_CRITERION_STATUS, VALID_STEP_STATUS,
                      VALID_VERDICT)
 from .confidence import cmd_confidence
 from ..assurance.compose_options import cmd_compose_options, non_negative_diff
-from .context_report import cmd_context, cmd_wakeups
+from .context_report import cmd_context, cmd_nudges, cmd_wakeups
 from .destructive import cmd_scan_destructive
 from .detection_corpus import cmd_drill_corpus
 from .digest import cmd_digest
@@ -640,6 +640,24 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--tighten", action="store_true",
                    help="with --ratchet: lower the ceiling to the measured value; never raises it")
     p.set_defaults(func=cmd_wakeups)
+
+    p = sub.add_parser("nudges", help="count prompts that only said \"carry on\" (進めて / 続けて / "
+                       "continue) in Claude Code transcripts; optionally judge them against a "
+                       "down-only ceiling")
+    p.add_argument("--transcripts", nargs="+", metavar="PATH", required=True,
+                   help="Claude Code session transcripts: jsonl files or directories "
+                        "(non-recursive *.jsonl)")
+    p.add_argument("--since-days", type=int,
+                   help="only files whose mtime is within the last N days (default: all)")
+    p.add_argument("--json", action="store_true", help="machine-readable output (rig.nudges/v1)")
+    p.add_argument("--ratchet", metavar="FILE",
+                   help="judge against the ceiling in FILE (suggested: .rig/nudges-ceiling.json): "
+                        "exit 1 over it, 3 when the sample cannot be judged")
+    p.add_argument("--init", action="store_true",
+                   help="with --ratchet: create FILE at the measured value; refuses an existing FILE")
+    p.add_argument("--tighten", action="store_true",
+                   help="with --ratchet: lower the ceiling to the measured value; never raises it")
+    p.set_defaults(func=cmd_nudges)
 
     p = sub.add_parser("audit", help="list the audit log of `accept --force` etc. (`.rig/audit.jsonl`)")
     p.add_argument("--limit", type=int, help="show only the latest N entries")
