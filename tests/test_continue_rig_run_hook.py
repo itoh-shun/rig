@@ -295,6 +295,15 @@ def test_hook_fails_open_and_writes_nothing(tmp_path, payload):
     assert list(tmp_path.iterdir()) == []
 
 
+def test_hook_output_is_ascii_so_a_lang_c_stream_can_carry_it(tmp_path):
+    header = "▸ rig | recipe: bugfix | step: 実装 (3/6) | gate: none | mode: autonomous"
+    result = _run_hook(tmp_path, _turn("パーサを直しました。", header=header),
+                       env_extra={"LANG": "C", "LC_ALL": "C", "PYTHONIOENCODING": "ascii"})
+    assert result.returncode == 0 and result.stderr == ""
+    assert result.stdout.isascii()
+    assert "実装 (3/6)" in json.loads(result.stdout)["reason"]
+
+
 def test_hook_is_silent_in_a_provider_subprocess(tmp_path):
     result = _run_hook(tmp_path, _turn("Working.", mode="autonomous"),
                        env_extra={"RIG_PROVIDER_SUBPROCESS": "1"})

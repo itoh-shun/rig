@@ -15,5 +15,5 @@
 command -v python3 >/dev/null 2>&1 || exit 0
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}" python3 -m rig_workbench.workbench.stop_continue 2>/dev/null
+PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}" python3 -c "from rig_workbench.workbench.stop_continue import main; main()" 2>/dev/null
 exit 0

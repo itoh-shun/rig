@@ -249,7 +249,9 @@ def run(stdin: str, env: dict) -> str:
     if state is not None:
         state.parent.mkdir(parents=True, exist_ok=True)
         state.write_text(signature + "\n", encoding="utf-8")
-    return json.dumps({"decision": "block", "reason": reason}, ensure_ascii=False)
+    # ASCII-escaped: the reason carries Japanese, and a hook's stdout may be a `LANG=C`
+    # stream that cannot encode it. JSON readers decode the escapes to the same text.
+    return json.dumps({"decision": "block", "reason": reason})
 
 
 def main() -> None:
@@ -259,7 +261,3 @@ def main() -> None:
         return
     if out:
         sys.stdout.write(out + "\n")
-
-
-if __name__ == "__main__":
-    main()
