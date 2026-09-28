@@ -1,5 +1,37 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **`wb nudges`: a meter for prompts that only said "carry on".** `wb nudges
+  --transcripts PATH…` reads Claude Code session transcripts and classifies
+  every prompt a person typed. Tool results, task-notifications, `isMeta`,
+  compaction summaries, sidechains, local-command output, the interruption
+  marker and Stop hook feedback are not prompts. A `nudge` is a prompt whose
+  whole normalised text is a continuation word (進めて, 続けて, 続行, continue,
+  keep going, go ahead…) with optional filler and politeness; anything more is
+  `other`, so the count is a floor. Bare acknowledgements (はい, ok, お願いします)
+  are `ack`, counted apart and never as nudges. Each nudge is marked
+  `after_question` when the assistant turn it answered ended on a question or
+  a request for a decision (a gated step asking to go on), `unprompted`
+  otherwise, and `in_run` when that turn carried a rig run-status header.
+  Transcript reading, uuid de-duplication, `--since-days` and the ratchet
+  matrix are `wb wakeups`'s; `--json` emits `rig.nudges/v1`, the ceiling is
+  `rig.nudges-ceiling/v1` over `nudge_bp` with `min_prompts` (default 30).
+- **A run-continuity Stop push (`hooks/continue-rig-run.sh`).** When a rig RUN
+  tries to end its turn mid-flow, the hook blocks the stop once so the model
+  carries on instead of waiting for 「進めて」. It is scoped so as not to repeat
+  the retired instinct Stop reminder: it acts only when this turn's run-status
+  header has a step position with `n < N`, the gate is not `REJECT`, the
+  stuck-guard is not at `2/2`, the turn's last text asks the person nothing,
+  a `gated` RUN has not reached a `▸ done` step boundary (gated RUNs still stop
+  after each step by design), and no background task launched in the session
+  is still due to notify. A second push in one stop chain needs the header to
+  have moved. It is silent in provider subprocesses (`RIG_PROVIDER_SUBPROCESS`),
+  with `RIG_AUTO_CONTINUE=0`, without `python3`, and on any error. Compare
+  `wb nudges`'s `unprompted_bp` before and after to see whether it helps.
+
 ## [3.4.0] - 2026-09-24
 
 ### Added

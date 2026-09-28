@@ -99,6 +99,8 @@ FROZEN_SCHEMA_IDS = {
     "rig.knowledge-candidate/v1",
     "rig.mission-control/v1",
     "rig.mission-worker/v1",
+    "rig.nudges-ceiling/v1",
+    "rig.nudges/v1",
     "rig.org-knowledge/v1",
     "rig.org/v2",
     "rig.policy/v2",
