@@ -39,6 +39,7 @@ import pathlib
 import re
 import sys
 
+from ..ports.local import OS_ENV
 from . import turns
 from .wakeups import _blocks, _is_notification, _text, fields, parse_lines
 
@@ -168,7 +169,7 @@ def run(stdin: str, env: dict) -> str:
 
 def main() -> None:
     try:
-        out = run(sys.stdin.read(), dict(os.environ))
+        out = run(sys.stdin.read(), dict(OS_ENV.snapshot()))
     except Exception:  # noqa: BLE001 — a Stop hook must never break the session
         return
     if out:
