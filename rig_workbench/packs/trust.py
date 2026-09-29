@@ -113,7 +113,8 @@ def ensure_asset_trusted(asset: ResolvedAsset, *, env: Env = OS_ENV) -> pathlib.
     if not allowed:
         raise PackError(
             f"untrusted {asset.tier} {asset.kind} asset: {asset.path}; "
-            "review it and approve with RIG_ALLOW_PROJECT_PACKS=1"
+            f"review it and approve with RIG_ALLOW_PROJECT_PACKS=1 "
+            f"(or RIG_ALLOW_PROJECT_{asset.kind.upper().replace('-', '_')}S=1)"
         )
     store[key] = identity
     try:

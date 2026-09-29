@@ -11,7 +11,7 @@ import subprocess
 import concurrent.futures as futures
 from collections import Counter
 from functools import wraps
-from typing import Protocol
+from typing import NoReturn, Protocol
 
 from ..ports import Clock, Env, Presenter, ProcessRunner
 from ..ports.local import CONSOLE, OS_ENV, SUBPROCESS, SYSTEM_CLOCK
@@ -222,6 +222,17 @@ def render_plan(recipe: str, steps: list[dict], execution: dict | None = None) -
             )
             lines.append(f"Unsupported gates: {detail}")
     return "\n".join(lines)
+
+
+def _blocked_by_pack_error(error: Exception, say) -> NoReturn:
+    """One report for a pack-trust refusal met mid-run: `[BLOCKED] <error>`, exit 2.
+
+    `run` and `ab` both reach `ensure_asset_trusted` deep inside `run_loop` (a persona brief,
+    an `extends` parent), so both end here and cannot drift apart. `say` is the caller's
+    own output function — `diagnostic` in `run`, `out.out` in `ab`.
+    """
+    say(f"[BLOCKED] {error}")
+    raise SystemExit(2) from error
 
 
 class Refusal(Exception):
@@ -1487,6 +1498,10 @@ def cmd_run(args, *, out: Presenter = CONSOLE, env: Env = OS_ENV, observer=None)
                        f"`rig-wb orchestrate approve <step-id> {out_path}`, then `resume`.")
             sys.exit(3)
         sys.exit((0 if final == "DONE" else 1) if strict else (1 if final in ("ESCALATE", "BLOCKED") else 0))
+    except PackError as error:
+        # An unapproved user/project asset (a persona brief, say) met mid-run is a refusal
+        # with an approve hint, not a crash: same reporting as the japanese-material refusal.
+        _blocked_by_pack_error(error, diagnostic)
     finally:
         close_secure_launchers(cfg.pop("_secure_launchers", None))
         release_output_lock(cfg.pop("_secure_output_lock", None))
@@ -1620,6 +1635,15 @@ def cmd_ab(args, *, out: Presenter = CONSOLE):
         sys.exit(1)
     ver = ver or gen
 
+    try:
+        _ab_variants_and_run(recipes, goal, gen, ver, cfg, max_steps, max_parallel, quorum,
+                             manifest_mode, manifest_a, manifest_b, out)
+    except PackError as error:
+        _blocked_by_pack_error(error, out.out)
+
+
+def _ab_variants_and_run(recipes, goal, gen, ver, cfg, max_steps, max_parallel, quorum,
+                         manifest_mode, manifest_a, manifest_b, out):
     if manifest_mode:
         path = resolve_recipe(recipes[0])
         variants = [(path, manifest_a, f"A({manifest_a.stem})", pathlib.Path("ab-manifest-a-state.json")),

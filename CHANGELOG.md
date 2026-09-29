@@ -1,5 +1,37 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- **`~/.claude/rig/recipes` and `~/.claude/rig/personas` are now read.**
+  `rig-wb wb route --recipe feature-roles` answered "explicit recipe is not
+  resolvable" for a recipe at `~/.claude/rig/recipes/feature-roles.md`, because
+  `_legacy_assets` only read the project tier, although `RESOLVE.md` §4.2.1,
+  `resolve.md` 2.1 and `COMPOSE.md` §5 name these directories. They resolve at
+  tier `user` with no pack owner. The root is `$RIG_USER_HOME`, else the home
+  directory, made absolute (one `_user_home()` shared with the user's packs, so a
+  relative `RIG_USER_HOME` no longer changes the ranking). Precedence: a project
+  copy wins; inside the user tier, installed packs rank before these loose files;
+  the user tier ranks above org, official and core.
+- **These files need one-time consent, like a user pack.** By name, a user-tier
+  recipe or persona is refused until approved with `RIG_ALLOW_PROJECT_RECIPES=1` /
+  `RIG_ALLOW_PROJECT_PERSONAS=1` (or `RIG_ALLOW_PROJECT_PACKS=1`,
+  `--allow-project-packs`); an edit re-requires it. For a name-resolved user-tier
+  asset, `wb route` and `resolve_recipe` now read the same record (the pack-asset
+  store), so one approval satisfies both, and `wb route` reports `trust_required`
+  with the approve hint. Inheritance is gated too: an `extends` parent that is
+  loaded from the user tier's recipe directory needs the same approval, including
+  a sibling of the child that shadows the parent `resolve` ranks first, and a
+  symlink in that directory (membership is decided by where the file sits, the
+  approval hashes the content it points at). An unapproved user persona met during
+  `run` or `ab` now ends in one shared `[BLOCKED]` message with the approve hint
+  and exit 2 instead of a traceback.
+- **Unchanged: an explicit path is not gated.** `rig-wb run
+  ~/.claude/rig/recipes/x.md` names the file itself and still skips the consent
+  gate, as before. `scan-injection` still covers the project persona directory
+  only.
+
 ## [3.4.0] - 2026-09-24
 
 ### Added

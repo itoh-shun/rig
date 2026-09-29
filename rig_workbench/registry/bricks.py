@@ -3,9 +3,10 @@
 `docs/v3-architecture-design-brief.ja.md` §7 puts this in the second stage, in as many
 words: 「ブリック解決の宣言も 1 箇所に集まるため、散文と実装のずれ…も同時に解消できる」.
 The divergence it means is real and measured — `skills/engine/RESOLVE.md` §4.2.1 and
-`skills/engine/facets/instructions/resolve.md` 2.1 promise a user tier at
-`~/.claude/rig/recipes` and `~/.claude/rig/personas` that no code reads, and both call the
-lowest tier `shipped` while `rig_workbench/packs/model.py` calls it `core`.
+`skills/engine/facets/instructions/resolve.md` 2.1 promised a user tier at
+`~/.claude/rig/recipes` and `~/.claude/rig/personas` that no code read (it does now:
+`packs.resolver._legacy_assets`), and both call the lowest tier `shipped` while
+`rig_workbench/packs/model.py` calls it `core`.
 
 **This module is the declaration; the code is what it describes, not the other way round.**
 The direction matters because it is the one §9 settles for the capability table
@@ -292,8 +293,8 @@ def _pack_tiers(asset_dir: str) -> tuple[SearchDir, ...]:
                        "checkout's copy rather than its own empty one (#471)"),
         SearchDir(tier="user", anchor="user", path=f".rig/packs/{PACK}/{asset_dir}",
                   reader=_PACK_READER,
-                  note="the only user tier that exists; the prose promises `~/.claude/rig/` "
-                       "instead, and nothing reads that"),
+                  note="the user tier's installed packs; its loose `~/.claude/rig/` recipes "
+                       "and personas are declared beside it, per kind, below"),
         SearchDir(tier="org", anchor="org", path=f"packs/{PACK}/{asset_dir}",
                   reader=_PACK_READER,
                   note="`pack_roots` reads `$RIG_ORG_HOME` only — the manifest's `org_dir:` "
@@ -327,7 +328,14 @@ WALKS: tuple[Walk, ...] = (
                       reader=_LEGACY_READER,
                       note="gitignored machine-local state, and it loses to `.claude/rig/` "
                            "above on the source sort despite being listed first in the code"),
-            *_pack_tiers("recipes")[1:],
+            _pack_tiers("recipes")[1],
+            SearchDir(tier="user", anchor="user", path=".claude/rig/recipes",
+                      reader=_LEGACY_READER,
+                      note="loose recipe files under the user's home; ranks after the user's "
+                           "installed packs because the sort key falls through to the source "
+                           "string, where a pack's absolute path sorts before `legacy:`. Gated "
+                           "like a user pack (`RIG_ALLOW_PROJECT_RECIPES=1`)"),
+            *_pack_tiers("recipes")[2:],
             _shipped(f"{SKILL_DIR}/recipes",
                      note="what the prose calls the `shipped` tier"),
         ),
@@ -340,9 +348,14 @@ WALKS: tuple[Walk, ...] = (
             _pack_tiers("facets/personas")[0],
             SearchDir(tier="project", anchor="project", path=".claude/rig/personas",
                       reader=_LEGACY_READER,
-                      note="the only `.claude/rig/personas` anybody reads; there is no "
-                           "`~/.claude/rig/personas` in the code, at any tier"),
-            *_pack_tiers("facets/personas")[1:],
+                      note="tracked, so it is branch content"),
+            _pack_tiers("facets/personas")[1],
+            SearchDir(tier="user", anchor="user", path=".claude/rig/personas",
+                      reader=_LEGACY_READER,
+                      note="loose persona files under the user's home; after the user's "
+                           "installed packs for the same reason as the recipe walk. Gated "
+                           "like a user pack (`RIG_ALLOW_PROJECT_PERSONAS=1`)"),
+            *_pack_tiers("facets/personas")[2:],
             _shipped(f"{SKILL_DIR}/facets/personas",
                      note="`orchestrate.composition._load_persona_brief` falls back to this same "
                           "directory (`config.PERSONAS`) when the walk finds nothing"),

@@ -18,16 +18,28 @@ def _project_root(project: pathlib.Path | str | None) -> pathlib.Path:
     return pathlib.Path(project or pathlib.Path.cwd()).resolve()
 
 
+def _user_home(*, env: Env = OS_ENV) -> pathlib.Path:
+    """The user tier's root: `$RIG_USER_HOME`, else the home directory.
+
+    One answer for both readers of the user tier (`pack_roots` and `_legacy_assets`), so
+    a test or an embedder that points `RIG_USER_HOME` somewhere moves both together.
+    `Env.get` answers `str | None`, so the fallback is chosen on `is None` rather than
+    handed to `get` as a default: `os.environ.get(name, Path.home())` returned a `Path`
+    for the unset case and the empty string for `RIG_USER_HOME=`, and those are two
+    different answers. Keeping the `is None` test keeps both of them as they were.
+    """
+    configured = env.get("RIG_USER_HOME")
+    # Absolute and resolved: `resolve_all` breaks ties by comparing source *strings*, so a
+    # relative `RIG_USER_HOME` (`z-home`) would put a pack's source and a loose file's on
+    # different footings and reverse the declared pack-before-loose order.
+    return pathlib.Path(
+        pathlib.Path.home() if configured is None else configured).expanduser().resolve()
+
+
 def pack_roots(project: pathlib.Path | str | None = None, *,
                env: Env = OS_ENV) -> list[tuple[str, pathlib.Path]]:
     root = _project_root(project)
-    # `Env.get` answers `str | None`, so the fallback is chosen on `is None` rather than
-    # handed to `get` as a default: `os.environ.get(name, Path.home())` returned a `Path`
-    # for the unset case and the empty string for `RIG_USER_HOME=`, and those are two
-    # different answers. Keeping the `is None` test keeps both of them as they were.
-    configured = env.get("RIG_USER_HOME")
-    home = pathlib.Path(
-        pathlib.Path.home() if configured is None else configured).expanduser()
+    home = _user_home(env=env)
     org = env.get("RIG_ORG_HOME")
     result = [("project", root / ".rig" / "packs"), ("user", home / ".rig" / "packs")]
     if org:
@@ -109,9 +121,15 @@ def _validated_pack_assets(project: pathlib.Path) -> list[ResolvedAsset]:
 
 def _legacy_assets(project: pathlib.Path,
                    shared: pathlib.Path | None = None) -> Iterable[ResolvedAsset]:
-    """Project-tier assets, from whichever tree each kind actually belongs to.
+    """Loose-file assets (no pack): the project tier, and the user tier's recipes and personas.
 
-    The four directories are not the same kind of thing. `.rig/recipes` is gitignored —
+    The user tier is `<user>/.claude/rig/{recipes,personas}` under `_user_home()` — the
+    `~/.claude/rig/` the prose promises (RESOLVE.md §4.2.1, COMPOSE.md §5). It is not
+    resolved per working tree, since it is not repository content.
+
+    The project tier, from whichever tree each kind actually belongs to.
+
+    The four project directories are not the same kind of thing. `.rig/recipes` is gitignored —
     machine-local state that belongs to the repository, and a task worktree that resolved
     its own empty copy would route differently from the checkout beside it. The three under
     `.claude/` are tracked, so they are branch content: a branch carrying its own recipe
@@ -142,6 +160,11 @@ def _legacy_assets(project: pathlib.Path,
         ("project", _first_that_exists(".claude", "rig", "personas"), "persona"),
         ("project", _first_that_exists(".claude", "rig", "knowledge"), "wiki"),
     ]
+    user_home = _user_home()
+    mappings.extend((
+        ("user", user_home / ".claude" / "rig" / "recipes", "recipe"),
+        ("user", user_home / ".claude" / "rig" / "personas", "persona"),
+    ))
     for tier, directory, kind in mappings:
         if directory.is_dir():
             for path in sorted(directory.rglob("*.md")):
