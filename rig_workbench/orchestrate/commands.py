@@ -1004,23 +1004,34 @@ def _git_head(*, proc: ProcessRunner = SUBPROCESS) -> str | None:
     result = proc.run(["git", "rev-parse", "HEAD"], cwd=str(config.INVOCATION_CWD))
     return result.stdout.strip() or None if result.returncode == 0 else None
 
+#: The one statement of `run`'s usage: the refusal for a bare `run` prints it, and
+#: `run --help` prints it, so the two cannot drift apart (#591).
+RUN_USAGE = (
+    "run <recipe> --provider <name> [--verifier-provider <name>] "
+    "[--provider-cmd \"...{prompt}...\"] [--step-model <step-id>=<model>] "
+    "[--secure-provider-config /absolute/path/to/provider-pins.json | "
+    "--generator-executable PATH --generator-executable-sha256 HEX "
+    "[--generator-interpreter PATH --generator-interpreter-sha256 HEX] "
+    "--verifier-executable PATH --verifier-executable-sha256 HEX "
+    "[--verifier-interpreter PATH --verifier-interpreter-sha256 HEX]] "
+    "[--max-steps N] [--goal G | --goal-stdin] [--check command] "
+    "[--review-category general|incident_report|support_reply] "
+    "[--material-profile none|technical|conversation] "
+    "[--out f] [--timeout seconds] [--isolate] [--progress] [--auto-route] "
+    "[--auto-route-learn [--auto-route-mode shadow|active] [--exploration-pct N] [--exploration-date D]]")
+
+
 @_reports_refusals
 @_progress_command
 def cmd_run(args, *, out: Presenter = CONSOLE, env: Env = OS_ENV, observer=None):
     if not args:
-        out.out("[ERROR] usage: run <recipe> --provider <name> [--verifier-provider <name>] "
-                "[--provider-cmd \"...{prompt}...\"] [--step-model <step-id>=<model>] "
-                "[--secure-provider-config /absolute/path/to/provider-pins.json | "
-                "--generator-executable PATH --generator-executable-sha256 HEX "
-                "[--generator-interpreter PATH --generator-interpreter-sha256 HEX] "
-                "--verifier-executable PATH --verifier-executable-sha256 HEX "
-                "[--verifier-interpreter PATH --verifier-interpreter-sha256 HEX]] "
-                "[--max-steps N] [--goal G | --goal-stdin] [--check command] "
-                "[--review-category general|incident_report|support_reply] "
-                "[--material-profile none|technical|conversation] "
-                "[--out f] [--timeout seconds] [--isolate] [--progress] [--auto-route] "
-                "[--auto-route-learn [--auto-route-mode shadow|active] [--exploration-pct N] [--exploration-date D]]")
+        out.out("[ERROR] usage: " + RUN_USAGE)
         sys.exit(1)
+    if any(arg in ("-h", "--help") for arg in args):
+        # `main()` answers help before dispatch, but `pack invoke` calls this directly,
+        # so the check lives here too: help must never start a run (#591).
+        out.out("usage: " + RUN_USAGE)
+        return
     strict = "--deterministic" in args or "--deterministic-task" in args
     if strict:
         valued = {"--provider", "--verifier-provider", "--provider-cmd", "--model",

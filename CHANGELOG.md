@@ -22,6 +22,23 @@
   go`'s completion summary, Context metering, the Cockpit queue-depth paragraph, and CLI
   session reuse (`--reuse-session`) are translated from `README.md`.
   `tests/test_readme_parity.py` pins their headings in both files.
+- **`rig-wb wb confidence` now reports drill false positives.** The aggregation
+  already summed each reviewer's `fp`, and `cockpit` and Mission Control showed it,
+  but `confidence` read only detected/seeded, so a reviewer that flags everything
+  printed the same rate as one with no false positives (#578). The whole-repo and
+  task-scoped listings append `, N false positive(s)` (cockpit's wording) when `N` is
+  non-zero, and a task-scoped call also records `reviewer_false_positives` in
+  `acceptance.json` beside the unchanged `reviewer_confidence`. Rates and the
+  low-confidence threshold are untouched.
+- **`--help` and `-h` are reserved in subcommand parsing.** `rig-wb queue add --help`
+  queued a task literally named `--help`, and `rig-wb run --help` printed one
+  option's paragraph instead of the usage (#591). The orchestrate dispatcher now
+  answers `-h`/`--help` at any position with that verb's usage and exits 0 before the
+  verb runs, so nothing is queued or installed; `run --help` prints the same usage
+  line as a bare `run`, from one constant. `cmd_run` answers help itself too, so
+  `pack invoke` forwarding `--help` cannot start a run. `lifecycle` keeps its own per-action
+  `--help`. A value spelled exactly `--help` or `-h` (for example `--goal --help`) is
+  now help, not a value; longer text that merely mentions it is unaffected.
 
 ## [3.4.1] - 2026-09-30
 

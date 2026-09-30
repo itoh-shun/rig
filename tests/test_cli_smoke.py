@@ -1253,3 +1253,99 @@ def test_the_same_help_comes_back_through_rig_wb(tmp_path):
 
     assert through_shim.strip() == through_package.strip()
     assert through_shim.strip()
+
+
+# ── `--help` is reserved wherever it appears (#591) ──────────────────────────
+
+
+@pytest.mark.parametrize("flag", ["--help", "-h"])
+def test_queue_add_help_prints_usage_and_queues_nothing(flag, tmp_path):
+    """`queue add --help` used to queue a task literally named `--help`: the flag loop did not
+    consume it, so it landed in the free text. Measured before the fix: `queued [local]: #1
+    --help  (queued)`, exit 0, and a `.rig/queue.json` with one item."""
+    result = run_cli(["queue", "add", flag], tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    assert "queued [" not in result.stdout, result.stdout
+    assert result.stdout.lstrip().startswith("queue "), result.stdout[:200]
+    assert not (tmp_path / ".rig" / "queue.json").exists()
+
+
+def test_queue_add_help_after_other_words_is_still_help(tmp_path):
+    result = run_cli(["queue", "add", "fix", "the", "thing", "--help"], tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    assert not (tmp_path / ".rig" / "queue.json").exists()
+    assert result.stdout.lstrip().startswith("queue ")
+
+
+def test_queue_add_still_queues_ordinary_text(tmp_path):
+    """The control arm: only the exact tokens are reserved, not text that mentions them."""
+    result = run_cli(["queue", "add", "explain what --help does"], tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    assert "queued [local]: #1 explain what --help does" in result.stdout
+    assert (tmp_path / ".rig" / "queue.json").exists()
+
+
+@pytest.mark.parametrize("args", [["run", "--help"], ["run", "some-recipe", "-h"]])
+def test_run_help_is_the_usage_line_not_an_option_fragment(args, tmp_path):
+    """`run --help` printed one option's paragraph (`run ... --reuse-session ...`) because the
+    docstring `_usage_for` slices has no `run <recipe>` entry. The usage is the one the bare
+    `run` refusal prints, from a single constant."""
+    from rig_workbench.orchestrate.commands import RUN_USAGE
+
+    result = run_cli(args, tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.startswith("run <recipe> --provider <name>"), result.stdout[:200]
+    assert "--reuse-session" not in result.stdout
+    assert "--goal-stdin" in result.stdout and "--check command" in result.stdout
+    assert " ".join(result.stdout.split("Per-option")[0].split()) == " ".join(RUN_USAGE.split())
+    assert len(result.stdout.rstrip().splitlines()) <= LONGEST_USAGE_LINES
+
+    bare = run_cli(["run"], tmp_path)
+    assert bare.returncode == 1
+    assert " ".join(bare.stdout.split()) == "[ERROR] usage: " + " ".join(RUN_USAGE.split())
+
+
+def test_help_after_a_positional_does_not_run_the_command(tmp_path):
+    """`install-shim --to X --help` installed the symlink. Any position answers help first."""
+    target = tmp_path / "shim-target"
+    result = run_cli(["install-shim", "--to", str(target), "--help"], tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.lstrip().startswith("install-shim")
+    assert not target.exists() and not target.is_symlink()
+
+
+def test_lifecycle_keeps_its_own_per_action_help(tmp_path):
+    """`lifecycle` is argparse with sub-parsers; a blanket any-position rule would replace
+    `lifecycle init --help`'s argument list with the one-paragraph docstring entry."""
+    result = run_cli(["lifecycle", "init", "--help"], tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    assert "--deterministic-task" in result.stdout
+
+
+def test_run_help_never_starts_a_run_when_called_directly(monkeypatch):
+    """`pack invoke` calls `cmd_run` directly and so skips `main()`'s help guard; a `--help`
+    forwarded there reached `run_loop` (#591). `cmd_run` answers help itself."""
+    from rig_workbench.orchestrate import commands
+
+    def _must_not_run(*_args, **_kwargs):
+        raise AssertionError("run_loop reached on --help")
+
+    monkeypatch.setattr(commands, "run_loop", _must_not_run)
+    printed: list[str] = []
+
+    class _Capture:
+        def out(self, text=""):
+            printed.append(str(text))
+
+        def __getattr__(self, _name):
+            return lambda *a, **k: None
+
+    commands.cmd_run(["any-recipe", "--provider", "mock", "--help"], out=_Capture())
+
+    assert printed and printed[0].startswith("usage: run <recipe>")
