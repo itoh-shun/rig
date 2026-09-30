@@ -240,10 +240,17 @@ metadataへ渡す引数では、二つのpathと二つのselectorをすべて明
 
 `--mode` は文体のモードです。`plain`（既定）、`talk`、`dialogue`、`onomatopoeia`、`emoji`
 から選び、カンマで複数指定できます（例: `--mode talk,emoji`）。本文からは推測しません。
+`plain` は単独で指定します。未知値、空の要素、重複、`--mode` の複数回指定は拒否します。
+`rig-wb run` の secure Japanese-writing recipe だけが対応し、指定順は上記の順に正規化されます。
+実効モードは run-state に固定され、生成役と reviewer の両方へ渡されます。
 モードは表現の手段を足すだけで、事実の扱い、秘密情報、完成稿の形についての制約は
 一つも解除しません。各モードで許可されること、許可されても避けることは
 `japanese-writing-modes` にあります。`incident_report` と `support_reply` では、
-`emoji` を指定されても絵文字を使いません。
+`emoji` を指定されても警告して実効モードから外します。`emoji` だけなら `plain` になります。
+
+上の安全な wrapper は `--mode` を受け付けず、既定の `plain` で実行します。
+次は `rig-wb run` に渡すモードの例です。実行時には上の例と同じ provider、pin、category などの
+必須引数と、安全に検証した draft の stdin を用意してください。
 
 ```text
 rig-wb run japanese-writing-revision --mode talk --goal-stdin < draft.txt

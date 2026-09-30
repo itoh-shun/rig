@@ -80,6 +80,7 @@ class SecureLauncher:
 #: is declared here because this is the only module `commands`, `runstate` and
 #: `providers` all import without a cycle.
 JAPANESE_WRITING_RECIPES = ("japanese-writing", "japanese-writing-revision")
+JAPANESE_WRITING_MODES = ("plain", "talk", "dialogue", "onomatopoeia", "emoji")
 
 
 def requires_secure_runtime(recipe_name: str, steps: list[dict]) -> bool:
