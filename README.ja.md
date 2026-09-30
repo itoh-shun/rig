@@ -467,6 +467,88 @@ Run timeline・Gate radar・drill実測のreviewer confidence・cost meter・for
 python3 scripts/workbench.py cockpit
 ```
 
+Cockpit は **queue depth** の置き場でもある。`.rig/queue.json` の `queued=/running=/failed=` と、失敗したものの retry コマンドを出す。per-turn の status ヘッダには意図的に入れていない。バックログの深さは「見に行くもの」であり、親セッションのコンテキストは `context-minimal` が守る予算だからだ。読めない queue ストアは空として扱わず「読めない」と報告する——「0件待ち」と「バックログファイルが壊れている」がダッシュボード上で同じに見えてはならない。
+
+### Flow visibility
+
+登録時のバナーはこれまで、選ばれた recipe の名前を出して終わりだった。`bugfix` は7 step あり、6番目で3人の reviewer に fan-out し、7番目で15基準を判定する。すべて実在するのに、`orchestrate plan` を打つと知っている人でなければどこにも見えなかった。そこで `new` は今、地図を出す：
+
+```
+flow: 7 steps
+  ▸ 1 inspect                  orchestrator
+    2 reproduce                debugger
+    3 plan                     debugger
+    4 implement                implementer
+    5 test                     implementer
+    6 review-diff            ◆ レビュー判定が揃うまで進まない  3人並列: security-reviewer / design-reviewer / test-reviewer
+    7 acceptance             ◆ 受け入れ基準で機械判定  implementer
+  ◆ = ここを通らないと先に進めない（最終ゲートは 15 基準）
+  あなたの出番: 全 step 通過後。差分を見て accept か discard（それまで作業ツリーは無傷）
+```
+
+**recipe の形が表示を決める。** 同梱 recipe のうち12本は step がちょうど1つで、そこに `[▸] 1/1` を出すのは1項目に対する進捗バー——情報を運ばない数字だ。そうした run が複雑なのは step の*内側*なので、位置ではなく fan-out とゲートを見せる：
+
+```
+flow: 1 step — review
+  3人が並列でレビューし、全員の判定が揃うまで終わりません
+    ├ security-reviewer
+    ├ design-reviewer
+    ├ test-reviewer
+  ◆ レビュー判定が揃うまで進まない
+```
+
+その後、step が遷移するたびに現在地と次を出す——1 run あたり7行ほどで、ターンごとではない：
+
+```
+  [✓✓✓✓▸··] 4/7 → test
+      ▸ 5 test                   implementer
+      次: review-diff
+```
+
+分母は recipe 自身のもの：`steps.json` は登録時に解決済み recipe から seed されるので、`4/7` は表示のために作った数ではなく実在する数だ。読めない recipe は何も seed せず、run は従来どおり動く——step 一覧は表示用のメタデータであり、accept の判断への入力には**決して**ならない。判断は acceptance gate が持ち続ける。
+
+### `queue go` の完了サマリ
+
+`queue go` は `3/4 done` と報告していた。ここでの `DONE` は gate が確定し verifier が通ったという意味であり、「マージ済み」ではなく、「もうやることがない」ですらない。どのタスクも自分の隔離 worktree の中で人を待っている。そこで集計の後に、バッチを**各 item が待っている次の一手**ごとに、`board` とまったく同じ文言で並べ直して出す：
+
+```
+次にやること（バッチが残した判断）
+  → あなた: diff を見て accept  (2)
+    #1  rig-20260705-090800-login-fix
+        ログイン失敗を直す
+    → /rig:go diff <task_id> · /rig:go accept <task_id> · /rig:go discard <task_id> --yes
+  ✗ キュー側で失敗（差分レビュー以前）  (1)
+    #3  壊れているやつ
+    → 原因を確認して `queue retry <id>`
+  ? task id を出力に残さず、状態を確認できませんでした  (1)
+```
+
+queue の item は provider 自身のセッション内で workbench task になるので、両者を結ぶ痕跡は provider が出力した task id だけだ。それがあればその task の実際の状態で分類し、無ければ推測でどこかの箱に押し込まず「紐づけ不能」として列挙する。「このうちどれが自分を待っているか」だけが仕事の画面では、誤った帰属は認めた欠落より悪い。
+
+### Context metering（`/rig:go context`）
+
+`context-minimal` はこのリポジトリで152回書かれ、hard rule と呼ばれている。だが1バイトも数えられていなかった——rig 自身の `harness-taxonomy` が挙げる穴のうち2つ、つまり散文で止まる強制と、計測なしに出荷されたルールが同時に開いていた。誰も数えない規律は、誰にも気づかれないまま劣化する。
+
+rig コマンドが出力するバイトはすべて tool result として親セッションに戻るので、**rig の stdout は親のコンテキストに対する rig の寄与**になる。rig が責任を持てて、かつ観測できるのはそこなので、そこを数える。呼び出しごとに記録し、task のスコープ内ならその task に帰属させる。記録先は `.rig/context.jsonl`（gitignore 済み・`runs.jsonl` と同じ層）である。
+
+```bash
+python3 scripts/workbench.py context                 # 全期間
+python3 scripts/workbench.py context --since-days 7
+```
+
+```
+## rig context (last 7 days)
+
+rig printed 41.2KB at the parent session across 118 invocation(s)
+  ≈ 10,547 tokens (rough: ~4 bytes/token)
+
+### by command (biggest first)
+   18.9KB   46%  wb diff                        4 call(s), largest 7.7KB
+    9.1KB   22%  wb board                      31 call(s), largest 412B
+```
+
+**計測しないもの**は、レポート自身に明記される：セッション全体のコンテキスト、会話、親が自分で読んだファイル、親が仕事を自分で抱えず subagent に dispatch したかどうか。rig はサブプロセスとして動くので、そのどれも見えない。「あなたのコンテキスト使用量」を名乗る数字は捏造になる。この数字が主張するのは「rig があなたに向けて出力した量」だけで、それは検証でき、rig が握っているレバーでもある。`RIG_NO_CONTEXT_METER=1` を設定すると計測を止められる。
+
 ### Stats
 
 `/rig:go stats` は過去の run を集計する——単一 run の結果ではなく、workbench 全体を観測する層：
@@ -743,6 +825,34 @@ reachable な runtime を報告したときだけで、そうでなければ理�
 Orca が無いマシンでは以前とまったく同じに動作し、それがテストの最初の確認項目です。セットアップ・
 トラブルシュート・Orca が消えた後の discard 経路・IntelliJ との併用は
 **[docs/orca.md](docs/orca.md)** にあります。
+
+### CLI セッション再利用（`--reuse-session`・#326・opt-in）
+
+どの step も CLI provider を何もない状態から起動する。そのため run は step ごとに起動コストを払う。
+さらに先行するコンテキストを毎回プロンプトへ注入し直している。`--reuse-session` は、会話を引き継げる
+CLI にはそうさせる。
+
+```console
+rig-wb run bugfix --provider claude --reuse-session
+```
+
+- **opt-in であり、既定にはしない。** ステートレスであることはコストだけではない——各 step が
+  まっさらに始まることが、step の独立性を保ち、*生成者≠採点者*を宣言ではなく実際に成り立たせている。
+- **verifier には決して使わない。** 生成者の会話を引き継いだチェッカーは、その推論をすでに読んでいて、
+  プロンプトが何と言おうと、より頻繁に同意する。verifier のセッションを作れるコードパスは存在しない。
+- **決めるのは CLI であり、rig 内の表ではない。** セッション対応はバージョンへの依存が強いので、
+  実行時にそのツール自身の `--help` から capability を読み取る。
+- **フォールバックは記録され、黙って起きない。** 対応できない provider はステートレスに戻る。
+  理由つきで `SESSION_REUSE_FALLBACK` を run 履歴へ書く。そうしないと、改善が見られなかった人が、
+  機能が効かなかったのか一度も有効でなかったのかを判別できない。
+
+対応するのは、フラグが文書化され CLI が確認できる `claude` と `grok`。`codex` は、このリポジトリが
+指し示せるセッションフラグを持たないので、rig が別の意味になりうる argv を推測するのではなく、
+その理由つきでフォールバックする。
+
+**正直な未検証部分：** 検出が実物の CLI に対して確認されているだけである。再開したセッションが
+*step 間で実際にコンテキストを引き継ぐかどうか*は確認されていない。それには実際の生成呼び出しが必要だからだ。
+#326 はそのために open のままにしてある。
 
 ### OpenTelemetry エクスポート（`rig-wb otel`、#501）
 

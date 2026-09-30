@@ -1,5 +1,28 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- **`PACKS.md` has a detail row for every pack `BRICKS.md` §2 lists (#597).** Ten packs
+  (`evidence`, `mission-control`, `assurance`, `intent / assurance target`, `assurance
+  planning`, `expected outcome`, `workflow effectiveness`, `knowledge candidate`, `change
+  graph`, `production anomaly trigger`) were in §2 with no row in `PACKS.md`; the rows are
+  now there, carrying §2's description and source-file reference. The ten `packs catalog`
+  warnings from `scripts/validate.py` are gone.
+- **`facets/instructions/write-tests-first` is listed in `BRICKS.md` §2 (#604).** The
+  `feature` recipe already wired it; the catalog now names it, so the `§2 catalog` drift
+  warning is gone. No `SKILL.md` is touched.
+- **`/rig:go intent <file>` is routed (#617).** `intent` (validate a
+  `rig.intent-contract/v1` document and report what it leaves unchecked or undeclared) is a
+  real `wb` subcommand but had no row in `commands/go.md`'s routing table, so it fell to
+  natural-language classification. It now has a row, an `argument-hint` entry, and a place
+  in `workbench-ops`'s opening list. Behaviour is unchanged.
+- **`README.ja.md` gains the subsections it was missing (#582).** Flow visibility, `queue
+  go`'s completion summary, Context metering, the Cockpit queue-depth paragraph, and CLI
+  session reuse (`--reuse-session`) are translated from `README.md`.
+  `tests/test_readme_parity.py` pins their headings in both files.
+
 ## [3.4.1] - 2026-09-30
 
 ### Fixed
