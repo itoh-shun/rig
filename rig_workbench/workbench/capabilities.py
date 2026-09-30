@@ -423,6 +423,14 @@ def _trusted(asset: ResolvedAsset) -> bool:
     if asset.tier not in {"project", "user", "org"}:
         return True
     if asset.pack_id is None:
+        # Project overlays are approved into the legacy store (`ensure_recipe_trusted`);
+        # a user-tier file is only ever seen by `ensure_asset_trusted` (`resolve_recipe`,
+        # `_load_persona_brief`), which writes the pack store.
+        if asset.tier == "user":
+            # Runtime (`ensure_asset_trusted`) compares the pack store's whole identity,
+            # tier included; the legacy record is path + hash only and would say "trusted"
+            # for a file the runtime then refuses. Only the store the runtime reads counts.
+            return _pack_asset_trusted(asset)
         return _legacy_project_recipe_trusted(asset)
     return _pack_asset_trusted(asset)
 
@@ -561,7 +569,10 @@ def resolve_task_route(
     if selected["status"] == "stopped" and hint is None:
         hint = "Supply a local diff before using the core review-only fallback."
     if selected["status"] == "trust_required":
-        hint = "Review and explicitly trust the winning recipe before creating a task."
+        hint = ("Review the winning recipe, then approve it once with "
+                "RIG_ALLOW_PROJECT_RECIPES=1 (or --allow-project-packs) on the command that "
+                "resolves it, e.g. `RIG_ALLOW_PROJECT_RECIPES=1 rig-wb run <recipe>`; "
+                "routing itself never approves.")
 
     return {
         "route_schema_version": ROUTE_SCHEMA_VERSION,

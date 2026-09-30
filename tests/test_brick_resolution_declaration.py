@@ -30,8 +30,8 @@ and one tree cannot show both:
   reason immediately above.
 
 Two more observations back the claims the table makes in prose: the fallback walk is read out
-of the resolver's own `searched:` line, and `~/.claude/rig/...` is planted and shown never to
-be reached.
+of the resolver's own `searched:` line, and `~/.claude/rig/...` is planted and shown to be
+reached, at the user tier and with no pack owner.
 
 ## Task 16 — the prose as a projection
 
@@ -100,15 +100,6 @@ PROSE_TIER_NAMES = {
 # an entry when the document is fixed — this test goes red if a fix lands without the
 # deletion, and red if a new divergence appears.
 KNOWN_PROSE_DRIFT = {
-    # The user tier the prose promises. `test_the_user_tier_the_prose_promises_is_not_read`
-    # plants both of these paths and shows the resolver never reaches them; the user tier
-    # that does exist is `~/.rig/packs/<pack>/…`, which neither document mentions.
-    ("path-not-walked", "resolve.md", "recipe", "user", "user:.claude/rig/recipes"):
-        "resolve.md 2.1 sends recipes to `~/.claude/rig/recipes`; no code reads it",
-    ("path-not-walked", "RESOLVE.md", "recipe", "user", "user:.claude/rig/recipes"):
-        "RESOLVE.md 4.2.1 repeats the same `~/.claude/rig/recipes` row",
-    ("path-not-walked", "COMPOSE.md", "persona", "user", "user:.claude/rig/personas"):
-        "COMPOSE.md §5 sends personas to `~/.claude/rig/personas`; no code reads it",
     # The org tier exists, but not as a directory of loose files: `pack_roots` looks under
     # `$RIG_ORG_HOME/packs/<pack>/facets/personas`. `<org_dir>/recipes` is real — the recipe
     # fallback walk reads it — which is why no recipe row appears here.
@@ -259,8 +250,7 @@ class Tree:
         for kind, relative in _SHIPPED.items():
             name = f"{PROBE}.yaml" if kind == "agent" else f"{PROBE}.md"
             self._plant(self.rig / relative, name)
-        # What the prose promises and nothing reads. Planted so that its absence from every
-        # observed walk is a measurement rather than a claim.
+        # The user tier's loose files, which sit beside the user's installed packs.
         self._plant(self.user / ".claude" / "rig" / "recipes", f"{PROBE}.md")
         self._plant(self.user / ".claude" / "rig" / "personas", f"{PROBE}.md")
 
@@ -395,24 +385,33 @@ def test_every_directory_hangs_off_the_declared_anchor(two_roots, monkeypatch):
         )
 
 
-def test_the_user_tier_the_prose_promises_is_not_read(one_root, monkeypatch):
-    """`~/.claude/rig/{recipes,personas}` exist in this tree and are reached by nothing.
+def test_the_user_tier_the_prose_promises_is_read(one_root, monkeypatch):
+    """`~/.claude/rig/{recipes,personas}` are read, at the user tier, with no pack owner.
 
-    The drift entries above say the prose promises a directory nothing reads. This is that
-    claim measured: the files are there, with the name every other tier uses, and no walk
-    returns them.
+    Positive control for the drift entries that used to record this as unread: the files
+    planted under the user anchor come back from `resolve_all`, ranked below the project
+    copy and above the org copy and the shipped one.
     """
+    from rig_workbench.packs.resolver import resolve_all
+
     tree = one_root.use(monkeypatch)
     promises = (("recipe", ".claude/rig/recipes", "recipes"),
                 ("persona", ".claude/rig/personas", "facets/personas"))
     for kind, promised, in_a_pack in promises:
         observed = _observe(tree, kind)
-        assert ("user", "user", promised) not in observed, observed
-        # The `.claude/rig/` overlay that *is* read is the project one, and it is the same
-        # relative path — so this is a statement about the tier, not about the spelling.
+        assert ("user", "user", promised) in observed, observed
         assert ("project", "project", promised) in observed
-        # And the user tier that does exist is the pack root, which neither document names.
         assert ("user", "user", f".rig/packs/{bricks.PACK}/{in_a_pack}") in observed
+        positions = {key: observed.index(key) for key in observed}
+        user_loose = positions[("user", "user", promised)]
+        assert positions[("project", "project", promised)] < user_loose
+        assert user_loose < positions[("org", "org", f"packs/{bricks.PACK}/{in_a_pack}")]
+        shipped = "recipes" if kind == "recipe" else "facets/personas"
+        assert user_loose < positions[("core", "rig", f"{bricks.SKILL_DIR}/{shipped}")]
+        found = [item for item in resolve_all(kind, PROBE, project=tree.project,
+                                              shared=tree.shared)
+                 if item.tier == "user" and item.pack_id is None]
+        assert len(found) == 1 and found[0].source.startswith("legacy:"), found
 
 
 def test_the_recipe_fallback_walk_is_the_one_the_resolver_prints(tmp_path, monkeypatch):

@@ -54,6 +54,10 @@ class PackAssets(Protocol):
         """The asset's file, once the pack trust gate has passed it."""
         ...
 
+    def gate_user_recipe(self, name: str, path: pathlib.Path) -> bool:
+        """Gate `path` if it is in the user tier's recipe directory; False if it is not."""
+        ...
+
     def consent_flag_passed(self, flag: str, argv: list[str]) -> bool:
         """True only where `flag` was passed as an option, not merely present in argv."""
         ...
@@ -368,7 +372,12 @@ def _resolve_extends_chain(fm: dict, recipe_path: pathlib.Path,
         resolved_parent = bound_parent or assets.resolve(
             "recipe", parent_name, project=config.INVOCATION_CWD, shared=config.STATE_ROOT
         )
-        if (resolved_parent is not None
+        # Gate the file that is LOADED, not the global winner: a sibling of the child (or
+        # any earlier hit) inside the user tier's loose-recipe directory can differ from
+        # what `resolve` ranks first, and it is exempt from the project-overlay gate.
+        if assets.gate_user_recipe(parent_name, parent_path):
+            pass
+        elif (resolved_parent is not None
                 and resolved_parent.path.resolve() == parent_path.resolve()
                 and resolved_parent.pack_id is not None):
             assets.trusted_path(resolved_parent)

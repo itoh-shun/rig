@@ -98,6 +98,27 @@ class _PackSurfaces:
         return trust.ensure_asset_trusted(asset)
 
     @staticmethod
+    def gate_user_recipe(name: str, path: pathlib.Path) -> bool:
+        """Run `path` through the pack trust gate if it lives in the user tier's recipe dir.
+
+        True when it does (and the gate passed — a refusal raises `PackError`), False when
+        it lives elsewhere. Gates the file that is loaded, whatever `resolve` ranks first.
+        """
+        from ..packs import trust
+        from ..packs.model import ResolvedAsset
+
+        user_dir = (_resolver._user_home() / ".claude" / "rig" / "recipes").resolve()
+        # Membership is decided by where the file SITS: the directories are resolved, the
+        # final component is not. A symlink in the user's recipe directory that points
+        # outside it is still the user's recipe (and is loaded); following it would let a
+        # link be exempt from the gate. `ensure_asset_trusted` hashes the content it points at.
+        if not (path.parent.resolve() / path.name).is_relative_to(user_dir):
+            return False
+        trust.ensure_asset_trusted(ResolvedAsset(
+            "recipe", name, path, "user", f"legacy:{user_dir}", None))
+        return True
+
+    @staticmethod
     def consent_flag_passed(flag: str, argv: list[str]) -> bool:
         from ..packs import trust
 
