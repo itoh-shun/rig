@@ -119,3 +119,34 @@ def test_task_scoped_unmeasured_reviewer_stays_unmeasured(git_repo, task_id):
     r = run_cli(["confidence", task_id], git_repo)
     assert r.returncode == 0
     assert "never-drilled-reviewer: unmeasured" in r.stdout
+
+
+def test_whole_repo_confidence_shows_false_positives_like_cockpit(git_repo):
+    _write_drill(git_repo, [
+        {"scores": [{"reviewer": "security-reviewer", "detected": 9, "seeded": 10, "false_positives": 0},
+                    {"reviewer": "perf-reviewer", "detected": 3, "seeded": 10, "false_positives": 1}]},
+    ])
+    r = run_cli(["confidence"], git_repo)
+    assert r.returncode == 0
+    perf = next(line for line in r.stdout.splitlines() if "perf-reviewer:" in line)
+    sec = next(line for line in r.stdout.splitlines() if "security-reviewer:" in line)
+    assert ", 1 false positive(s)" in perf
+    assert "false positive" not in sec
+
+
+def test_task_scoped_shows_and_persists_false_positives(git_repo, task_id):
+    _write_drill(git_repo, [
+        {"scores": [{"reviewer": "security-reviewer", "detected": 9, "seeded": 10, "false_positives": 0},
+                    {"reviewer": "perf-reviewer", "detected": 8, "seeded": 10, "false_positives": 2}]},
+    ])
+    run_cli(["review", task_id, "--set", "security-reviewer=APPROVE"], git_repo)
+    run_cli(["review", task_id, "--set", "perf-reviewer=APPROVE"], git_repo)
+    r = run_cli(["confidence", task_id], git_repo)
+    assert r.returncode == 0
+    perf = next(line for line in r.stdout.splitlines() if "perf-reviewer:" in line)
+    sec = next(line for line in r.stdout.splitlines() if "security-reviewer:" in line)
+    assert ", 2 false positive(s)" in perf
+    assert "false positive" not in sec
+    acc = json.loads((git_repo / ".rig" / "runs" / task_id / "acceptance.json").read_text(encoding="utf-8"))
+    assert acc["reviewer_false_positives"] == {"perf-reviewer": 2, "security-reviewer": 0}
+    assert acc["reviewer_confidence"] == {"perf-reviewer": 0.8, "security-reviewer": 0.9}

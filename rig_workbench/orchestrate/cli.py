@@ -111,12 +111,13 @@ records leaves the run parked (quorum unmet, or denied). 3 is not a failure.
 """
 
 import sys
+import textwrap
 
 from .. import context_meter
 from ..gh_requirement import advise_gh
 from ..ports import Presenter
 from ..ports.local import ConsolePresenter
-from .commands import (cmd_ab, cmd_approve, cmd_check, cmd_fleet, cmd_init, cmd_install_shim,
+from .commands import (RUN_USAGE, cmd_ab, cmd_approve, cmd_check, cmd_fleet, cmd_init, cmd_install_shim,
                        cmd_next, cmd_otel, cmd_perf, cmd_plan, cmd_resume, cmd_run, cmd_runs,
                        cmd_status,
                        cmd_verdict)
@@ -155,6 +156,9 @@ def _advises_gh(cmd: str, rest: list[str]) -> bool:
     return cmd == "queue" and bool(rest) and rest[0] == "go"
 
 
+_HELP_FLAGS = ("-h", "--help")
+
+
 def _usage_for(cmd: str) -> str | None:
     """The command's own lines out of this module's docstring, which is the only usage text.
 
@@ -162,6 +166,14 @@ def _usage_for(cmd: str) -> str | None:
     reason `--help` needed writing at all is that nobody had checked the first copy against
     the code.
     """
+    if cmd == "run":
+        # The docstring has only `run ... --flag` option paragraphs and no `run <recipe>` line,
+        # so slicing it answered `run --help` with the first option's paragraph (#591). The
+        # usage is the one the bare-`run` refusal prints, wrapped rather than restated.
+        return "\n".join([
+            textwrap.fill(RUN_USAGE, width=110, subsequent_indent="    ", break_long_words=False, break_on_hyphens=False),
+            "  Per-option descriptions: `python3 scripts/orchestrate.py` with no arguments prints the manual.",
+        ])
     lines, block, indent = __doc__.splitlines(), [], None
     for line in lines:
         stripped = line.lstrip()
@@ -185,10 +197,13 @@ def main():
     cmd, rest = sys.argv[1], sys.argv[2:]
     # Several commands take a bare state-file path and parse no flags at all, so `--help`
     # reached them as a filename: `verdict --help` tried to open `./--help` and died with a
-    # FileNotFoundError naming a path nobody typed. Answered here, once, for every command —
-    # a command that does parse `--help` itself never gets here, because it is not in `rest`
-    # by the time it matters.
-    if rest and rest[0] in ("-h", "--help"):
+    # FileNotFoundError naming a path nobody typed. Answered here, once, for every command.
+    # It is honoured wherever it appears, not only first: `queue add --help` used to queue a
+    # task called `--help`, and `install-shim --to X --help` installed (#591). The price is
+    # that a value spelled exactly `-h` / `--help` (`--goal --help`) is help, not a value.
+    # `lifecycle` is argparse with sub-parsers and answers `lifecycle <action> --help` itself
+    # with that action's arguments, so only a leading flag is taken here.
+    if rest and (rest[0] in _HELP_FLAGS or (cmd != "lifecycle" and any(a in _HELP_FLAGS for a in rest))):
         usage = _usage_for(cmd)
         out.out(usage if usage else __doc__)
         sys.exit(0)

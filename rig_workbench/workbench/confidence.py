@@ -78,6 +78,11 @@ def aggregate_drill_confidence(root: pathlib.Path, corpus: str | None = None) ->
     return atk
 
 
+def _fp_note(a: dict | None) -> str:
+    """Same wording as cockpit's drill line: shown only when non-zero (#578)."""
+    return f", {a['fp']} false positive(s)" if a and a["fp"] else ""
+
+
 def cmd_confidence(args: argparse.Namespace) -> None:
     root = repo_root()
     atk = aggregate_drill_confidence(root)
@@ -91,9 +96,9 @@ def cmd_confidence(args: argparse.Namespace) -> None:
             if a["seeded"]:
                 rate = a["detected"] / a["seeded"]
                 flag = "  ⚠ low confidence" if rate < _CONFIDENCE_THRESHOLD else ""
-                print(f"  {name}: {rate:.0%}{flag}")
+                print(f"  {name}: {rate:.0%}{flag}{_fp_note(a)}")
             else:
-                print(f"  {name}: unmeasured")
+                print(f"  {name}: unmeasured{_fp_note(a)}")
         return
 
     task_id = resolve_task_id(root, args.task_id)
@@ -112,16 +117,17 @@ def cmd_confidence(args: argparse.Namespace) -> None:
 
     acc = load_json(d / "acceptance.json", build_acceptance(task_id, task["task_type"], root))
     acc["reviewer_confidence"] = confidences
+    acc["reviewer_false_positives"] = {name: int((atk.get(name) or {}).get("fp", 0)) for name in reviewers}
     save_json(d / "acceptance.json", acc)
 
     print(f"## rig confidence: {task_id}")
     low = []
     for name, c in confidences.items():
         if c is None:
-            print(f"  {name}: unmeasured")
+            print(f"  {name}: unmeasured{_fp_note(atk.get(name))}")
         else:
             flag = "  ⚠ low confidence" if c < _CONFIDENCE_THRESHOLD else ""
-            print(f"  {name}: {c:.0%}{flag}")
+            print(f"  {name}: {c:.0%}{flag}{_fp_note(atk.get(name))}")
             if c < _CONFIDENCE_THRESHOLD:
                 low.append(name)
     if low:
