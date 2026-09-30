@@ -39,6 +39,20 @@
   `pack invoke` forwarding `--help` cannot start a run. `lifecycle` keeps its own per-action
   `--help`. A value spelled exactly `--help` or `-h` (for example `--goal --help`) is
   now help, not a value; longer text that merely mentions it is unaffected.
+- **`run` rejects unsupported flags instead of silently ignoring them (#599).**
+  Unknown options exit 2 and list valid flags; `--only`, `--from`, `--to` and
+  `--skip` explicitly report that run slicing is not supported yet. Recipe,
+  manifest and pack approval switches remain accepted. `--mode`, which the
+  Japanese-writing commands document but nothing applied, is still accepted and
+  now warns that no style mode is applied until #641 wires it.
+- **Step outputs are separated by run ID (#600).** Runs sharing an output
+  directory keep their artifacts under `step-outputs/<run-id>/`, preventing a
+  later run from overwriting earlier outputs. Readers retain a fallback for
+  the previous layout.
+- **Terminated generators report uncommitted work in their worktree (#602).**
+  A generator killed by SIGTERM or SIGKILL adds the changed-path count and
+  worktree path to its BLOCKED diagnostic, so operators can inspect the work
+  before discarding it. Failed git status checks do not interrupt reporting.
 
 ## [3.4.1] - 2026-09-30
 

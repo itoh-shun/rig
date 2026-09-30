@@ -755,7 +755,7 @@ def test_japanese_runtime_exhausts_only_invalid_reviews_without_writer_rewrite(
         "kind": "BLOCKED",
         "at": "review",
     }
-    review_path = tmp_path / "step-outputs" / "review-reviewer.txt"
+    review_path = tmp_path / "step-outputs" / state["run_id"] / "review-reviewer.txt"
     assert review_path.read_text(encoding="utf-8") == "not-json"
     assert stat.S_IMODE(review_path.stat().st_mode) == 0o600
 
@@ -797,7 +797,7 @@ def test_japanese_runtime_blocks_once_on_unverified_and_preserves_review(
         "kind": "BLOCKED",
         "at": "review",
     }
-    review_path = tmp_path / "step-outputs" / "review-reviewer.txt"
+    review_path = tmp_path / "step-outputs" / state["run_id"] / "review-reviewer.txt"
     assert review_path.read_text(encoding="utf-8") == raw_review
     assert stat.S_IMODE(review_path.stat().st_mode) == 0o600
 
@@ -1164,9 +1164,11 @@ def test_symlinked_artifact_directory_is_rejected_without_touching_target(tmp_pa
     (run_dir / "step-outputs").symlink_to(outside, target_is_directory=True)
     before_mode = outside.stat().st_mode & 0o777
 
-    providers._capture_output("secret draft", {"run_dir": str(run_dir)}, "write-provider")
+    providers._capture_output(
+        "secret draft", {"run_dir": str(run_dir), "_progress_run_id": "run-test"}, "write-provider",
+    )
 
-    assert not (outside / "write-provider.txt").exists()
+    assert not (outside / "run-test" / "write-provider.txt").exists()
     assert outside.stat().st_mode & 0o777 == before_mode
 
 
@@ -1178,10 +1180,10 @@ def test_symlinked_artifact_parent_is_rejected_without_writing_outside_run(tmp_p
     before_mode = real_run.stat().st_mode & 0o777
 
     providers._capture_output(
-        "secret draft", {"run_dir": str(linked_run)}, "write-provider",
+        "secret draft", {"run_dir": str(linked_run), "_progress_run_id": "run-test"}, "write-provider",
     )
 
-    assert not (real_run / "step-outputs" / "write-provider.txt").exists()
+    assert not (real_run / "step-outputs" / "run-test" / "write-provider.txt").exists()
     assert real_run.stat().st_mode & 0o777 == before_mode
 
 
@@ -1209,6 +1211,7 @@ def test_cmd_run_displays_the_completed_japanese_deliverable(
         "    instruction: missing-legacy-write\n---\n",
         encoding="utf-8",
     )
+    # A completed run from before per-run artifact directories still renders.
     artifact = tmp_path / "step-outputs/write.txt"
     artifact.parent.mkdir()
     content = "利用者へ返す最終日本語本文"

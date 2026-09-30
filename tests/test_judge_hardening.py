@@ -224,9 +224,9 @@ def test_clip_output_head_tail_and_marker():
 
 def test_capture_output_spools_full_text_to_run_dir(tmp_path):
     text = "A" * (OUTPUT_CAP_CHARS + 5_000)
-    captured = _capture_output(text, {"run_dir": str(tmp_path)}, "implement-mock")
+    captured = _capture_output(text, {"run_dir": str(tmp_path), "_progress_run_id": "run-test"}, "implement-mock")
     assert "; full output at " in captured
-    spooled = tmp_path / "step-outputs" / "implement-mock.txt"
+    spooled = tmp_path / "step-outputs" / "run-test" / "implement-mock.txt"
     assert spooled.read_text(encoding="utf-8") == text
     # without a run dir the clip still happens, marker just has no path
     no_dir = _capture_output(text, {}, "implement-mock")

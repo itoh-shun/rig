@@ -62,6 +62,7 @@ from .composition import (                                              # noqa: 
     japanese_material_metadata, resolve_japanese_material, resolve_prompt_facets,
 )
 from .gates import is_runtime_gate
+from .isolate import uncommitted_worktree_note
 from .adaptive import analyze_diff, invocation_limit
 from .package_surfaces import CALLER_IDENTITY, PATCH_APPLIER
 from .quarantine import wrap_untrusted
@@ -671,7 +672,8 @@ def _clip_output(text: str, cap: int = OUTPUT_CAP_CHARS, full_path: str | None =
     return text[:head_n] + marker + text[-tail_n:]
 
 
-def _artifact_path(cfg: dict, label: str, *, env: Env = OS_ENV) -> pathlib.Path | None:
+def _artifact_path(cfg: dict, label: str, *, env: Env = OS_ENV,
+                   legacy: bool = False) -> pathlib.Path | None:
     run_dir = (cfg or {}).get("run_dir")
     configured_output_dir = env.get("RIG_STEP_OUTPUT_DIR")
     if not run_dir and not configured_output_dir:
@@ -681,6 +683,14 @@ def _artifact_path(cfg: dict, label: str, *, env: Env = OS_ENV) -> pathlib.Path 
         if configured_output_dir
         else pathlib.Path(run_dir) / "step-outputs"
     ).absolute()
+    run_id = (cfg or {}).get("_progress_run_id")
+    if run_id and not legacy:
+        # Preserve the existing run identity without allowing state data to escape
+        # the output root. States predating run ids retain their legacy layout.
+        if not isinstance(run_id, str) or not re.fullmatch(r"[A-Za-z0-9._-]+", run_id) \
+                or run_id in (".", ".."):
+            return None
+        directory /= run_id
     if run_dir:
         run_root = pathlib.Path(run_dir).absolute()
         if not directory.is_relative_to(run_root):
@@ -795,7 +805,10 @@ def _read_artifact(record: dict, cfg: dict) -> str | None:
     except OSError:
         return None
     expected = _artifact_path(cfg, "placeholder")
-    if expected is None or raw.parent != expected.parent:
+    legacy = _artifact_path(cfg, "placeholder", legacy=True)
+    if expected is None or raw.parent not in {
+        expected.parent, legacy.parent if legacy is not None else None,
+    }:
         return None
     try:
         if cfg.get("secure_runtime"):
@@ -829,6 +842,7 @@ def read_result_artifact(state: dict, run_state_path: pathlib.Path) -> str | Non
         state.get("result_artifact"),
         {
             "run_dir": str(pathlib.Path(run_state_path).absolute().parent),
+            "_progress_run_id": state.get("run_id"),
             "secure_runtime": bool(state.get("secure_runtime")),
         },
     )
@@ -2751,6 +2765,10 @@ def _execute_step(state: dict, step: dict, st: dict, gen_list: list[str], ver: s
             ),
             "kind": "BLOCKED", "at": step["id"],
         }
+        if generator_rc in (-9, -15):
+            note = uncommitted_worktree_note((state.get("isolation") or {}).get("dir"))
+            if note:
+                state["stopped"]["reason"] += f"\n{note}"
         return
     artifact_provider = winner or gen_list[0]
     if len(gen_list) == 1:

@@ -160,6 +160,60 @@ _SECURE_PIN_FLAGS = {
     "--verifier-interpreter": ("verifier", "interpreter"),
     "--verifier-interpreter-sha256": ("verifier", "interpreter_sha256"),
 }
+# Approval flags are consumed directly from sys.argv by recipe/manifest/pack trust
+# checks. They must still be accepted here, even though the run has no cfg for them.
+_RUN_TRUST_FLAGS = {"--allow-project-recipes", "--allow-project-manifest", "--allow-project-packs"}
+_RUN_VALUE_FLAGS = {
+    "--provider", "--verifier-provider", "--provider-cmd", "--model", "--timeout",
+    "--goal", "--check", "--out", "--max-steps", "--deterministic-task",
+    "--generators", "--verifier-providers", "--secure-provider-config", "--step-model",
+    "--base-url", "--review-category", "--material-profile", "--max-parallel", "--quorum",
+    "--auto-route-mode", "--exploration-pct", "--exploration-date", "--mode",
+    *_SECURE_PIN_FLAGS,
+}
+_RUN_SWITCH_FLAGS = {
+    "--deterministic", "--isolate", "--goal-stdin", "--progress", "--auto-model",
+    "--auto-model-setting", "--allow-headless-in-cc", "--no-session-persistence",
+    "--auto-route", "--reuse-session", "--auto-route-learn", *_RUN_TRUST_FLAGS,
+}
+_RUN_SLICING_FLAGS = {"--only", "--from", "--to", "--skip"}
+
+
+def _validate_run_args(args, out: Presenter = CONSOLE) -> None:
+    """Reject unsupported options before trusting assets or starting a run (#599)."""
+    valid = ", ".join(sorted(_RUN_VALUE_FLAGS | _RUN_SWITCH_FLAGS))
+    cursor = 1
+    while cursor < len(args):
+        flag = args[cursor]
+        if flag.split("=", 1)[0] in _RUN_SLICING_FLAGS:
+            raise Refusal([
+                f"[ERROR] run does not support slicing yet ({flag}; issue #599).",
+                f"Valid flags: {valid}",
+            ], code=2)
+        if flag in _RUN_VALUE_FLAGS:
+            if flag in {"--timeout", "--material-profile"}:
+                # Preserve existing value diagnostics: timeout exits 1, and a
+                # Japanese recipe reports a missing material profile on stderr.
+                cursor += 2
+                continue
+            # Goals and shell commands may legitimately be literal option-looking
+            # text; other options must not consume the next flag as their value.
+            literal = flag in {"--goal", "--check", "--provider-cmd"}
+            if cursor + 1 >= len(args) or (not literal and args[cursor + 1].startswith("--")):
+                raise Refusal([f"[ERROR] {flag} requires a value", f"Valid flags: {valid}"], code=2)
+            if flag == "--mode":
+                # The Japanese-writing commands document `--mode`, but nothing reads it yet.
+                # Accepted so documented invocations keep running; the warning says it does
+                # nothing rather than letting it pass silently (#641).
+                out.err(f"[WARN] --mode {args[cursor + 1]} is accepted but not applied yet "
+                        "(issue #641); the run proceeds without a style mode.")
+            cursor += 2
+        elif flag in _RUN_SWITCH_FLAGS:
+            cursor += 1
+        else:
+            raise Refusal([f"[ERROR] unknown run option: {flag}", f"Valid flags: {valid}"], code=2)
+
+
 _GOAL_STDIN_MAX_BYTES = 1024 * 1024
 
 
@@ -299,11 +353,7 @@ def _progress_command(command):
     @wraps(command)
     def observed(args, **kwargs):
         # A goal or command whose literal value is --progress is not an option.
-        valued = {"--provider", "--verifier-provider", "--provider-cmd", "--model",
-                  "--timeout", "--goal", "--check", "--out", "--max-steps", "--deterministic-task",
-                  "--generators", "--verifier-providers", "--secure-provider-config", "--step-model",
-                  "--base-url", "--review-category", "--material-profile", "--max-parallel", "--quorum",
-                  "--auto-route-mode", "--exploration-pct", "--exploration-date", *_SECURE_PIN_FLAGS}
+        valued = _RUN_VALUE_FLAGS
         forwarded, enabled, index = [], False, 0
         while index < len(args):
             arg = args[index]
@@ -1029,14 +1079,16 @@ def cmd_run(args, *, out: Presenter = CONSOLE, env: Env = OS_ENV, observer=None)
         sys.exit(1)
     if any(arg in ("-h", "--help") for arg in args):
         # `main()` answers help before dispatch, but `pack invoke` calls this directly,
-        # so the check lives here too: help must never start a run (#591).
+        # so the check lives here too: help must never start a run (#591). It runs before
+        # `_validate_run_args`, which would otherwise refuse `--help` as unknown (#599).
         out.out("usage: " + RUN_USAGE)
         return
+    _validate_run_args(args, out)
     strict = "--deterministic" in args or "--deterministic-task" in args
     if strict:
         valued = {"--provider", "--verifier-provider", "--provider-cmd", "--model",
                   "--timeout", "--goal", "--check", "--out", "--max-steps", "--deterministic-task"}
-        switches = {"--deterministic", "--isolate", "--goal-stdin"}
+        switches = {"--deterministic", "--isolate", "--goal-stdin", *_RUN_TRUST_FLAGS}
         cursor = 1
         while cursor < len(args):
             flag = args[cursor]
@@ -1211,8 +1263,14 @@ def cmd_run(args, *, out: Presenter = CONSOLE, env: Env = OS_ENV, observer=None)
         elif a == "--exploration-date" and i + 1 < len(args):
             cfg["exploration_date"] = args[i + 1]  # explicit date/bucket string, not randomness, for determinism
             i += 2
-        else:
+        elif a in _RUN_TRUST_FLAGS:
             i += 1
+        elif a == "--mode" and i + 1 < len(args):
+            i += 2  # validated and warned about in `_validate_run_args`; not applied yet (#641)
+        else:
+            # Keep the parser fail-closed if its handlers and registry ever drift.
+            raise Refusal([f"[ERROR] unsupported or incomplete run option: {a}",
+                           "Valid flags: " + ", ".join(sorted(_RUN_VALUE_FLAGS | _RUN_SWITCH_FLAGS))], code=2)
     if strict and cli_checks:
         if not steps:
             raise Refusal(["[BLOCKED] deterministic recipe must contain steps"], code=2)

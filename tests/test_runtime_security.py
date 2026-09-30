@@ -783,7 +783,7 @@ def test_valid_pinned_fake_claude_to_codex_uses_stdin_and_secure_flags(
     history_path = state_path.parent / "runtime-history.jsonl"
     assert stat.S_IMODE(state_path.stat().st_mode) == 0o600
     assert stat.S_IMODE(history_path.stat().st_mode) == 0o600
-    output_dir = state_path.parent / "step-outputs"
+    output_dir = state_path.parent / "step-outputs" / json.loads(state_path.read_text())["run_id"]
     assert stat.S_IMODE(output_dir.stat().st_mode) == 0o700
     assert all(stat.S_IMODE(path.stat().st_mode) == 0o600 for path in output_dir.iterdir())
     persisted = state_path.read_text(encoding="utf-8")

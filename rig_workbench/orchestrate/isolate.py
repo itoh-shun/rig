@@ -2,6 +2,7 @@
 
 import re
 import pathlib
+import subprocess
 
 from ..ports import Clock, ProcessRunner
 from ..ports.local import SUBPROCESS, SYSTEM_CLOCK
@@ -14,6 +15,30 @@ from . import config
 # non-deterministic generation never escapes the gate.
 
 _ISO_SEQ = 0
+
+
+def uncommitted_worktree_note(worktree: str | None, *,
+                             proc: ProcessRunner = SUBPROCESS) -> str | None:
+    """Best-effort recovery hint after an interrupted isolated generator."""
+    if not worktree:
+        return None
+    try:
+        if not pathlib.Path(worktree).is_dir():
+            return None
+        status = proc.run(
+            ["git", "-C", str(worktree), "status", "--porcelain"], timeout=10,
+        )
+        if status.returncode != 0:
+            return None
+        paths = len(status.stdout.strip().splitlines())
+    except (OSError, subprocess.SubprocessError, UnicodeError):
+        return None
+    if not paths:
+        return None
+    return (
+        f"Worktree has uncommitted changes in {paths} path(s): {worktree}; "
+        "inspect it before discarding."
+    )
 
 
 def setup_isolation(recipe_name: str, *, clock: Clock = SYSTEM_CLOCK,
@@ -66,4 +91,3 @@ def teardown_isolation(iso: dict, final: str, *, proc: ProcessRunner = SUBPROCES
                 _remove(delete_branch=True)
                 return "merged"
     return "kept"
-
