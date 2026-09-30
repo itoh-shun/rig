@@ -532,6 +532,8 @@ def _build_step_contract(state: dict, step: dict, st: dict | None = None) -> str
         f"step: {step['id']} ({step['instruction']})",
         f"goal: {goal_line}",
     ]
+    if state.get("writing_mode"):
+        lines.append(f"writing_mode: {','.join(state['writing_mode'])}")
     if st is not None:
         attempt = int(st.get("retries", 0)) + 1
         lines.append(f"attempt: {attempt}")
@@ -673,6 +675,8 @@ def compose_artifact_review_prompt(
         f"recipe: {state['recipe']}",
         f"step: {step['id']}",
     ]
+    if state.get("writing_mode"):
+        task_lines.append(f"writing_mode: {','.join(state['writing_mode'])}")
     if source_draft is not None:
         task_lines.extend([
             "source_draft:",

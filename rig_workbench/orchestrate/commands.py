@@ -24,7 +24,7 @@ from .recipes import (_record_trust, auto_orchestrate, git_diff_lines, load_mani
                       resolve_plan_json, resolve_recipe)
 from .runstate import compute_next, load_state, new_state, save_state, stage_gate_status
 from .providers import metering_note
-from .secure_runtime import JAPANESE_WRITING_RECIPES
+from .secure_runtime import JAPANESE_WRITING_MODES, JAPANESE_WRITING_RECIPES
 from .composition import JAPANESE_MATERIAL_PROFILES, resolve_japanese_material
 from .providers import (JAPANESE_WRITING_REVIEW_CATEGORIES,
                         record_verdicts, parse_step_model_spec,
@@ -179,10 +179,29 @@ _RUN_SWITCH_FLAGS = {
 _RUN_SLICING_FLAGS = {"--only", "--from", "--to", "--skip"}
 
 
+def _parse_writing_modes(value: str) -> list[str]:
+    """Validate an explicit style selection and give it stable canonical order."""
+    modes = value.split(",")
+    if any(not mode for mode in modes):
+        raise Refusal(["[ERROR] --mode requires non-empty comma-separated values"], code=2)
+    unknown = [mode for mode in modes if mode not in JAPANESE_WRITING_MODES]
+    if unknown:
+        raise Refusal([
+            f"[ERROR] --mode contains unknown value(s): {', '.join(unknown)}",
+            "Valid modes: " + ", ".join(JAPANESE_WRITING_MODES),
+        ], code=2)
+    if len(modes) != len(set(modes)):
+        raise Refusal(["[ERROR] --mode contains duplicate values"], code=2)
+    if "plain" in modes and len(modes) > 1:
+        raise Refusal(["[ERROR] --mode plain cannot be combined with other modes"], code=2)
+    return [mode for mode in JAPANESE_WRITING_MODES if mode in modes]
+
+
 def _validate_run_args(args, out: Presenter = CONSOLE) -> None:
     """Reject unsupported options before trusting assets or starting a run (#599)."""
     valid = ", ".join(sorted(_RUN_VALUE_FLAGS | _RUN_SWITCH_FLAGS))
     cursor = 1
+    mode_seen = False
     while cursor < len(args):
         flag = args[cursor]
         if flag.split("=", 1)[0] in _RUN_SLICING_FLAGS:
@@ -202,11 +221,10 @@ def _validate_run_args(args, out: Presenter = CONSOLE) -> None:
             if cursor + 1 >= len(args) or (not literal and args[cursor + 1].startswith("--")):
                 raise Refusal([f"[ERROR] {flag} requires a value", f"Valid flags: {valid}"], code=2)
             if flag == "--mode":
-                # The Japanese-writing commands document `--mode`, but nothing reads it yet.
-                # Accepted so documented invocations keep running; the warning says it does
-                # nothing rather than letting it pass silently (#641).
-                out.err(f"[WARN] --mode {args[cursor + 1]} is accepted but not applied yet "
-                        "(issue #641); the run proceeds without a style mode.")
+                if mode_seen:
+                    raise Refusal(["[ERROR] --mode must appear only once"], code=2)
+                mode_seen = True
+                _parse_writing_modes(args[cursor + 1])
             cursor += 2
         elif flag in _RUN_SWITCH_FLAGS:
             cursor += 1
@@ -702,6 +720,11 @@ def cmd_resume(args, *, out: Presenter = CONSOLE, clock: Clock = SYSTEM_CLOCK, o
     ("world drifted") and we REFUSE to advance (exit non-zero). Side effects match
     `check` + `next` (state is written the same way); idempotent.
     """
+    if any(arg.split("=", 1)[0] == "--mode" for arg in args):
+        raise Refusal([
+            "[ERROR] resume does not support --mode: the mode is fixed at run time "
+            "and bound in the run state",
+        ], code=2)
     sp = _state_path(args)
     state = _read_state(sp)
     if "deterministic_runtime" in state:
@@ -1066,6 +1089,7 @@ RUN_USAGE = (
     "[--verifier-interpreter PATH --verifier-interpreter-sha256 HEX]] "
     "[--max-steps N] [--goal G | --goal-stdin] [--check command] "
     "[--review-category general|incident_report|support_reply] "
+    "[--mode MODE[,MODE...]] "
     "[--material-profile none|technical|conversation] "
     "[--out f] [--timeout seconds] [--isolate] [--progress] [--auto-route] "
     "[--auto-route-learn [--auto-route-mode shadow|active] [--exploration-pct N] [--exploration-date D]]")
@@ -1124,6 +1148,7 @@ def cmd_run(args, *, out: Presenter = CONSOLE, env: Env = OS_ENV, observer=None)
     goal_from_argv = False
     goal_stdin = False
     review_category = None
+    writing_modes = None
     material_profile = "none"
     out_path = pathlib.Path("run-state.json")
     out_explicit = False
@@ -1266,7 +1291,8 @@ def cmd_run(args, *, out: Presenter = CONSOLE, env: Env = OS_ENV, observer=None)
         elif a in _RUN_TRUST_FLAGS:
             i += 1
         elif a == "--mode" and i + 1 < len(args):
-            i += 2  # validated and warned about in `_validate_run_args`; not applied yet (#641)
+            writing_modes = _parse_writing_modes(args[i + 1])
+            i += 2
         else:
             # Keep the parser fail-closed if its handlers and registry ever drift.
             raise Refusal([f"[ERROR] unsupported or incomplete run option: {a}",
@@ -1312,6 +1338,10 @@ def cmd_run(args, *, out: Presenter = CONSOLE, env: Env = OS_ENV, observer=None)
     if step_models:
         cfg["step_models"] = step_models
     secure_required = requires_secure_runtime(fm.get("name", path.stem), steps)
+    if writing_modes is not None and not (
+        secure_required and fm.get("name", path.stem) in JAPANESE_WRITING_RECIPES
+    ):
+        raise Refusal(["[ERROR] --mode requires a secure Japanese-writing recipe"], code=2)
     if (
         secure_required
         and fm.get("name", path.stem) in JAPANESE_WRITING_RECIPES
@@ -1455,6 +1485,13 @@ def cmd_run(args, *, out: Presenter = CONSOLE, env: Env = OS_ENV, observer=None)
         **({"model": cfg["model"]} if cfg.get("model") else {}),
     }
     if secure_required and fm.get("name", path.stem) in JAPANESE_WRITING_RECIPES:
+        effective_writing_modes = [mode for mode in (writing_modes or []) if mode != "plain"]
+        if (
+            review_category in {"incident_report", "support_reply"}
+            and "emoji" in effective_writing_modes
+        ):
+            effective_writing_modes.remove("emoji")
+            diagnostic(f"[WARN] --mode emoji is disabled for --review-category {review_category}")
         state["review_category"] = review_category
         state["material_profile"] = material_profile
         state["material_provenance"] = material_metadata
@@ -1463,6 +1500,12 @@ def cmd_run(args, *, out: Presenter = CONSOLE, env: Env = OS_ENV, observer=None)
             "action": "BIND_REVIEW_CATEGORY",
             "category": review_category,
         })
+        if effective_writing_modes:
+            state["writing_mode"] = effective_writing_modes
+            state["history"].append({
+                "action": "BIND_WRITING_MODE",
+                "modes": list(effective_writing_modes),
+            })
     if cfg.get("secure_runtime"):
         state["secure_runtime"] = {
             "policy_version": 1,
@@ -1471,6 +1514,8 @@ def cmd_run(args, *, out: Presenter = CONSOLE, env: Env = OS_ENV, observer=None)
                if isinstance(goal, str) else {}),
             **({"review_category": review_category}
                if state.get("recipe") in JAPANESE_WRITING_RECIPES else {}),
+            **({"writing_mode": list(state["writing_mode"])}
+               if state.get("writing_mode") else {}),
             **({"material_profile": material_profile,
                 "material_provenance": material_metadata,
                 "material_snapshot": material_snapshot}
@@ -1679,6 +1724,8 @@ def cmd_ab(args, *, out: Presenter = CONSOLE):
         elif a == "--manifest-b" and i + 1 < len(args):
             manifest_b = pathlib.Path(args[i + 1])
             i += 2
+        elif a.split("=", 1)[0] == "--mode":
+            raise Refusal(["[ERROR] ab does not support --mode"], code=2)
         else:
             i += 1
 

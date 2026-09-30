@@ -30,7 +30,7 @@ def test_unknown_run_argument_exits_two_and_lists_valid_flags(
     message = result.stdout + result.stderr
     assert f"unknown run option: {flag}" in message
     assert "Valid flags:" in message
-    for valid in ("--provider", "--progress", "--generator-executable", "--allow-project-recipes",
+    for valid in ("--provider", "--progress", "--mode", "--generator-executable", "--allow-project-recipes",
                   "--allow-project-manifest", "--allow-project-packs"):
         assert valid in message
     assert not state.exists()
@@ -87,16 +87,10 @@ def test_option_looking_goal_remains_data(goal, run_recipe, rig_cli, tmp_path):
     assert json.loads(state.read_text())["goal"] == goal
 
 
-def test_documented_mode_is_accepted_with_a_warning_until_it_is_wired(run_recipe, rig_cli, tmp_path):
-    """`commands/japanese-writing*.md` document `--mode`; nothing applies it yet (#641).
-
-    Rejecting it would break the documented invocation, and accepting it silently is what
-    #599 removed, so the run proceeds and says the mode was not applied.
-    """
+def test_writing_mode_on_non_japanese_recipe_exits_two(run_recipe, rig_cli, tmp_path):
     state = tmp_path / "state.json"
     result = rig_cli("run", run_recipe, "--provider", "mock", "--out", state, "--mode", "talk,emoji")
 
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert "--mode talk,emoji is accepted but not applied yet" in result.stderr
-    assert "#641" in result.stderr
-    assert json.loads(state.read_text())["done"] is True
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "--mode" in result.stdout + result.stderr
+    assert not state.exists()

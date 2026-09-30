@@ -1,6 +1,6 @@
 ---
 description: "[experimental] 根拠を増やさず、宛先の形式と適切な敬語を守った日本語の完成稿を1つ返す。障害連絡・サポート返信にも対応し、別モデルの reviewer で検証する。"
-argument-hint: "[用途・読み手・掲載先・明示された事実・下書き] [--mode plain|talk|dialogue|onomatopoeia|emoji] [--plan]"
+argument-hint: "[用途・読み手・掲載先・明示された事実・下書き] [--mode plain|talk|dialogue|onomatopoeia|emoji[,...]] [--plan]"
 ---
 
 # rig/japanese-writing — 日本語の完成稿を作る
@@ -88,10 +88,13 @@ provider 起動前に選択済み bytes を run-state 隣接の owner-only snaps
 
 `--mode` は文体のモードです。`plain`（既定）、`talk`、`dialogue`、`onomatopoeia`、`emoji`
 から選び、カンマで複数指定できます（例: `--mode talk,emoji`）。本文からは推測しません。
+`plain` は単独で指定します。未知値、空の要素、重複、`--mode` の複数回指定は拒否します。
+headless の `rig-wb run` では secure Japanese-writing recipe だけが対応し、指定順は上記の順に
+正規化されます。実効モードは run-state に固定され、生成役と reviewer の両方へ渡されます。
 モードは表現の手段を足すだけで、事実の扱い、秘密情報、完成稿の形についての制約は
 一つも解除しません。各モードで許可されること、許可されても避けることは
 `japanese-writing-modes` にあります。`incident_report` と `support_reply` では、
-`emoji` を指定されても絵文字を使いません。
+`emoji` を指定されても警告して実効モードから外します。`emoji` だけなら `plain` になります。
 
 `claude` と `codex` は構成例です。prompt asset 自体は provider 固有の語彙や機能に
 依存しません。別の組み合わせでも、生成者と最終 reviewer を異なるモデルまたは

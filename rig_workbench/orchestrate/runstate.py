@@ -17,7 +17,7 @@ from .composition import japanese_material_metadata
 from .gates import is_runtime_gate, validate_executable_steps
 from .govern_surfaces import GOVERN_SURFACES
 from .pack_surfaces import PACK_SURFACES
-from .secure_runtime import JAPANESE_WRITING_RECIPES
+from .secure_runtime import JAPANESE_WRITING_MODES, JAPANESE_WRITING_RECIPES
 from .secure_fs import atomic_append_line, atomic_write_bytes, read_bytes as read_secure_bytes
 
 # Bumped to 2 when the preflight gained the verdict-less-executor rule (#496/#497).
@@ -602,6 +602,37 @@ def _validate_secure_review_category_binding(state: dict) -> None:
         raise OSError("secure Japanese review category binding is missing or changed")
 
 
+def _validate_secure_writing_mode_binding(state: dict) -> None:
+    """Accept legacy plain runs and require one matching non-plain mode audit row."""
+    secure = state.get("secure_runtime")
+    secure_has_mode = isinstance(secure, dict) and "writing_mode" in secure
+    bindings = [
+        row for row in state.get("history") or []
+        if row.get("action") == "BIND_WRITING_MODE"
+    ]
+    if "writing_mode" not in state:
+        if secure_has_mode or bindings:
+            raise OSError("secure Japanese writing mode binding is missing or changed")
+        return
+    modes = state["writing_mode"]
+    if (
+        state.get("recipe") not in JAPANESE_WRITING_RECIPES
+        or not isinstance(secure, dict)
+        or not isinstance(modes, list)
+        or not modes
+        or any(not isinstance(mode, str) or mode not in JAPANESE_WRITING_MODES[1:]
+               for mode in modes)
+        or modes != [mode for mode in JAPANESE_WRITING_MODES[1:] if mode in modes]
+        or not secure_has_mode
+        or not _exact_equal(modes, secure["writing_mode"])
+        or not _exact_equal(bindings, [{"action": "BIND_WRITING_MODE", "modes": modes}])
+        or not isinstance(state.get("review_category"), str)
+        or (state.get("review_category") in {"incident_report", "support_reply"}
+            and "emoji" in modes)
+    ):
+        raise OSError("secure Japanese writing mode binding is malformed or changed")
+
+
 def _validate_secure_material_profile_binding(state: dict) -> None:
     """Reject missing or changed secure Japanese style-material bindings."""
     if state.get("recipe") not in JAPANESE_WRITING_RECIPES or not state.get("secure_runtime"):
@@ -681,6 +712,7 @@ def load_state(path: pathlib.Path) -> dict:
     if "deterministic_runtime" in state:
         from .deterministic_runtime import validate_state
         validate_state(state)
+    _validate_secure_writing_mode_binding(state)
     _validate_secure_review_category_binding(state)
     _validate_secure_material_profile_binding(state)
     _validate_recipe_provenance(state)

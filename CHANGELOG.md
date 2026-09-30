@@ -1,5 +1,17 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **Secure Japanese-writing runs apply `--mode` (#641).** `japanese-writing` and
+  `japanese-writing-revision` bind validated, canonically ordered style modes into
+  generator and reviewer prompts and preserve them on resume. Resume refuses
+  `--mode` overrides and checks the bound mode against its audit history. `plain`
+  keeps the existing prompts unchanged; incident reports and support replies suppress
+  `emoji` with a warning. Invalid selections and unsupported recipes are refused.
+  The 3.4.2 warning that `--mode` is accepted but not applied is gone.
+
 ## [3.4.2] - 2026-09-30
 
 ### Fixed
