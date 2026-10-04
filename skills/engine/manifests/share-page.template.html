@@ -1,0 +1,158 @@
+<title>{{TITLE}}</title>
+<style>
+/* Artifact は公開時に doctype・head・viewport・safe-area の余白を外から被せる。
+   このファイルには <html> <head> <body> を書かない。:root の padding も上書きしない。 */
+/* 色はすべてトークン。ライトとダークで同じ名前を定義し直し、本文では値を直接書かない。 */
+:root {
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --text: #1c2430;
+  --muted: #5b6676;
+  --line: #dde2e9;
+  --accent: #1f5fbf;
+  --accent-soft: #e6eefb;
+  --warn: #9a5b00;
+  --warn-soft: #fff4e0;
+  --radius: 10px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #11151b;
+    --surface: #1a2029;
+    --text: #e6eaf0;
+    --muted: #a1abba;
+    --line: #2c3542;
+    --accent: #7fb0ff;
+    --accent-soft: #1c2b44;
+    --warn: #ffc069;
+    --warn-soft: #3a2c14;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #11151b;
+  --surface: #1a2029;
+  --text: #e6eaf0;
+  --muted: #a1abba;
+  --line: #2c3542;
+  --accent: #7fb0ff;
+  --accent-soft: #1c2b44;
+  --warn: #ffc069;
+  --warn-soft: #3a2c14;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic UI", "Segoe UI", sans-serif;
+  font-size: 16px;
+  line-height: 1.8;
+  -webkit-text-size-adjust: 100%;
+}
+main { max-width: 920px; margin: 0 auto; padding-inline: 16px; padding-block: 32px 64px; }
+header.hero { padding: 8px 0 24px; border-bottom: 1px solid var(--line); margin-bottom: 32px; }
+.eyebrow { color: var(--muted); font-size: 14px; margin: 0 0 4px; }
+h1 { font-size: 28px; line-height: 1.4; margin: 0 0 12px; text-wrap: balance; }
+.lead { font-size: 17px; margin: 0; }
+section { margin: 40px 0; padding-top: 16px; border-top: 1px solid var(--line); }
+h2 { font-size: 21px; line-height: 1.5; margin: 0 0 12px; text-wrap: balance; }
+h3 { font-size: 17px; margin: 24px 0 8px; text-wrap: balance; }
+p, ul, ol { margin: 0 0 12px; }
+a { color: var(--accent); }
+:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px 20px; }
+.grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+.stat { font-size: 26px; font-weight: 700; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.stat-label { color: var(--muted); font-size: 14px; }
+.callout { background: var(--warn-soft); color: var(--text); border-radius: var(--radius); padding: 12px 16px; }
+.callout strong { color: var(--warn); }
+
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; background: var(--surface); font-size: 15px; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; vertical-align: top; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+th { background: var(--accent-soft); font-weight: 600; }
+
+figure { margin: 16px 0; }
+figure svg { width: 100%; height: auto; display: block; }
+figcaption { color: var(--muted); font-size: 14px; margin-top: 6px; }
+.svg-box { fill: var(--surface); stroke: var(--line); stroke-width: 1.5; }
+.svg-box-accent { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1.5; }
+.svg-text { fill: var(--text); font-size: 15px; }
+.svg-sub { fill: var(--muted); font-size: 12px; }
+.svg-arrow { stroke: var(--muted); stroke-width: 1.5; fill: none; }
+.svg-dashed { stroke-dasharray: 5 4; }
+
+footer { color: var(--muted); font-size: 13px; border-top: 1px solid var(--line); padding-top: 16px; margin-top: 48px; }
+
+@media (max-width: 600px) {
+  h1 { font-size: 23px; }
+  h2 { font-size: 19px; }
+  /* 狭い画面では表を行ごとのカードに畳む。各セルの data-label が見出しの代わりになる。 */
+  table.stack thead { display: none; }
+  table.stack tr { display: block; border-bottom: 1px solid var(--line); padding: 8px 0; }
+  table.stack td { display: block; border: 0; padding: 4px 12px; }
+  table.stack td::before { content: attr(data-label); display: block; color: var(--muted); font-size: 13px; }
+}
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+<main>
+  <header class="hero">
+    <p class="eyebrow">{{SCOPE}} ・ {{DATE}}</p>
+    <h1>{{TITLE}}</h1>
+    <p class="lead">{{LEAD}}</p>
+  </header>
+
+  <!-- 使わない部品は消す。中身に無い節を埋めるために事実を作らない。 -->
+
+  <section aria-labelledby="s-summary">
+    <h2 id="s-summary">{{SECTION_1}}</h2>
+    <div class="grid">
+      <div class="card"><div class="stat">{{STAT_1}}</div><div class="stat-label">{{STAT_1_LABEL}}</div></div>
+      <div class="card"><div class="stat">{{STAT_2}}</div><div class="stat-label">{{STAT_2_LABEL}}</div></div>
+    </div>
+  </section>
+
+  <section aria-labelledby="s-flow">
+    <h2 id="s-flow">{{SECTION_2}}</h2>
+    <figure>
+      <svg viewBox="0 0 640 140" role="img" aria-labelledby="flow-title">
+        <title id="flow-title">{{FIGURE_ALT}}</title>
+        <defs>
+          <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="currentColor" class="svg-sub"/>
+          </marker>
+        </defs>
+        <rect class="svg-box" x="10" y="30" width="170" height="70" rx="8"/>
+        <text class="svg-text" x="95" y="62" text-anchor="middle">{{STEP_1}}</text>
+        <text class="svg-sub" x="95" y="84" text-anchor="middle">{{STEP_1_ROLE}}</text>
+        <path class="svg-arrow" d="M180,65 L230,65" marker-end="url(#arrow)"/>
+        <rect class="svg-box-accent" x="235" y="30" width="170" height="70" rx="8"/>
+        <text class="svg-text" x="320" y="62" text-anchor="middle">{{STEP_2}}</text>
+        <text class="svg-sub" x="320" y="84" text-anchor="middle">{{STEP_2_ROLE}}</text>
+        <path class="svg-arrow" d="M405,65 L455,65" marker-end="url(#arrow)"/>
+        <rect class="svg-box svg-dashed" x="460" y="30" width="170" height="70" rx="8"/>
+        <text class="svg-text" x="545" y="62" text-anchor="middle">{{STEP_3}}</text>
+        <text class="svg-sub" x="545" y="84" text-anchor="middle">未確定</text>
+      </svg>
+      <figcaption>{{FIGURE_CAPTION}}</figcaption>
+    </figure>
+  </section>
+
+  <section aria-labelledby="s-table">
+    <h2 id="s-table">{{SECTION_3}}</h2>
+    <div class="table-wrap">
+      <table class="stack">
+        <thead><tr><th>{{COL_1}}</th><th>{{COL_2}}</th><th>{{COL_3}}</th></tr></thead>
+        <tbody>
+          <tr><td data-label="{{COL_1}}">{{CELL}}</td><td data-label="{{COL_2}}">{{CELL}}</td><td data-label="{{COL_3}}">{{CELL}}</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="callout"><strong>{{CALLOUT_LABEL}}</strong> {{CALLOUT}}</p>
+  </section>
+
+  <footer>{{FOOTER}}</footer>
+</main>

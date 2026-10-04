@@ -4,6 +4,20 @@
 
 ### Added
 
+- **`/rig:share` and `rig-wb share-check` are new.** `/rig:share` turns an agent's result
+  into one self-contained HTML page (`share/<slug>.html`, from
+  `manifests/share-page.template.html`) and publishes it as a Claude Artifact, so it can be
+  read on a phone and handed to someone without a server or a domain. The `share` recipe
+  runs `rig-wb share-check` in its `compose` step and hands the verdict to an independent
+  `share-page-reviewer`; publication happens after accept, in the parent session that holds
+  the Artifact tool, and is recorded in `.rig/share/published.jsonl` so a later edit
+  updates the same URL. The sensor is stdlib only and decides what syntax decides: outside
+  resources beyond the hosts Artifacts allow, relative references, missing dark-mode tokens
+  or body background, unfilled placeholders, named secret patterns, images without `alt`,
+  forms that post elsewhere, and a page that writes its own doctype, `<head>` or `<body>`
+  (an Artifact supplies those, with the viewport, at publish time). Exit 0 clean, 1 errors (`--strict` counts warnings), 2 when
+  nothing was checked. Where no Artifact tool exists, the command stops at the checked file.
+
 - **Secure Japanese-writing runs apply `--mode` (#641).** `japanese-writing` and
   `japanese-writing-revision` bind validated, canonically ordered style modes into
   generator and reviewer prompts and preserve them on resume. Resume refuses
