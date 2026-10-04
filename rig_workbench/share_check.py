@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """share_check — 共有する 1 枚の HTML を、公開する前に機械で検査するセンサー（stdlib のみ）。
 
 エージェントに作らせた HTML は、書いた本人が開いて眺めても壊れ方が見えません。外部の画像を
@@ -48,10 +47,10 @@ import json
 import pathlib
 import posixpath
 import re
-import sys
 from html.parser import HTMLParser
 from urllib.parse import urlsplit
 
+from .ja_textlint import write_report
 from .ports.local import CONSOLE
 
 MAX_BYTES = 16 * 1024 * 1024
@@ -482,9 +481,8 @@ def main(argv: list[str] | None = None) -> int:
 
     report = run(args.artifacts, strict=args.strict)
     if args.report:
-        out = pathlib.Path(args.report)
-        out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        # ja-lint と同じ書き出しを使う。センサーの報告は 1 か所の書き方にそろえる。
+        write_report(args.report, report)
     if args.json:
         CONSOLE.out(json.dumps(report, ensure_ascii=False, indent=2))
     elif report["status"] != "checked":
@@ -497,7 +495,3 @@ def main(argv: list[str] | None = None) -> int:
         CONSOLE.out(f"{verdict}: {len(report['files'])} file(s), {report['errors']} error(s), "
               f"{report['warnings']} warning(s)")
     return exit_code(report)
-
-
-if __name__ == "__main__":
-    sys.exit(main())
