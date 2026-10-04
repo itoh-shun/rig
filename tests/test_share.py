@@ -168,3 +168,42 @@ def test_a_figure_title_is_not_the_page_name():
     svg = '<svg viewBox="0 0 1 1"><title>' + "長い図の説明" * 20 + "</title></svg>"
     assert "long-title" not in _rules(page.replace("</main>", svg + "</main>", 1))
     assert "no-title" in _rules("<style></style><svg><title>図</title></svg>")
+
+
+def test_the_allowlist_compares_hosts_not_prefixes():
+    for url in ("https://cdn.tailwindcss.com.evil.example/x.js",
+                "https://cdn.tailwindcss.com@evil.example/x.js",
+                "https://unpkg.com.evil.example/x.js",
+                "https://cdn.jsdelivr.net/npm/../gh/user/repo/x.js",
+                "https://cdn.jsdelivr.net/gh/user/repo/x.js"):
+        assert "external-resource" in _rules(_with(body=f'<script src="{url}"></script>')), url
+    for url in ("https://cdn.tailwindcss.com", "https://CDNJS.cloudflare.com/ajax/libs/x/1/x.js"):
+        assert "external-resource" not in _rules(_with(body=f'<script src="{url}"></script>')), url
+    assert "external-resource" not in _rules(
+        _with(head='<link rel="modulepreload" href="https://unpkg.com/lit@3/index.js">'))
+    assert "external-resource" in _rules(_with(head='<link rel="prefetch" href="https://evil.example/x">'))
+
+
+def test_css_image_set_and_comments_are_read_the_way_the_browser_reads_them():
+    assert "external-resource" in _rules(
+        _with(head='<style>.x{background-image:image-set("https://evil.example/a.png" 1x)}</style>'))
+    assert "external-resource" in _rules(
+        _with(body='<div style="background-image:image-set(\'https://evil.example/a.png\' 1x)"></div>'))
+    fake = ("<title>t</title><style>:root{--bg:#fff} body{background:var(--bg)}"
+            "/* prefers-color-scheme: dark data-theme */</style><h1>x</h1><svg></svg>")
+    assert "no-dark-mode" in _rules(fake, "error")
+
+
+def test_srcset_data_uris_and_self_closing_tags_do_not_confuse_the_parser():
+    data = "data:image/png;base64,iVBORw0KGgo="
+    page = _with(body=f'<img alt="a" src="{data}" srcset="{data} 1x, {data} 2x">')
+    assert "local-reference" not in _rules(page)
+    assert "local-reference" in _rules(_with(body=f'<img alt="a" src="{data}" srcset="a.png 1x, {data} 2x">'))
+    early = "<svg/><title/>" + _filled_template()
+    assert "no-title" not in _rules(early)
+
+
+def test_title_late_measures_the_real_title_not_a_decoy():
+    decoy = "<svg><title>c</title></svg><!-- <title> -->"
+    page = decoy + "<style>/*" + "x" * 9000 + "*/</style>" + _filled_template()
+    assert "title-late" in _rules(page, "error")

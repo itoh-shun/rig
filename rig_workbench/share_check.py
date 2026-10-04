@@ -46,9 +46,11 @@ from __future__ import annotations
 import argparse
 import json
 import pathlib
+import posixpath
 import re
 import sys
 from html.parser import HTMLParser
+from urllib.parse import urlsplit
 
 from .ports.local import CONSOLE
 
@@ -56,16 +58,17 @@ MAX_BYTES = 16 * 1024 * 1024
 WARN_BYTES = 1024 * 1024
 TITLE_SCAN_BYTES = 8 * 1024
 
-#: Artifact のページ契約が外部から読むことを許すホスト。script はこの 5 つ、stylesheet は
-#: Google Fonts だけ。それ以外はすべてページの中へ埋め込む。
+#: Artifact のページ契約が外部から読むことを許す (ホスト, パスの接頭辞)。script はこの 5 つ、
+#: stylesheet は Google Fonts だけ。それ以外はすべてページの中へ埋め込む。ホストは完全一致で
+#: 比べる。前方一致だと `cdn.tailwindcss.com.evil.example` が通る。
 SCRIPT_HOSTS = (
-    "cdnjs.cloudflare.com/",
-    "cdn.jsdelivr.net/npm/",
-    "unpkg.com/",
-    "cdn.tailwindcss.com",
-    "code.jquery.com/",
+    ("cdnjs.cloudflare.com", "/"),
+    ("cdn.jsdelivr.net", "/npm/"),
+    ("unpkg.com", "/"),
+    ("cdn.tailwindcss.com", "/"),
+    ("code.jquery.com", "/"),
 )
-STYLE_HOSTS = ("fonts.googleapis.com/", "fonts.gstatic.com/")
+STYLE_HOSTS = (("fonts.googleapis.com", "/"), ("fonts.gstatic.com", "/"))
 
 #: 資源として読み込まれる属性。`<a href>` は遷移なので対象外。
 RESOURCE_ATTRS = {
@@ -82,10 +85,15 @@ RESOURCE_ATTRS = {
     "image": ("href", "xlink:href"),  # SVG の <image>
 }
 #: `<link rel=...>` のうち、ページが読み込むもの。
-LINK_LOADING_RELS = {"stylesheet", "icon", "preload", "modulepreload", "manifest", "apple-touch-icon"}
+LINK_LOADING_RELS = {"stylesheet", "icon", "preload", "modulepreload", "prefetch", "prerender",
+                     "manifest", "apple-touch-icon"}
 
 RE_PLACEHOLDER = re.compile(r"\{\{\s*[A-Za-z_][\w.-]*\s*\}\}|\[要記入\]")
 RE_CSS_URL = re.compile(r"url\(\s*(['\"]?)(.*?)\1\s*\)", re.IGNORECASE)
+#: `image-set("a.png" 1x)` は url() を書かずに資源を読む。
+RE_CSS_IMAGE_SET = re.compile(r"image-set\(([^()]*(?:\([^()]*\)[^()]*)*)\)", re.IGNORECASE)
+RE_CSS_STRING = re.compile(r"(['\"])(.*?)\1")
+RE_SRCSET_DESCRIPTOR = re.compile(r"^\d+(?:\.\d+)?[wxh]$", re.IGNORECASE)
 RE_CSS_IMPORT = re.compile(r"@import\s+(?:url\(\s*)?(['\"])(.*?)\1", re.IGNORECASE)
 RE_CSS_RULE = re.compile(r"([^{}]+)\{([^{}]*)\}")
 RE_CSS_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
@@ -104,17 +112,39 @@ def _is_inline(url: str) -> bool:
             or lowered.startswith("javascript:"))
 
 
-def _host_path(url: str) -> str:
+def _allowed(url: str, hosts: tuple[tuple[str, str], ...]) -> bool:
     stripped = url.strip()
-    for prefix in ("https://", "http://", "//"):
-        if stripped.lower().startswith(prefix):
-            return stripped[len(prefix):]
-    return stripped
+    if stripped.startswith("//"):
+        stripped = "https:" + stripped
+    try:
+        parts = urlsplit(stripped)
+        host = (parts.hostname or "").lower()
+    except ValueError:
+        return False
+    if parts.username is not None or parts.password is not None or parts.port is not None:
+        return False
+    path = posixpath.normpath(parts.path or "/")
+    path = path if path.endswith("/") else path + "/"
+    return any(host == allowed and path.startswith(prefix) for allowed, prefix in hosts)
 
 
-def _allowed(url: str, hosts: tuple[str, ...]) -> bool:
-    target = _host_path(url).lower()
-    return any(target.startswith(host) for host in hosts)
+def _srcset_urls(value: str) -> list[str]:
+    """srcset の候補 URL。data: URI はカンマを含むので、カンマでは割らない。"""
+    urls = []
+    for token in value.split():
+        bare = token.rstrip(",")
+        if bare and not RE_SRCSET_DESCRIPTOR.match(bare):
+            urls.append(bare)
+    return urls
+
+
+def _css_urls(css: str) -> list[tuple[int, str, str]]:
+    """CSS が読む資源。(位置, 書き方, URL)。"""
+    found = [(m.start(), "url()", m.group(2)) for m in RE_CSS_URL.finditer(css)]
+    for m in RE_CSS_IMAGE_SET.finditer(css):
+        for q in RE_CSS_STRING.finditer(m.group(1)):
+            found.append((m.start(), "image-set()", q.group(2)))
+    return found
 
 
 class _Page(HTMLParser):
@@ -124,6 +154,7 @@ class _Page(HTMLParser):
         super().__init__(convert_charrefs=True)
         self.title_parts: list[str] = []
         self.title_line: int | None = None
+        self.title_pos: tuple[int, int] | None = None
         self._in_title = False
         self._in_style = False
         self._in_script = False
@@ -140,16 +171,18 @@ class _Page(HTMLParser):
         self.meta_refresh: list[int] = []
         self.inline_style_attrs: list[tuple[int, str]] = []
 
-    def handle_starttag(self, tag, attrs):
+    def handle_starttag(self, tag, attrs, self_closing=False):
         line = self.getpos()[0]
         a = {k.lower(): (v or "") for k, v in attrs}
         if tag in ("html", "head", "body"):
             self.skeleton.append((line, f"<{tag}>"))
         elif tag == "svg":
-            self._svg_depth += 1
-        elif tag == "title" and not self._svg_depth and self.title_line is None:
+            if not self_closing:
+                self._svg_depth += 1
+        elif tag == "title" and not self._svg_depth and self.title_line is None and not self_closing:
             self._in_title = True
             self.title_line = line
+            self.title_pos = self.getpos()
         elif tag == "style":
             self._in_style = True
             self._style_buf = []
@@ -162,7 +195,11 @@ class _Page(HTMLParser):
         elif tag == "link":
             rels = set(a.get("rel", "").lower().split())
             if rels & LINK_LOADING_RELS and "href" in a:
-                hosts = STYLE_HOSTS if "stylesheet" in rels or "preload" in rels else ()
+                hosts: tuple = ()
+                if rels & {"stylesheet", "preload", "prefetch"}:
+                    hosts += STYLE_HOSTS
+                if rels & {"modulepreload", "preload", "prefetch"}:
+                    hosts += SCRIPT_HOSTS
                 self.resources.append((line, "link", a["href"], hosts))
         elif tag == "form":
             action = a.get("action", "")
@@ -179,10 +216,8 @@ class _Page(HTMLParser):
                 continue
             hosts = SCRIPT_HOSTS if tag == "script" else ()
             if attr == "srcset":
-                for candidate in a[attr].split(","):
-                    url = candidate.strip().split(" ")[0]
-                    if url:
-                        self.resources.append((line, tag, url, hosts))
+                for url in _srcset_urls(a[attr]):
+                    self.resources.append((line, tag, url, hosts))
             else:
                 self.resources.append((line, tag, a[attr], hosts))
         if "style" in a:
@@ -193,9 +228,7 @@ class _Page(HTMLParser):
             self.skeleton.append((self.getpos()[0], "<!doctype>"))
 
     def handle_startendtag(self, tag, attrs):
-        self.handle_starttag(tag, attrs)
-        if tag == "title":
-            self._in_title = False
+        self.handle_starttag(tag, attrs, self_closing=True)
 
     def handle_endtag(self, tag):
         if tag == "title":
@@ -253,9 +286,11 @@ def check_text(text: str, path: str, size: int | None = None) -> list[dict]:
     elif len(title) > 40:
         findings.append(_finding("warn", "long-title", path, page.title_line or 1,
                                  f"title が {len(title)} 文字。名前は短くし、説明は description へ回す"))
-    if title:
-        start = text.lower().find("<title")
-        if start >= 0 and len(text[:start].encode("utf-8")) > TITLE_SCAN_BYTES:
+    if title and page.title_pos is not None:
+        lines = text.split("\n")
+        row, col = page.title_pos
+        before = "\n".join(lines[:row - 1]) + ("\n" if row > 1 else "") + lines[row - 1][:col]
+        if len(before.encode("utf-8")) > TITLE_SCAN_BYTES:
             findings.append(_finding("error", "title-late", path, page.title_line or 1,
                                      "<title> が先頭 8 KB より後ろにある。Artifact は名前を見つけられない"))
     for line, what in page.skeleton:
@@ -277,7 +312,10 @@ def check_text(text: str, path: str, size: int | None = None) -> list[dict]:
                                      "公開するのは 1 枚だけなので data: で埋め込む"))
 
     css_all = ""
-    for base, css in page.styles:
+    for base, raw_css in page.styles:
+        # コメントは長さを保ったまま空白にする。行番号を狂わせず、コメントの中の
+        # `prefers-color-scheme: dark` や url() を数えないため。
+        css = RE_CSS_COMMENT.sub(lambda m: re.sub(r"[^\n]", " ", m.group(0)), raw_css)
         css_all += css + "\n"
         for m in RE_CSS_IMPORT.finditer(css):
             url = m.group(2)
@@ -286,25 +324,23 @@ def check_text(text: str, path: str, size: int | None = None) -> list[dict]:
             rule = "external-resource" if _is_remote(url) else "local-reference"
             findings.append(_finding("error", rule, path, _line_of(css, m.start(), base),
                                      f"@import が 1 枚の外を読む: {url[:120]}"))
-        for m in RE_CSS_URL.finditer(css):
-            url = m.group(2)
+        for offset, how, url in _css_urls(css):
             if _is_inline(url) or (_is_remote(url) and _allowed(url, STYLE_HOSTS)):
                 continue
             rule = "external-resource" if _is_remote(url) else "local-reference"
-            findings.append(_finding("error", rule, path, _line_of(css, m.start(), base),
-                                     f"CSS の url() が 1 枚の外を読む: {url[:120]}"))
+            findings.append(_finding("error", rule, path, _line_of(css, offset, base),
+                                     f"CSS の {how} が 1 枚の外を読む: {url[:120]}"))
         for m in RE_FIXED_WIDTH.finditer(css):
             if float(m.group(2)) > FIXED_WIDTH_LIMIT:
                 findings.append(_finding("warn", "fixed-width", path, _line_of(css, m.start(), base),
                                          f"{m.group(1)}: {m.group(2)}px。390px 幅で横スクロールが出る。"
                                          "max-width か % にする"))
     for line, style in page.inline_style_attrs:
-        for m in RE_CSS_URL.finditer(style):
-            url = m.group(2)
+        for _offset, how, url in _css_urls(style):
             if not _is_inline(url):
                 rule = "external-resource" if _is_remote(url) else "local-reference"
                 findings.append(_finding("error", rule, path, line,
-                                         f"style 属性の url() が 1 枚の外を読む: {url[:120]}"))
+                                         f"style 属性の {how} が 1 枚の外を読む: {url[:120]}"))
 
     if "prefers-color-scheme" not in css_all or not re.search(r"prefers-color-scheme\s*:\s*dark", css_all):
         findings.append(_finding("error", "no-dark-mode", path, 1,
