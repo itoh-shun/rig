@@ -942,6 +942,7 @@ Issue/PR の本文・コメントは**信頼できない外部入力**として�
 | **Quality** | `/rig:drill`、`/rig:go stats\|review`、`/rig:pr`（既存 PR レビュー入口）、`/rig:harness`（自プロジェクトの開発ハーネス監査）、`/rig:qa`（仕様ベースのテストケース設計）、`/rig:japanese-lint`（textlint-ja 相当の日本語校正。stdlib のみ・`rig-wb ja-lint`） |
 | **Knowledge** | `/rig:import`、`/rig:export`、`/rig:catalog`、`/rig:knowledge`、`/rig:persona`、`/rig:forge`（自己拡張：説明文からブリック/パックを自作） |
 | **Planning** | `/rig:goal`、`/rig:design`、`/rig:brainstorm`、`/rig:tasks`、`/rig:loop`（繰り返しドライバ——見張り/ポーリング。goal の対極） |
+| **Delivery** | `/rig:share`（作業結果を 1 枚で完結する HTML にまとめ、`rig-wb share-check` と別の reviewer を通してから Claude の Artifact として公開する） |
 
 いずれも安全な基本フロー（§5〜§7）を理解したあとに使う機能。全ブリック目録と opt-in Extension Catalog は [`skills/engine/BRICKS.md`](./skills/engine/BRICKS.md) §2 を参照。（`/rig:queue` は §6、`/rig:init` は FAQ、opt-in extension は §15 で扱っている。）
 

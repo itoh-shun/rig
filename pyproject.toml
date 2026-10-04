@@ -99,6 +99,8 @@ benchmarks = [
   # design 制約ファイルのスキーマと雛形。.md だけを拾っていると、規則だけが出荷されて
   # それが指す形の定義が届かない。
   "manifests/*.json",
+  # /rig:share の雛形。1 枚で完結する HTML なので拡張子ごと拾う。
+  "manifests/*.html",
   "patterns/*.md",
   "recipes/*.md",
   "templates/*.md",

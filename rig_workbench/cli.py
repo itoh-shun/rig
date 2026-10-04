@@ -587,6 +587,13 @@ Sub-commands:
                                         artifacts = the config's `paths`; `-` reads stdin.
                                         exit 0=clean or not-configured / 1=errors
                                         / 2=unchecked (config broken, nothing to check)
+  share-check [--report P] [--strict] [--json] HTML...
+                                        check a self-contained HTML page before /rig:share
+                                        publishes it as an Artifact (title, viewport,
+                                        no outside resources, dark-mode tokens, no
+                                        placeholders or secrets). Directories are walked.
+                                        exit 0=clean / 1=errors (--strict: warnings too)
+                                        / 2=unchecked (no path, no HTML, unreadable)
   hostcheck [--json] [--strict]         host-side prerequisites rig cannot enforce
                                         (container isolation, permissions.deny, ignored state).
                                         exit 0=ok / 3=missing / 1=missing with --strict
@@ -741,6 +748,10 @@ def main() -> None:
         from . import ja_textlint as ja_textlint_mod
 
         sys.exit(ja_textlint_mod.main(rest))
+    if sub == "share-check":
+        from . import share_check as share_check_mod
+
+        sys.exit(share_check_mod.main(rest))
     if sub == "hostcheck":
         from . import hostcheck as hostcheck_mod
 

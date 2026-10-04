@@ -906,6 +906,7 @@ It never invents its own execution logic — `scripts/rig-action-entrypoint.sh` 
 | **Quality** | `/rig:drill`, `/rig:go stats\|review`, `/rig:pr` (review-only entry), `/rig:harness` (audit your project's own dev harness), `/rig:qa` (spec-based test-case design), `/rig:japanese-lint` (textlint-ja-style Japanese prose lint, stdlib only: `rig-wb ja-lint`) |
 | **Knowledge** | `/rig:import`, `/rig:export`, `/rig:catalog`, `/rig:knowledge`, `/rig:persona`, `/rig:forge` (self-extension: author new bricks/packs from a description) |
 | **Planning** | `/rig:goal`, `/rig:design`, `/rig:brainstorm`, `/rig:tasks`, `/rig:loop` (recurring driver — polling/watch, the opposite of goal) |
+| **Delivery** | `/rig:share` (turn a result into one self-contained HTML page, check it with `rig-wb share-check` and an independent reviewer, then publish it as a Claude Artifact) |
 
 These are useful after you understand the core safety flow (§5–§7) — see [`skills/engine/BRICKS.md`](./skills/engine/BRICKS.md) §2 for the full brick catalog and opt-in Extension Catalog. (`/rig:queue` is covered in §6, `/rig:init` in the FAQ, and opt-in extensions in §15.)
 

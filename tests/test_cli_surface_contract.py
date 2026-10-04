@@ -52,7 +52,7 @@ TOP_LEVEL_SUBCOMMANDS = frozenset({
     "coverage", "dashboard", "design-constraints", "eval", "fleet", "gh-check",
     "githooks", "govern", "hostcheck", "init", "ja-lint", "mutation", "next",
     "otel", "pack", "perf", "plan", "queue", "run", "runs", "selftest",
-    "sensor-bench", "usage", "validate", "verdict", "version", "wb",
+    "sensor-bench", "share-check", "usage", "validate", "verdict", "version", "wb",
 })
 
 # `rig-wb wb --help` — the workbench: run-state, worktrees, sensors, the gate.
