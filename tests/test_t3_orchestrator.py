@@ -717,15 +717,17 @@ def test_endpoint_guard_removes_bearer_and_refuses_other_endpoint():
 def test_sdk_factory_time_counts_toward_probe_deadline_and_never_opens_after_timeout():
     events = []
     def factory():
-        time.sleep(0.08)
+        time.sleep(0.4)
         return _fake_sdk(events)
     started = time.monotonic()
     with pytest.raises(RuntimeError):
         McpT3Client("http://127.0.0.1/mcp", "secret", timeout_s=0.02, sdk_factory=factory)
-    assert time.monotonic() - started < 0.06
+    # The factory takes 0.4s; returning well before that proves the deadline did not wait for
+    # it, and the wide margin keeps a loaded machine from reading scheduling delay as a wait.
+    assert time.monotonic() - started < 0.25
     for thread in threading.enumerate():
         if thread.name == "rig-t3-mcp":
-            thread.join(timeout=0.2)
+            thread.join(timeout=2)
     assert events == []
     assert not any(thread.name == "rig-t3-mcp" for thread in threading.enumerate())
 
