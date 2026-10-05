@@ -57,8 +57,6 @@ from .orchestrators.base import AgentSpec, TaskContext
 from .orchestrators.bridge import AgentExecutionBridge
 from .orchestrators.credentials import capture_t3_token
 
-capture_t3_token()  # at import: before any child process this module launches can inherit it
-
 from .composition import (                                              # noqa: F401 (re-exported)
     JAPANESE_MATERIAL_MAX_UTF8_BYTES, JAPANESE_MATERIAL_PROFILES, PackComposition,
     _build_artifact_review_prompt, _build_prompt, _build_step_contract,
@@ -84,6 +82,8 @@ from .secure_runtime import (
     run_secure_provider,
 )
 from .secure_fs import atomic_write_bytes, read_bytes as read_secure_bytes
+
+capture_t3_token()  # at import: before any child process this module launches can inherit it
 
 
 class PatchApplier(Protocol):

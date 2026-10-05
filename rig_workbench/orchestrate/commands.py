@@ -27,7 +27,6 @@ from .orchestrators.base import AgentSpec, TaskContext, OrchestratorError
 from .orchestrators.config import MISSING, parse_orchestrator_config
 from .orchestrators.bridge import read_metadata, safe_external_ref, unresolved_invocations
 from .orchestrators.credentials import capture_t3_token, t3_token
-capture_t3_token()  # at import: before any child process can exist; the calls in cmd_run/cmd_resume only catch later values
 from .orchestrators.selection import bind_selection, close_orchestrator, reconnect_recorded, select_orchestrator
 from .providers import metering_note
 from .secure_runtime import JAPANESE_WRITING_MODES, JAPANESE_WRITING_RECIPES
@@ -50,6 +49,8 @@ from .batch_surface import KNOWN_PROJECTS
 from .govern_surfaces import GOVERN_SURFACES
 from .pack_surfaces import PackError
 from .package_surfaces import SCRIPT_LOCATOR
+
+capture_t3_token()  # at import: before any child process can exist; the calls in cmd_run/cmd_resume only catch later values
 
 
 class ScriptLocator(Protocol):
