@@ -116,6 +116,44 @@ def test_applied_t3_invocations_keep_verify_first_resume_without_reconnecting(tm
     assert runstate.load_state(path)["orchestrator"]["invocations"]["call-1"]["result_applied"] is True
 
 
+def test_confirmed_not_started_resume_clears_only_orchestrator_stop_and_verifies(
+    tmp_path, step_factory, monkeypatch, capsys,
+):
+    state, path = _state(tmp_path, step_factory, phase="not_started")
+    state["stopped"] = {"kind": "BLOCKED", "source": "orchestrator", "invocation_id": "call-1",
+                        "reason": "launch_failed", "at": "implement"}
+    runstate.save_state(state, path)
+    monkeypatch.setenv("RIG_T3_MCP_URL", "http://localhost/mcp")
+    monkeypatch.setattr(commands, "load_manifest", lambda **_: {})
+    checks = []
+    monkeypatch.setattr(commands, "_run_checks", lambda values: checks.append(values) or [
+        {"cmd": "true", "ok": True, "rc": 0}])
+    commands.cmd_resume([str(path)])
+    assert checks == [["true"]]
+    assert "re-verify" in capsys.readouterr().out
+    saved = runstate.load_state(path)
+    assert saved["stopped"] is None
+    assert saved["orchestrator"]["invocations"]["call-1"]["phase"] == "not_started"
+
+
+@pytest.mark.parametrize("phase", ["starting", "unknown"])
+def test_uncertain_launch_resume_keeps_stop_and_skips_verification(
+    tmp_path, step_factory, monkeypatch, phase,
+):
+    state, path = _state(tmp_path, step_factory, phase=phase)
+    state["stopped"] = {"kind": "BLOCKED", "source": "orchestrator", "invocation_id": "call-1",
+                        "reason": "launch_unknown", "at": "implement"}
+    runstate.save_state(state, path)
+    before = path.read_bytes()
+    monkeypatch.setattr(commands, "load_manifest", lambda **_: {})
+    monkeypatch.setattr(commands, "reconnect_recorded", lambda *_a, **_k: {
+        "call-1": ReconnectResult("unknown", None, None, "launch_unknown")})
+    monkeypatch.setattr(commands, "_run_checks", lambda _: pytest.fail("uncertain launch ran checks"))
+    with pytest.raises(SystemExit) as stopped:
+        commands.cmd_resume([str(path)])
+    assert stopped.value.code == 2 and path.read_bytes() == before
+
+
 @pytest.mark.parametrize("manifest", [{"preferred": "native"}, {"preferred": "auto"}, {"preferred": "t3"}])
 def test_reconnect_uses_saved_identity_without_reselection(tmp_path, step_factory, manifest):
     state, _ = _state(tmp_path, step_factory)

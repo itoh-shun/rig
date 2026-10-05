@@ -69,7 +69,8 @@ class AgentExecutionBridge:
             metadata = state.get("orchestrator", {})
             call = metadata.get("invocations", {}).get(task.invocation_id)
             if call is not None:
-                call["phase"] = "unknown"
+                # A rejected launch has no external execution to reconcile on resume.
+                call["phase"] = "not_started" if isinstance(error, AgentNotStarted) else "unknown"
                 ref = safe_external_ref(error.ref)
                 if ref:
                     metadata["ref"]["t3"].setdefault("threads", {})[task.invocation_id] = ref
@@ -103,7 +104,7 @@ class AgentExecutionBridge:
         if self.coordinator and self.backend and self.backend.name == "t3":
             with self.coordinator.lock:
                 for call in read_metadata(self.coordinator.state)["invocations"].values():
-                    if call["phase"] not in ("completed", "failed", "cancelled"):
+                    if call["phase"] not in ("completed", "failed", "cancelled", "not_started"):
                         raise OrchestratorUnavailable("external_agent_unresolved")
 
     def _cancel_known(self, backend, handle):
@@ -299,7 +300,7 @@ def metadata_errors(value):
             return ("orchestrator invocation metadata is incomplete",)
         if (type(call["attempt"]) is not int or call["attempt"] < 1
                 or call["orchestrator"] not in ("native", "t3")
-                or call["phase"] not in ("intent", "starting", "pending", "running", "completed", "failed", "cancelled", "unknown")
+                or call["phase"] not in ("intent", "starting", "pending", "running", "completed", "failed", "cancelled", "unknown", "not_started")
                 or type(call["result_applied"]) is not bool
                 or any(not isinstance(call[k], str) for k in ("step_id", "role", "persona", "provider"))
                 or call["model"] is not None and not isinstance(call["model"], str)):
@@ -329,7 +330,8 @@ def read_metadata(state):
 
 def unresolved_invocations(state):
     metadata = read_metadata(state)
-    return {key: value for key, value in metadata["invocations"].items() if not value["result_applied"]}
+    return {key: value for key, value in metadata["invocations"].items()
+            if not value["result_applied"] and value["phase"] != "not_started"}
 
 
 class SaveCoordinator:

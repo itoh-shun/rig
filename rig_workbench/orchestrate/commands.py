@@ -765,6 +765,11 @@ def cmd_resume(args, *, out: Presenter = CONSOLE, clock: Clock = SYSTEM_CLOCK, o
             raise Refusal(["[BLOCKED] unresolved orchestrator executions; v0.1 resume reports only"], code=2)
     except OrchestratorError as error:
         raise Refusal([f"[BLOCKED] orchestrator: {error.reason_code}"], code=2) from None
+    stopped = state.get("stopped") or {}
+    stopped_call = metadata["invocations"].get(stopped.get("invocation_id"), {})
+    if (stopped.get("source") == "orchestrator" and stopped.get("kind") == "BLOCKED"
+            and stopped_call.get("phase") == "not_started" and not unresolved):
+        state["stopped"] = None
     if "deterministic_runtime" in state:
         from .deterministic_runtime import resume_strict
         try:

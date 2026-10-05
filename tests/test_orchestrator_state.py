@@ -9,7 +9,8 @@ import pytest
 
 from rig_workbench.orchestrate import runstate, providers
 from rig_workbench.orchestrate.orchestrators.base import (
-    AgentHandle, AgentResult, AgentSpec, AgentStatus, Availability,
+    AgentConnectionLost, AgentHandle, AgentNotStarted, AgentResult, AgentSpec,
+    AgentStartUnknown, AgentStatus, Availability,
     OrchestratorUnavailable, ReconnectResult, TaskContext,
 )
 from rig_workbench.orchestrate.orchestrators.bridge import (
@@ -138,6 +139,35 @@ def test_snapshot_failure_stops_before_launch_and_cannot_retry(tmp_path):
             bridge.run(_call(invocation), _agent(), native_dispatch=lambda *_args: pytest.fail("native ran"), record_attempt=lambda: None)
         assert "secret detail" not in str(stopped.value)
     assert backend.events == []
+
+
+@pytest.mark.parametrize("preferred,fallback", [("t3", "native"), ("auto", "none")])
+@pytest.mark.parametrize("error_type,phase,unresolved", [
+    (AgentNotStarted, "not_started", False),
+    (AgentStartUnknown, "unknown", True),
+    (AgentConnectionLost, "unknown", True),
+])
+def test_failed_launch_is_unresolved_only_if_execution_may_have_started(
+    tmp_path, preferred, fallback, error_type, phase, unresolved,
+):
+    state = _state()
+    state["orchestrator"].update(preferred=preferred, fallback=fallback)
+    path = tmp_path / "state.json"
+    bridge, backend = _bridge(state, path)
+
+    def reject_launch(*_args):
+        raise error_type("launch_failed")
+
+    backend.spawn_agent = reject_launch
+    with pytest.raises(error_type):
+        bridge.run(_call(), _agent(), native_dispatch=lambda *_args: pytest.fail("fallback ran"),
+                   record_attempt=lambda: None)
+    saved = runstate.load_state(path)
+    call = saved["orchestrator"]["invocations"]["call-1"]
+    assert call["phase"] == phase and call["result_applied"] is False
+    assert bool(unresolved_invocations(saved)) is unresolved
+    if not unresolved:
+        assert reconnect_invocations(saved, backend) == {}
 
 
 def test_consumer_and_exact_invocation_marker_share_one_snapshot(tmp_path):

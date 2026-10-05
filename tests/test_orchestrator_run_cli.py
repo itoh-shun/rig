@@ -65,6 +65,38 @@ def _inject(monkeypatch, backend):
         *a, **kw, factory=lambda _: backend))
 
 
+@pytest.mark.parametrize("error_name,teardown_expected", [
+    ("AgentNotStarted", True), ("AgentStartUnknown", False), ("AgentConnectionLost", False),
+])
+def test_failed_launch_tears_down_isolation_only_when_not_started(
+    prepare, monkeypatch, error_name, teardown_expected,
+):
+    from rig_workbench.orchestrate import providers
+    from rig_workbench.orchestrate.orchestrators import base
+    _, path = prepare
+    backend = Backend()
+    _inject(monkeypatch, backend)
+    monkeypatch.setattr(commands, "setup_isolation", lambda _: {"dir": str(path.parent), "branch": "test"})
+    teardowns = []
+    monkeypatch.setattr(commands, "teardown_isolation", lambda iso, final: teardowns.append((iso, final)) or "clean-removed")
+
+    def reject_launch(*_args):
+        raise getattr(base, error_name)("launch_failed")
+
+    backend.spawn_agent = reject_launch
+
+    def execute(state, _target, _gen, _ver, cfg, *_args, **_kwargs):
+        with pytest.raises(getattr(base, error_name)):
+            providers.run_provider("mock", "generator", "prompt", cfg, state=state, step_id="implement")
+        return "BLOCKED"
+
+    monkeypatch.setattr(commands, "run_loop", execute)
+    with pytest.raises(SystemExit) as stopped:
+        commands.cmd_run(["recipe", "--provider", "mock", "--orchestrator", "t3", "--isolate", "--out", str(path)])
+    assert stopped.value.code == 1
+    assert bool(teardowns) is teardown_expected
+
+
 def test_run_saves_the_selected_identity_and_distinct_role_models_before_execution(prepare, monkeypatch):
     _, path = prepare
     backend = Backend({("generator", "generation"), ("verifier", "review")})
