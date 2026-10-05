@@ -1386,6 +1386,7 @@ What is left, and it is worth naming exactly because it is less than what was th
 - [`docs/pack-migration.md`](./docs/pack-migration.md) — taking a pack out to its own repository and installing it back through a named source, from both sides
 - [`docs/v3-architecture-design-brief.ja.md`](./docs/v3-architecture-design-brief.ja.md) — the V3 architecture design brief: the agreed internal rearchitecture (capability registry, ports, provenance typing) and the order the migration runs in
 - [`docs/facet-order-measurement-plan.ja.md`](./docs/facet-order-measurement-plan.ja.md) — the plan for measuring whether the fixed facet placement order does anything: the `/rig:drill` arms, the sample size derived from the benchmark's own power method, the pre-declared null result, and what blocks a run
+- [`docs/orchestrators.md`](./docs/orchestrators.md) — choosing the execution backend for a run (`--orchestrator auto|native|t3`), the optional T3 MCP backend, fail-closed fallback, `rig-wb doctor`, and the limits of the unverified live contract
 - [README.ja.md](./README.ja.md) — Japanese version
 
 ## License
