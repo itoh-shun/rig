@@ -118,6 +118,7 @@ from .. import context_meter
 from ..gh_requirement import advise_gh
 from ..ports import Presenter
 from ..ports.local import ConsolePresenter
+from .orchestrators.credentials import capture_t3_token
 from .commands import (RUN_USAGE, cmd_ab, cmd_approve, cmd_check, cmd_fleet, cmd_init, cmd_install_shim,
                        cmd_next, cmd_otel, cmd_perf, cmd_plan, cmd_resume, cmd_run, cmd_runs,
                        cmd_status,
@@ -191,6 +192,7 @@ def _usage_for(cmd: str) -> str | None:
 
 
 def main():
+    capture_t3_token()
     out: Presenter = ConsolePresenter()
     if len(sys.argv) < 2 or sys.argv[1] not in COMMANDS:
         out.out(__doc__)

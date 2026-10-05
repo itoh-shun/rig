@@ -5,6 +5,7 @@ from .ports.local import CONSOLE, OS_ENV
 from .orchestrate.recipes import load_manifest
 from .orchestrate.orchestrators.base import OrchestratorUnavailable
 from .orchestrate.orchestrators.config import MISSING, parse_orchestrator_config
+from .orchestrate.orchestrators.credentials import capture_t3_token, t3_token
 from .orchestrate.orchestrators.selection import close_backend, select_orchestrator
 from .workbench.orca import report as orca_report
 
@@ -32,6 +33,7 @@ def _redact(value, token):
 
 def main(args, *, out=CONSOLE, env=OS_ENV, factory=None):
     """All diagnostic failures, including argument failures, return zero."""
+    capture_t3_token()
     if ("--help" in args or "-h" in args) and "--json" not in args:
         out.out("usage: rig-wb doctor [--json] [--orchestrator auto|native|t3]")
         return 0
@@ -101,7 +103,7 @@ def main(args, *, out=CONSOLE, env=OS_ENV, factory=None):
         "errors": errors,
         "reasons": diagnostics.lines,
     }
-    data = _redact(data, env.get("RIG_T3_MCP_TOKEN"))
+    data = _redact(data, t3_token(env))
     if "--json" in args:
         out.out(json.dumps(data, ensure_ascii=False))
     else:

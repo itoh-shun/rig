@@ -688,6 +688,9 @@ def _warn_version_skew() -> None:
 
 @exitcodes.guard
 def main() -> None:
+    from .orchestrate.orchestrators.credentials import capture_t3_token
+
+    capture_t3_token()
     # Tell downstream scripts/*.py that the caller is this CLI (`rig-wb`).
     # telemetry_append in scripts/orchestrate.py and audit_append in workbench.py
     # pick this up and record invoker info in `.rig/runs.jsonl` / `.rig/audit.jsonl`,

@@ -11,6 +11,7 @@ import uuid
 from .base import (AgentConnectionLost, AgentNotStarted, AgentSpec, AgentStartUnknown,
                    OrchestratorError, OrchestratorUnavailable, TaskContext)
 from .native import NativeOrchestrator
+from .credentials import t3_token
 
 
 class AgentExecutionBridge:
@@ -158,9 +159,9 @@ class AgentExecutionBridge:
                 coordinator.snapshot()
             except OrchestratorUnavailable:
                 # The known external identity must remain visible if disk persistence fails.
-                from ...ports.local import CONSOLE, OS_ENV
+                from ...ports.local import CONSOLE
                 ids = safe_external_ref(handle.ref)
-                token = OS_ENV.get("RIG_T3_MCP_TOKEN")
+                token = t3_token()
                 if token:
                     ids = {key: value.replace(token, "[redacted]") for key, value in ids.items()}
                 detail = json.dumps(ids)
@@ -186,8 +187,7 @@ class AgentExecutionBridge:
 
     def _cache_result(self, task, call, status, result):
         coordinator = self.coordinator
-        from ...ports.local import OS_ENV
-        token = OS_ENV.get("RIG_T3_MCP_TOKEN")
+        token = t3_token()
         if token and token in result.output:
             raise AgentConnectionLost("secret_in_agent_result")
         output_path = pathlib.Path(coordinator.path).absolute().parent / "orchestrator-results" / f"{task.invocation_id}.json"
@@ -253,8 +253,7 @@ _COORDINATORS_LOCK = threading.Lock()
 
 
 def safe_external_ref(ref):
-    from ...ports.local import OS_ENV
-    token = OS_ENV.get("RIG_T3_MCP_TOKEN")
+    token = t3_token()
     return {key: value for key, value in ref.items() if key in ("thread_id", "run_id")
             and isinstance(value, str) and value and all(c.isprintable() for c in value)
             and (not token or token not in value)}

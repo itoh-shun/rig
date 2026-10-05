@@ -6,6 +6,7 @@ from ...ports.local import CONSOLE, OS_ENV
 from .base import Availability, OrchestratorUnavailable, UnsupportedAgentSpec
 from .bridge import AgentExecutionBridge, SaveCoordinator, selection_record
 from .config import MISSING, parse_orchestrator_config, valid_endpoint
+from .credentials import t3_token
 
 
 @dataclass(frozen=True)
@@ -41,7 +42,7 @@ def resolve_settings(config, env=OS_ENV):
     def get(key):
         return env.get(key) or None
     return T3Settings(get("RIG_T3_MCP_URL") or config.url,
-                      get("RIG_T3_MCP_TOKEN"), get("RIG_T3_PROJECT_ID") or config.project_id)
+                      t3_token(env), get("RIG_T3_PROJECT_ID") or config.project_id)
 
 
 def _load_t3(settings, timeout_s=5):
