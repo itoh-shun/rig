@@ -24,16 +24,16 @@ class Selection:
     selected_by: str
     fallback: str
     availability: Availability
-    backend: object = field(default=None, repr=False)
+    orchestrator: object = field(default=None, repr=False)
     settings: T3Settings | None = field(default=None, repr=False)
 
     def record(self):
         ref = {}
         caps = ("agent.run", "agent.parallel")
         if self.name == "t3":
-            caps = self.backend.capabilities()
+            caps = self.orchestrator.capabilities()
             ref = {"t3": {"endpoint": self.settings.endpoint,
-                          "project_id": getattr(self.backend, "project_id", self.settings.project_id),
+                          "project_id": getattr(self.orchestrator, "project_id", self.settings.project_id),
                           "contract_version": "rig-t3-v1", "threads": {}}}
         return selection_record(self.name, preferred=self.preferred, selected_by=self.selected_by,
                                 fallback=self.fallback, capabilities=caps, ref=ref)
@@ -49,20 +49,20 @@ def resolve_settings(config, env=OS_ENV):
 
 
 def _load_t3(settings, timeout_s=5):
-    # This is the sole optional-backend loader, called only after configuration checks.
+    # This is the sole optional-orchestrator loader, called only after configuration checks.
     from .t3 import T3Orchestrator
     from .t3_client import McpT3Client
     deadline = time.monotonic() + timeout_s
     client = McpT3Client(settings.endpoint, settings.token, timeout_s=timeout_s)
-    backend = T3Orchestrator(client, settings.endpoint, settings.project_id, token=settings.token,
+    orchestrator = T3Orchestrator(client, settings.endpoint, settings.project_id, token=settings.token,
                              timeout_s=max(0, deadline - time.monotonic()))
-    if not backend.available().ok:
+    if not orchestrator.available().ok:
         client.close(timeout_s=max(0, deadline - time.monotonic()))
-    return backend
+    return orchestrator
 
 
-def close_backend(backend, *, timeout_s=None):
-    client = getattr(backend, "client", None)
+def close_orchestrator(orchestrator, *, timeout_s=None):
+    client = getattr(orchestrator, "client", None)
     close = getattr(client, "close", None)
     if close is not None:
         try:
@@ -93,29 +93,29 @@ def probe_t3(settings, *, factory=None):
                                             or not settings.project_id.strip()
                                             or any(ord(c) < 32 or ord(c) == 127 for c in settings.project_id)):
         return Availability(False, "invalid_project", "T3 project configuration is invalid"), None
-    backend = None
+    orchestrator = None
     deadline = time.monotonic() + 5
     try:
-        backend = factory(settings) if factory else _load_t3(settings, max(0, deadline - time.monotonic()))
-        availability = backend.available()
+        orchestrator = factory(settings) if factory else _load_t3(settings, max(0, deadline - time.monotonic()))
+        availability = orchestrator.available()
         if time.monotonic() > deadline:
-            close_backend(backend, timeout_s=max(0, deadline - time.monotonic()))
+            close_orchestrator(orchestrator, timeout_s=max(0, deadline - time.monotonic()))
             return Availability(False, "probe_timeout", "T3 compatibility probe exceeded its deadline"), None
-        project = getattr(backend, "project_id", settings.project_id)
+        project = getattr(orchestrator, "project_id", settings.project_id)
         if project is not None and settings.token in project:
-            close_backend(backend, timeout_s=max(0, deadline - time.monotonic()))
+            close_orchestrator(orchestrator, timeout_s=max(0, deadline - time.monotonic()))
             return Availability(False, "secret_in_configuration", "T3 project identity contains secret material"), None
         if settings.token in availability.detail:
             availability = Availability(availability.ok, availability.reason_code,
                                         availability.detail.replace(settings.token, "[redacted]"))
-        return availability, backend
+        return availability, orchestrator
     except RuntimeError as error:
-        close_backend(backend, timeout_s=max(0, deadline - time.monotonic()))
+        close_orchestrator(orchestrator, timeout_s=max(0, deadline - time.monotonic()))
         if str(error) == "mcp_sdk_unavailable":
             return Availability(False, "sdk_unavailable", "Optional MCP SDK is not installed"), None
         return Availability(False, "probe_failed", "T3 compatibility probe failed"), None
     except Exception:
-        close_backend(backend, timeout_s=max(0, deadline - time.monotonic()))
+        close_orchestrator(orchestrator, timeout_s=max(0, deadline - time.monotonic()))
         return Availability(False, "probe_failed", "T3 compatibility probe failed"), None
 
 
@@ -134,20 +134,20 @@ def select_orchestrator(value=MISSING, *, cli=None, env=OS_ENV, factory=None,
                          Availability(True, "native_requested", "Native requested; T3 not probed"))
     settings = resolve_settings(config, env)
     if native_only_reason:
-        availability, backend = Availability(False, "unsupported_mode", native_only_reason), None
+        availability, orchestrator = Availability(False, "unsupported_mode", native_only_reason), None
     else:
-        availability, backend = probe_t3(settings, factory=factory)
+        availability, orchestrator = probe_t3(settings, factory=factory)
         if availability.ok:
             try:
                 for task, agent in requirements:
-                    backend.validate_agent(task, agent)
+                    orchestrator.validate_agent(task, agent)
             except UnsupportedAgentSpec:
                 availability = Availability(False, "unsupported_agent_spec", "T3 cannot preserve the requested agent constraints")
             except Exception:
                 availability = Availability(False, "compatibility_unknown", "T3 request compatibility could not be confirmed")
     if availability.ok:
-        return Selection("t3", preferred, selected_by, config.fallback, availability, backend, settings)
-    close_backend(backend)
+        return Selection("t3", preferred, selected_by, config.fallback, availability, orchestrator, settings)
+    close_orchestrator(orchestrator)
     if preferred == "t3" or config.fallback == "none":
         raise OrchestratorUnavailable(availability.reason_code)
     if emit:
@@ -162,7 +162,7 @@ def bind_selection(selection, state, path, save):
     coordinator = SaveCoordinator(state, path, save)
     if path is not None:
         coordinator.snapshot()
-    return AgentExecutionBridge(selection.backend, coordinator=coordinator)
+    return AgentExecutionBridge(selection.orchestrator, coordinator=coordinator)
 
 
 def reconnect_recorded(state, value=MISSING, *, env=OS_ENV, factory=None, report_errors=False):
@@ -178,7 +178,7 @@ def reconnect_recorded(state, value=MISSING, *, env=OS_ENV, factory=None, report
 
 
 def _reconnect_recorded(state, value=MISSING, *, env=OS_ENV, factory=None):
-    """Reconnect only the recorded namespace; never select another execution backend."""
+    """Reconnect only the recorded namespace; never select another execution orchestrator."""
     from .bridge import read_metadata, reconnect_invocations, safe_external_ref, unresolved_invocations
     metadata = read_metadata(state)
     if metadata["name"] == "native":
@@ -210,12 +210,12 @@ def _reconnect_recorded(state, value=MISSING, *, env=OS_ENV, factory=None):
             raise OrchestratorUnavailable("unsafe_orchestrator_reference")
     if not unresolved_invocations(state):
         return {}
-    availability, backend = probe_t3(settings, factory=factory)
+    availability, orchestrator = probe_t3(settings, factory=factory)
     try:
         if not availability.ok:
             raise OrchestratorUnavailable(availability.reason_code)
-        if getattr(backend, "project_id", None) != ref["project_id"]:
+        if getattr(orchestrator, "project_id", None) != ref["project_id"]:
             raise OrchestratorUnavailable("orchestrator_project_mismatch")
-        return reconnect_invocations(state, backend)
+        return reconnect_invocations(state, orchestrator)
     finally:
-        close_backend(backend)
+        close_orchestrator(orchestrator)

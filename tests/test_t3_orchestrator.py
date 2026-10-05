@@ -97,7 +97,7 @@ def test_auto_selects_a_compatible_t3_client(tmp_path):
                                   factory=lambda settings: T3Orchestrator(client, settings.endpoint, settings.project_id))
     assert selected.name == "t3"
     assert selected.record()["ref"]["t3"]["project_id"] == "project"
-    assert "agent.parallel" not in selected.backend.capabilities()
+    assert "agent.parallel" not in selected.orchestrator.capabilities()
     assert [call[0] for call in client.calls] == ["capabilities"]
 
 

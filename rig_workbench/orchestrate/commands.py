@@ -27,7 +27,7 @@ from .orchestrators.base import AgentSpec, TaskContext, OrchestratorError
 from .orchestrators.config import MISSING, parse_orchestrator_config
 from .orchestrators.bridge import read_metadata, safe_external_ref, unresolved_invocations
 from .orchestrators.credentials import t3_token
-from .orchestrators.selection import bind_selection, close_backend, reconnect_recorded, select_orchestrator
+from .orchestrators.selection import bind_selection, close_orchestrator, reconnect_recorded, select_orchestrator
 from .providers import metering_note
 from .secure_runtime import JAPANESE_WRITING_MODES, JAPANESE_WRITING_RECIPES
 from .composition import JAPANESE_MATERIAL_PROFILES, resolve_japanese_material
@@ -168,9 +168,10 @@ _SECURE_PIN_FLAGS = {
 # Approval flags are consumed directly from sys.argv by recipe/manifest/pack trust
 # checks. They must still be accepted here, even though the run has no cfg for them.
 _RUN_TRUST_FLAGS = {"--allow-project-recipes", "--allow-project-manifest", "--allow-project-packs"}
+_ORCHESTRATOR_VALUE_FLAGS = {"--orchestrator"}
 _RUN_VALUE_FLAGS = {
     "--provider", "--verifier-provider", "--provider-cmd", "--model", "--timeout",
-    "--goal", "--check", "--out", "--max-steps", "--deterministic-task", "--orchestrator",
+    "--goal", "--check", "--out", "--max-steps", "--deterministic-task", *_ORCHESTRATOR_VALUE_FLAGS,
     "--generators", "--verifier-providers", "--secure-provider-config", "--step-model",
     "--base-url", "--review-category", "--material-profile", "--max-parallel", "--quorum",
     "--auto-route-mode", "--exploration-pct", "--exploration-date", "--mode",
@@ -1144,7 +1145,7 @@ def cmd_run(args, *, out: Presenter = CONSOLE, env: Env = OS_ENV, observer=None)
     strict = "--deterministic" in args or "--deterministic-task" in args
     if strict:
         valued = {"--provider", "--verifier-provider", "--provider-cmd", "--model",
-                  "--timeout", "--goal", "--check", "--out", "--max-steps", "--deterministic-task", "--orchestrator"}
+                  "--timeout", "--goal", "--check", "--out", "--max-steps", "--deterministic-task", *_ORCHESTRATOR_VALUE_FLAGS}
         switches = {"--deterministic", "--isolate", "--goal-stdin", *_RUN_TRUST_FLAGS}
         cursor = 1
         while cursor < len(args):
@@ -1197,7 +1198,7 @@ def cmd_run(args, *, out: Presenter = CONSOLE, env: Env = OS_ENV, observer=None)
     i = 1
     while i < len(args):
         a = args[i]
-        if a == "--orchestrator" and i + 1 < len(args):
+        if a in _ORCHESTRATOR_VALUE_FLAGS and i + 1 < len(args):
             orchestrator_choice = args[i + 1]
             i += 2
         elif a == "--deterministic":
@@ -1700,7 +1701,7 @@ def cmd_run(args, *, out: Presenter = CONSOLE, env: Env = OS_ENV, observer=None)
         # with an approve hint, not a crash: same reporting as the japanese-material refusal.
         _blocked_by_pack_error(error, diagnostic)
     finally:
-        close_backend(selection.backend if selection else None)
+        close_orchestrator(selection.orchestrator if selection else None)
         close_secure_launchers(cfg.pop("_secure_launchers", None))
         release_output_lock(cfg.pop("_secure_output_lock", None))
 

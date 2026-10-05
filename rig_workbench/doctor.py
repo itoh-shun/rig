@@ -6,7 +6,7 @@ from .orchestrate.recipes import load_manifest
 from .orchestrate.orchestrators.base import OrchestratorUnavailable
 from .orchestrate.orchestrators.config import MISSING, parse_orchestrator_config
 from .orchestrate.orchestrators.credentials import capture_t3_token, t3_token
-from .orchestrate.orchestrators.selection import close_backend, select_orchestrator
+from .orchestrate.orchestrators.selection import close_orchestrator, select_orchestrator
 from .workbench.orca import report as orca_report
 
 
@@ -69,7 +69,7 @@ def main(args, *, out=CONSOLE, env=OS_ENV, factory=None):
                 availability = selection.availability
                 t3.update(available=selection.name == "t3", reason_code=availability.reason_code,
                           detail=availability.detail,
-                          capabilities=sorted(selection.backend.capabilities()) if selection.name == "t3" else [])
+                          capabilities=sorted(selection.orchestrator.capabilities()) if selection.name == "t3" else [])
                 if selection.name == "t3":
                     for note in ("MCP connected", "compatible contract", "live execution unverified"):
                         if note not in t3["detail"]:
@@ -84,7 +84,7 @@ def main(args, *, out=CONSOLE, env=OS_ENV, factory=None):
     except SystemExit:
         errors.append("manifest_read_failed")
     finally:
-        close_backend(selection.backend if selection else None)
+        close_orchestrator(selection.orchestrator if selection else None)
     try:
         orca = orca_report(env.snapshot())
     except Exception:
