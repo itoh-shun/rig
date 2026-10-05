@@ -416,3 +416,19 @@ def run_git(repo, *args, check=True):
     return subprocess.run(["git", *args], cwd=str(repo), check=check, capture_output=True,
                           text=True, env=env,
                           timeout=subprocess_timeout(GIT_MEASURED_SECONDS))
+
+
+@pytest.fixture(autouse=True)
+def isolate_t3_credentials(monkeypatch):
+    """No test inherits a T3 setting from the developer's shell or from import time.
+
+    The orchestrator moves RIG_T3_MCP_TOKEN into a process-local holder when it is first
+    imported, so clearing the environment alone leaves a developer's token readable. Tests
+    that need T3 settings set them after this fixture runs.
+    """
+    from rig_workbench.orchestrate.orchestrators import credentials
+
+    for key in tuple(os.environ):
+        if key.startswith("RIG_T3_"):
+            monkeypatch.delenv(key, raising=False)
+    credentials._reset_for_tests()

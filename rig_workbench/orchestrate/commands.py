@@ -23,11 +23,16 @@ from .recipes import (_record_trust, auto_orchestrate, git_diff_lines, load_mani
                       load_steps, parse_frontmatter, resolve_effective, resolve_extends,
                       resolve_plan_json, resolve_recipe)
 from .runstate import compute_next, load_state, new_state, save_state, stage_gate_status
+from .orchestrators.base import AgentSpec, TaskContext, OrchestratorError
+from .orchestrators.config import MISSING, parse_orchestrator_config
+from .orchestrators.bridge import read_metadata, safe_external_ref, unresolved_invocations
+from .orchestrators.credentials import capture_t3_token, t3_token
+from .orchestrators.selection import bind_selection, close_orchestrator, reconnect_recorded, select_orchestrator
 from .providers import metering_note
 from .secure_runtime import JAPANESE_WRITING_MODES, JAPANESE_WRITING_RECIPES
 from .composition import JAPANESE_MATERIAL_PROFILES, resolve_japanese_material
 from .providers import (JAPANESE_WRITING_REVIEW_CATEGORIES,
-                        record_verdicts, parse_step_model_spec,
+                        record_verdicts, parse_step_model_spec, effective_step_models,
                         read_result_artifact, run_loop, unknown_step_model_ids)
 from .isolate import setup_isolation, teardown_isolation
 from .gates import validate_executable_recipe
@@ -44,6 +49,8 @@ from .batch_surface import KNOWN_PROJECTS
 from .govern_surfaces import GOVERN_SURFACES
 from .pack_surfaces import PackError
 from .package_surfaces import SCRIPT_LOCATOR
+
+capture_t3_token()  # at import: before any child process can exist; the calls in cmd_run/cmd_resume only catch later values
 
 
 class ScriptLocator(Protocol):
@@ -163,9 +170,10 @@ _SECURE_PIN_FLAGS = {
 # Approval flags are consumed directly from sys.argv by recipe/manifest/pack trust
 # checks. They must still be accepted here, even though the run has no cfg for them.
 _RUN_TRUST_FLAGS = {"--allow-project-recipes", "--allow-project-manifest", "--allow-project-packs"}
+_ORCHESTRATOR_VALUE_FLAGS = {"--orchestrator"}
 _RUN_VALUE_FLAGS = {
     "--provider", "--verifier-provider", "--provider-cmd", "--model", "--timeout",
-    "--goal", "--check", "--out", "--max-steps", "--deterministic-task",
+    "--goal", "--check", "--out", "--max-steps", "--deterministic-task", *_ORCHESTRATOR_VALUE_FLAGS,
     "--generators", "--verifier-providers", "--secure-provider-config", "--step-model",
     "--base-url", "--review-category", "--material-profile", "--max-parallel", "--quorum",
     "--auto-route-mode", "--exploration-pct", "--exploration-date", "--mode",
@@ -580,6 +588,9 @@ def _locked_secure_state_mutation(path_from_args):
     def decorate(command):
         @wraps(command)
         def guarded(args, **kwargs):
+            # Reading state can validate through git children; the token must already be
+            # out of the environment by then, not only once the command body starts.
+            capture_t3_token()
             state_path = path_from_args(args)
             if state_path is None:
                 return command(args, **kwargs)
@@ -708,9 +719,15 @@ def _fmt_duration(seconds: float) -> str:
     return f"{mins}m"
 
 
+def _resume_state_path(args):
+    if any(arg.split("=", 1)[0] == "--orchestrator" for arg in args):
+        raise Refusal(["[ERROR] resume cannot change the recorded orchestrator"], code=2)
+    return _state_path(args)
+
+
 @_reports_refusals
 @_progress_command
-@_locked_secure_state_mutation(_state_path)
+@_locked_secure_state_mutation(_resume_state_path)
 def cmd_resume(args, *, out: Presenter = CONSOLE, clock: Clock = SYSTEM_CLOCK, observer=None):
     """Verify-first resume ritual (session-startup ritual for long-running agents).
 
@@ -720,6 +737,9 @@ def cmd_resume(args, *, out: Presenter = CONSOLE, clock: Clock = SYSTEM_CLOCK, o
     ("world drifted") and we REFUSE to advance (exit non-zero). Side effects match
     `check` + `next` (state is written the same way); idempotent.
     """
+    # Direct library callers (pack invoke, selftest) skip main(); keep the token out of
+    # every child this command launches. Idempotent.
+    capture_t3_token()
     if any(arg.split("=", 1)[0] == "--mode" for arg in args):
         raise Refusal([
             "[ERROR] resume does not support --mode: the mode is fixed at run time "
@@ -727,6 +747,28 @@ def cmd_resume(args, *, out: Presenter = CONSOLE, clock: Clock = SYSTEM_CLOCK, o
         ], code=2)
     sp = _state_path(args)
     state = _read_state(sp)
+    try:
+        metadata = read_metadata(state)
+        unresolved = unresolved_invocations(state)
+        reports = reconnect_recorded(
+            state, load_manifest(read_only=True, out=out).get("orchestrator", MISSING), report_errors=True,
+        ) if metadata["name"] == "t3" else {}
+        if unresolved:
+            for invocation, report in reports.items():
+                ref = safe_external_ref(report.handle.ref) if report.handle else {}
+                ids = "".join(f" {key}={value}" for key, value in ref.items())
+                status = f" status={report.status.phase}" if report.status else ""
+                message = f"orchestrator reconnect: {invocation}: {report.state}{status}{ids}"
+                token = t3_token()
+                out.out(message.replace(token, "[redacted]") if token else message)
+            raise Refusal(["[BLOCKED] unresolved orchestrator executions; v0.1 resume reports only"], code=2)
+    except OrchestratorError as error:
+        raise Refusal([f"[BLOCKED] orchestrator: {error.reason_code}"], code=2) from None
+    stopped = state.get("stopped") or {}
+    stopped_call = metadata["invocations"].get(stopped.get("invocation_id"), {})
+    if (stopped.get("source") == "orchestrator" and stopped.get("kind") == "BLOCKED"
+            and stopped_call.get("phase") == "not_started" and not unresolved):
+        state["stopped"] = None
     if "deterministic_runtime" in state:
         from .deterministic_runtime import resume_strict
         try:
@@ -1091,13 +1133,15 @@ RUN_USAGE = (
     "[--review-category general|incident_report|support_reply] "
     "[--mode MODE[,MODE...]] "
     "[--material-profile none|technical|conversation] "
-    "[--out f] [--timeout seconds] [--isolate] [--progress] [--auto-route] "
+    "[--orchestrator auto|native|t3] [--out f] [--timeout seconds] [--isolate] [--progress] [--auto-route] "
     "[--auto-route-learn [--auto-route-mode shadow|active] [--exploration-pct N] [--exploration-date D]]")
 
 
 @_reports_refusals
 @_progress_command
 def cmd_run(args, *, out: Presenter = CONSOLE, env: Env = OS_ENV, observer=None):
+    # Direct library callers (pack invoke, selftest) skip main(); capture before any env read.
+    capture_t3_token()
     if not args:
         out.out("[ERROR] usage: " + RUN_USAGE)
         sys.exit(1)
@@ -1111,7 +1155,7 @@ def cmd_run(args, *, out: Presenter = CONSOLE, env: Env = OS_ENV, observer=None)
     strict = "--deterministic" in args or "--deterministic-task" in args
     if strict:
         valued = {"--provider", "--verifier-provider", "--provider-cmd", "--model",
-                  "--timeout", "--goal", "--check", "--out", "--max-steps", "--deterministic-task"}
+                  "--timeout", "--goal", "--check", "--out", "--max-steps", "--deterministic-task", *_ORCHESTRATOR_VALUE_FLAGS}
         switches = {"--deterministic", "--isolate", "--goal-stdin", *_RUN_TRUST_FLAGS}
         cursor = 1
         while cursor < len(args):
@@ -1142,6 +1186,7 @@ def cmd_run(args, *, out: Presenter = CONSOLE, env: Env = OS_ENV, observer=None)
 
     execution = _require_executable_recipe(fm, fm.get("name", path.stem))
     steps = load_steps(fm)
+    orchestrator_choice = None
     gen = ver = None
     generators: list[str] = []
     goal = None
@@ -1163,7 +1208,10 @@ def cmd_run(args, *, out: Presenter = CONSOLE, env: Env = OS_ENV, observer=None)
     i = 1
     while i < len(args):
         a = args[i]
-        if a == "--deterministic":
+        if a in _ORCHESTRATOR_VALUE_FLAGS and i + 1 < len(args):
+            orchestrator_choice = args[i + 1]
+            i += 2
+        elif a == "--deterministic":
             i += 1
         elif a == "--deterministic-task" and i + 1 < len(args):
             deterministic_task = args[i + 1]
@@ -1338,6 +1386,24 @@ def cmd_run(args, *, out: Presenter = CONSOLE, env: Env = OS_ENV, observer=None)
     if step_models:
         cfg["step_models"] = step_models
     secure_required = requires_secure_runtime(fm.get("name", path.stem), steps)
+    manifest = load_manifest()
+    orchestrator_value = manifest.get("orchestrator", MISSING)
+    try:
+        parse_orchestrator_config(orchestrator_value)
+        if orchestrator_choice is not None and orchestrator_choice not in ("auto", "native", "t3"):
+            raise ValueError()
+    except ValueError:
+        raise Refusal(["[BLOCKED] invalid orchestrator configuration or choice"], code=2) from None
+    native_only_reason = ("Deterministic and secure execution require Native" if strict or secure_required
+                          else "Managed agents require Native" if cfg.get("parallel_backend") == "managed-agents" else None)
+    early_selection = None
+    if native_only_reason:
+        try:
+            early_selection = select_orchestrator(orchestrator_value, cli=orchestrator_choice, env=env,
+                                                 native_only_reason=native_only_reason, out=out)
+        except OrchestratorError as error:
+            raise Refusal([f"[BLOCKED] orchestrator: {error.reason_code}"], code=2) from None
+
     if writing_modes is not None and not (
         secure_required and fm.get("name", path.stem) in JAPANESE_WRITING_RECIPES
     ):
@@ -1539,7 +1605,7 @@ def cmd_run(args, *, out: Presenter = CONSOLE, env: Env = OS_ENV, observer=None)
     # A declared perf budget (#502) rides on cfg so run_loop can warn the moment a run breaks
     # it. Read from the manifest rather than a flag: a budget is a property of the project, and
     # one that had to be passed on the command line would only ever be checked deliberately.
-    manifest_budget = load_manifest().get("perf_budget")
+    manifest_budget = manifest.get("perf_budget")
     if isinstance(manifest_budget, dict):
         cfg["perf_budget"] = manifest_budget
     if strict:
@@ -1560,7 +1626,33 @@ def cmd_run(args, *, out: Presenter = CONSOLE, env: Env = OS_ENV, observer=None)
     # Rig could always answer this, but only if you went and asked `runs --cost` afterwards.
     diagnostic(metering_note([*(generators or [gen]), *(ver if isinstance(ver, list) else [ver])])
                + "\n")
+    selection = None
     try:
+        requirements = []
+        constraints = {"native_configuration": True} if (
+            cfg.get("reuse_session") or "env" in cfg or cfg.get("provider_cmd") or cfg.get("base_url")
+        ) else {}
+        for step in steps:
+            gen_model, ver_model = effective_step_models(step, cfg)
+            # Routing can select any declared candidate; validate them all before launch.
+            route = step.get("auto_route") or {}
+            routing = cfg.get("auto_route") and not step.get("model") and not (cfg.get("step_models") or {}).get(step["id"])
+            candidates = list(route.get("candidates") or []) if routing and isinstance(route, dict) else []
+            models = [(item.get("model") or gen_model) if isinstance(item, dict) else gen_model
+                      for item in candidates] if candidates else [gen_model]
+            verifier_models = [ver_model] if step.get("verifier_model") else models
+            task = TaskContext(state["run_id"], step["id"], "preflight", 1,
+                               str(cfg.get("cwd") or config.INVOCATION_CWD))
+            for role, providers, role_models in (
+                ("generator", generators or [gen], models),
+                ("verifier", ver if isinstance(ver, list) else [ver], verifier_models),
+            ):
+                for provider in providers:
+                    for model in role_models:
+                        requirements.append((task, AgentSpec(provider, model, role, "", "", cfg.get("timeout", 600), constraints)))
+        selection = early_selection or select_orchestrator(orchestrator_value, cli=orchestrator_choice,
+                                                          env=env, requirements=requirements, out=out)
+        cfg["_orchestrator_bridge"] = bind_selection(selection, state, out_path, save_state)
         if strict:
             from .deterministic_binding import bound_task
             from .deterministic_runtime import initialize
@@ -1580,7 +1672,7 @@ def cmd_run(args, *, out: Presenter = CONSOLE, env: Env = OS_ENV, observer=None)
                              generators=(generators or None), quiet=artifact_stdout, **({"observer": observer} if observer is not None else {}))
         if iso and strict:
             diagnostic(f"◈ Strict worktree preserved for review: {iso['dir']}")
-        if iso and not strict:
+        if iso and not strict and not unresolved_invocations(state):
             outcome = teardown_isolation(iso, final)
             state["isolation"]["outcome"] = outcome
             save_state(state, out_path)
@@ -1612,11 +1704,14 @@ def cmd_run(args, *, out: Presenter = CONSOLE, env: Env = OS_ENV, observer=None)
                        f"`rig-wb orchestrate approve <step-id> {out_path}`, then `resume`.")
             sys.exit(3)
         sys.exit((0 if final == "DONE" else 1) if strict else (1 if final in ("ESCALATE", "BLOCKED") else 0))
+    except OrchestratorError as error:
+        raise Refusal([f"[BLOCKED] orchestrator: {error.reason_code}"], code=2) from None
     except PackError as error:
         # An unapproved user/project asset (a persona brief, say) met mid-run is a refusal
         # with an approve hint, not a crash: same reporting as the japanese-material refusal.
         _blocked_by_pack_error(error, diagnostic)
     finally:
+        close_orchestrator(selection.orchestrator if selection else None)
         close_secure_launchers(cfg.pop("_secure_launchers", None))
         release_output_lock(cfg.pop("_secure_output_lock", None))
 

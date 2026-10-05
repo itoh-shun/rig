@@ -74,6 +74,17 @@ _ERROR = ExitCode(code=2, meaning="rig could not produce an answer: bad usage or
 
 
 CLI_CAPABILITIES: tuple[Capability, ...] = (
+    Capability(
+        id="doctor", parent=None, verb="doctor",
+        intent="diagnose which execution backend a new run would select",
+        preconditions=(NO_PRECONDITION,),
+        effect_line="設定と接続を読み取り専用で診断します。state や trust store は更新しません",
+        effect_class=READ_ONLY, network=NETWORK_SOMETIMES,
+        flags=(Flag(name="--json", type="bool", help="emit one diagnostic JSON document"),
+               Flag(name="--orchestrator", type="choice", choices=("auto", "native", "t3"),
+                    help="diagnose selection for a new run")),
+        exit_codes=(ExitCode(code=0, meaning="diagnosis completed, including invalid or unavailable configuration"),),
+    ),
     # ── the twenty explicit `sub == "..."` branches, in dispatch order ───────
     Capability(
         id="version",
@@ -518,6 +529,8 @@ CLI_CAPABILITIES: tuple[Capability, ...] = (
         # by action.yml, parsed by cmd_run, and declared nowhere.
         flags=(
             Flag(name="recipe", type="string", help="the recipe to run", required=True),
+            Flag(name="--orchestrator", type="choice", choices=("auto", "native", "t3"),
+                 help="select the execution backend for this new run"),
             Flag(name="--provider", type="string", help="the generator provider", required=True),
             Flag(name="--generators", type="string", help="comma-separated generator providers to spread the steps across"),
             Flag(name="--verifier-provider", type="string", help="the provider that verifies"),

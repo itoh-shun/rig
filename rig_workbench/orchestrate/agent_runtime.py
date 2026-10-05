@@ -24,7 +24,9 @@ leaving Core to infer it from the strings it appends:
 What this module deliberately does *not* do yet: run anything. `AgentRuntime.run`,
 streaming and abort are Phase 3 — the contract is shaped for them, but claiming them here
 would be a promise with no implementation behind it. Today every adapter answers one
-question, `build_argv`, and `providers.run_provider` still owns process execution.
+question, `build_argv`. NativeOrchestrator wraps the existing provider dispatcher;
+it does not merge this vendor argv boundary with workspace runtimes. Phase 3 may
+replace NativeOrchestrator's dispatcher later, without claiming streaming or abort now.
 """
 
 from __future__ import annotations

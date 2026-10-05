@@ -52,6 +52,7 @@ import argparse
 import pathlib
 from collections.abc import Mapping, Sequence
 
+from ..orchestrate.orchestrators.config import validate_orchestrator_config as _validate_orchestrator_config
 from ..orchestrate.gates import is_runtime_gate, validate_executable_recipe
 from ..workbench.capabilities import ROUTE_PRODUCERS as _ROUTE_PRODUCERS
 from ..workbench.capabilities import LocalRecipe, select_task_route
@@ -226,3 +227,6 @@ STALE_REF_SCANNER = _scan_stale_refs
 MCP_SCANNER = _mcp_scan
 ASSET_RESOLVER = _resolve_asset
 PARSER_SOURCE = _ParserSource()
+
+# Manifest validation uses this pure execution-axis boundary through its Protocol.
+ORCHESTRATOR_CONFIG_VALIDATOR = _validate_orchestrator_config

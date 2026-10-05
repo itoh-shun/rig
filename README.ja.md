@@ -1405,6 +1405,7 @@ pack のバイトを著者に結びつけるものは、もう何もありませ
 - [`docs/pack-migration.md`](./docs/pack-migration.md) — 同梱packを独自リポジトリへ切り出し、named source 経由で installし直すまでの移行手順（送り手・受け手の両側）
 - [`docs/v3-architecture-design-brief.ja.md`](./docs/v3-architecture-design-brief.ja.md) — V3 アーキテクチャ設計ブリーフ。合意済みの内部再構成（能力レジストリ・ポート化・来歴の型付け）と移行順序
 - [`docs/facet-order-measurement-plan.ja.md`](./docs/facet-order-measurement-plan.ja.md) — facet 配置順が効くのかを `/rig:drill` で測る計画。アーム・ベンチ既存の検出力法から導いたサンプルサイズ・事前宣言した帰無結果・実行を塞いでいるもの
+- [`docs/orchestrators.md`](./docs/orchestrators.md) — run の実行バックエンドの選び方（`--orchestrator auto|native|t3`）、任意の T3 MCP バックエンド、fail-closed のフォールバック、`rig-wb doctor`、未検証のライブ契約の限界（英語のみ）
 - [README.md](./README.md) — English version
 
 ## License

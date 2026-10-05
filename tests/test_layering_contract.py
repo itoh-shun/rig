@@ -321,6 +321,11 @@ SHELL_MODULES: dict[str, dict[str, str]] = {
         ),
     },
     "orchestrate": {
+        f"{PACKAGE}.orchestrate.orchestrators.t3_client": (
+            "Optional MCP SDK 1.x streamable-HTTP transport adapter. It owns the SDK "
+            "imports, HTTP client and async session lifetime; orchestrator policy, "
+            "Native and selection remain under the judgement import rules."
+        ),
         f"{PACKAGE}.orchestrate.lifecycle_commands": (
             "Explicit operator CLI adapter: parses lifecycle proposals and decisions, "
             "creates isolated runs and delegates guarded mutations to strict runtime. "

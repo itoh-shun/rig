@@ -25,7 +25,8 @@ The model does each step's "work", but this runner decides "what happens next":
                                      and freshness come from the governance layer; the record lands in the run-state
                                      beside that step's checks/verdicts and in the tamper-evident ledger
   next   <state.json>                Deterministically compute, apply, and print the next transition
-  resume <state.json> [--progress]   Verify-first resume: print a digest, RE-RUN the current step's checks
+  resume <state.json> [--progress]   Recorded orchestrator is fixed; --orchestrator is run-only.
+                                     Verify-first resume: print a digest, RE-RUN the current step's checks
                                      (refuse to advance if the world drifted), then continue via `next`
   status <state.json> [--json]       Print the last saved snapshot (not process liveness)
   lifecycle <template|init|decide|revise|status> ...
@@ -117,6 +118,7 @@ from .. import context_meter
 from ..gh_requirement import advise_gh
 from ..ports import Presenter
 from ..ports.local import ConsolePresenter
+from .orchestrators.credentials import capture_t3_token
 from .commands import (RUN_USAGE, cmd_ab, cmd_approve, cmd_check, cmd_fleet, cmd_init, cmd_install_shim,
                        cmd_next, cmd_otel, cmd_perf, cmd_plan, cmd_resume, cmd_run, cmd_runs,
                        cmd_status,
@@ -190,6 +192,7 @@ def _usage_for(cmd: str) -> str | None:
 
 
 def main():
+    capture_t3_token()
     out: Presenter = ConsolePresenter()
     if len(sys.argv) < 2 or sys.argv[1] not in COMMANDS:
         out.out(__doc__)
