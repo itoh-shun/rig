@@ -160,7 +160,10 @@ def bind_selection(selection, state, path, save):
     if selection.name == "t3" and path is None:
         raise OrchestratorUnavailable("persistent_state_required")
     coordinator = SaveCoordinator(state, path, save)
-    if path is not None:
+    # Only T3 needs the selection on disk before its first call. Native keeps the legacy
+    # checkpoint timing: the state file must not appear before the runner's own first save,
+    # and a strict run refuses to initialize over an existing one.
+    if path is not None and selection.name == "t3":
         coordinator.snapshot()
     return AgentExecutionBridge(selection.orchestrator, coordinator=coordinator)
 
