@@ -587,6 +587,9 @@ def _locked_secure_state_mutation(path_from_args):
     def decorate(command):
         @wraps(command)
         def guarded(args, **kwargs):
+            # Reading state can validate through git children; the token must already be
+            # out of the environment by then, not only once the command body starts.
+            capture_t3_token()
             state_path = path_from_args(args)
             if state_path is None:
                 return command(args, **kwargs)

@@ -149,21 +149,83 @@ def test_concurrent_reads_never_return_a_stale_token(monkeypatch):
     monkeypatch.delenv("RIG_T3_MCP_TOKEN", raising=False)
     real_pop = os.environ.pop
     results = {}
+    popped = threading.Event()
+    release = threading.Event()
+    second_started = threading.Event()
 
-    def slow_pop(key, *default):
+    def gated_pop(key, *default):
         value = real_pop(key, *default)
         if value == "B":
-            # Thread 1 has taken B but not yet published it; thread 2 runs meanwhile.
-            threading.Event().wait(0.1)
+            # Thread 1 has taken B but not yet published it; hold it here until thread 2
+            # is known to be running its read.
+            popped.set()
+            assert release.wait(5)
         return value
 
-    monkeypatch.setattr(os.environ, "pop", slow_pop)
+    monkeypatch.setattr(os.environ, "pop", gated_pop)
     os.environ["RIG_T3_MCP_TOKEN"] = "B"
+
+    def second_read():
+        second_started.set()
+        results["second"] = credentials.t3_token()
+
     first = threading.Thread(target=lambda: results.setdefault("first", credentials.t3_token()))
-    second = threading.Thread(target=lambda: results.setdefault("second", credentials.t3_token()))
+    second = threading.Thread(target=second_read)
     first.start()
-    threading.Event().wait(0.03)
+    assert popped.wait(5)
     second.start()
-    first.join()
-    second.join()
+    assert second_started.wait(5)
+    # Without the lock thread 2 finishes now with the stale holder; with it, thread 2 is
+    # blocked until thread 1 publishes. Poll for completion instead of sleeping a fixed time.
+    second.join(timeout=0.5)
+    blocked = second.is_alive()
+    release.set()
+    first.join(5)
+    second.join(5)
+    assert blocked, "second reader was not serialized behind the first"
     assert results == {"first": "B", "second": "B"}
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="needs os.fork")
+def test_fork_while_another_thread_holds_the_lock_does_not_deadlock():
+    import signal
+    import threading
+    import time
+    from rig_workbench.orchestrate.orchestrators import credentials
+    held = threading.Event()
+    release = threading.Event()
+
+    def hold():
+        with credentials._LOCK:
+            held.set()
+            release.wait(10)
+
+    holder = threading.Thread(target=hold)
+    holder.start()
+    assert held.wait(5)
+    pid = os.fork()
+    if pid == 0:
+        # Child: the holder thread does not exist here. A watchdog turns a hang into a
+        # distinct exit status instead of a stuck test run.
+        signal.alarm(5)
+        try:
+            credentials.t3_token()
+            os._exit(0)
+        except BaseException:
+            os._exit(2)
+    try:
+        deadline = time.monotonic() + 10
+        status = None
+        while time.monotonic() < deadline:
+            done, status = os.waitpid(pid, os.WNOHANG)
+            if done:
+                break
+            time.sleep(0.01)
+        else:
+            os.kill(pid, signal.SIGKILL)
+            os.waitpid(pid, 0)
+            pytest.fail("child blocked on the inherited lock")
+        assert os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0, status
+    finally:
+        release.set()
+        holder.join(5)

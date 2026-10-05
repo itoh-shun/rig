@@ -10,6 +10,24 @@ _token = None
 _LOCK = threading.Lock()
 
 
+def _renew_lock_in_child():
+    # fork() copies a lock that another thread may hold; that thread does not exist in the
+    # child, so the copy would never be released and t3_token() would wait forever.
+    global _LOCK
+    _LOCK = threading.Lock()
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_renew_lock_in_child)
+
+
+def _reset_for_tests():
+    """Forget any held token so one test cannot read what an import or another test captured."""
+    global _token
+    with _LOCK:
+        _token = None
+
+
 def _capture_locked():
     global _token
     # The read-only Env port cannot remove credentials from a process environment.

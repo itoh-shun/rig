@@ -22,3 +22,20 @@ def test_cli_module_fixtures_clear_inherited_t3_settings(module):
         cwd=root, env=env, capture_output=True, text=True, timeout=60,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("module", [
+    "test_orchestrator_run_cli.py", "test_orchestrator_resume_cli.py",
+    "test_doctor.py", "test_cli_smoke.py",
+])
+def test_cli_module_fixtures_clear_the_captured_t3_token(module):
+    # Importing the orchestrator moves the token out of the environment into a holder, so
+    # the environment check above cannot see it; the holder must be reset as well.
+    root = Path(__file__).resolve().parents[1]
+    env = dict(os.environ, RIG_T3_MCP_TOKEN="developer-secret")
+    result = subprocess.run(
+        [sys.executable, "-m", "pytest", "-q",
+         f"tests/{module}::test_t3_holder_is_isolated"],
+        cwd=root, env=env, capture_output=True, text=True, timeout=60,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr

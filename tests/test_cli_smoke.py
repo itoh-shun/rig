@@ -47,16 +47,25 @@ ISOLATED_ENV_KEYS = {
 }
 
 
+from rig_workbench.orchestrate.orchestrators import credentials  # noqa: E402
+
+
 @pytest.fixture(autouse=True)
 def clear_t3_environment(monkeypatch):
     """Tests opt in to T3 settings instead of inheriting the developer's credentials."""
     for key in tuple(os.environ):
         if key.startswith("RIG_T3_"):
             monkeypatch.delenv(key, raising=False)
+    credentials._reset_for_tests()
 
 
 def test_t3_environment_is_isolated():
     assert not any(key.startswith("RIG_T3_") for key in os.environ)
+
+
+def test_t3_holder_is_isolated():
+    # The module imports captured any token the developer exported before pytest started.
+    assert credentials.t3_token() is None
 
 
 def run_cli(args, tmp_path):
