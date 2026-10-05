@@ -4,6 +4,16 @@
 
 ### Added
 
+- **Pluggable agent execution orchestrators (#645).** The built-in NativeOrchestrator
+  preserves existing provider execution; `--orchestrator` and trusted manifest settings
+  select an optional, experimental T3 adapter. Run state records the selection and
+  external thread/run IDs, and read-only `rig-wb doctor --json` reports connection and
+  new-run selection diagnostics. Rig retains verifier, checks and acceptance decisions.
+  Auto fallback retries only calls confirmed not to have started; explicit T3 and failures
+  after launch never silently downgrade. T3 calls are serialized, and resume only
+  reconnects and reports unresolved calls, stopping with exit 2 without applying results.
+  The contract is verified with a fake client; a real T3 server is unverified. No live
+  server build is enabled until its contract and execution constraints are verified.
 - **Secure Japanese-writing runs apply `--mode` (#641).** `japanese-writing` and
   `japanese-writing-revision` bind validated, canonically ordered style modes into
   generator and reviewer prompts and preserve them on resume. Resume refuses

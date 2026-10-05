@@ -11,7 +11,10 @@ from . import queueing
 from .config import DEFAULT_K
 from .recipes import (auto_orchestrate, git_diff_lines, load_manifest,
                       resolve_effective, resolve_plan_json)
-from .runstate import classify_failure, compute_next, new_state, save_state
+from .runstate import (classify_failure, compute_next, enforce_executable_state,
+                       new_state, save_state)
+from .orchestrators.bridge import read_metadata
+from .orchestrators.selection import bind_selection, select_orchestrator
 from .providers import (_OPENAI_BASE, _judge_output, _parse_criteria, _verdict_ok,
                         build_argv, discover_models,
                         parse_step_model_spec, resolve_http_model, run_loop,
@@ -602,6 +605,44 @@ def cmd_selftest(_args, *, out: Presenter = CONSOLE):
     outAA3, codeAA3 = _run_resume(stateAA3)
     report("AA3 resume: passing checks with no verdict AWAITs instead of advancing (#496)",
            ("▶ AWAIT" in outAA3 and "▶ ADVANCE" not in outAA3, codeAA3), (True, 0))
+
+    # ── Scenario AB: explicit Native orchestration preserves the existing runner ──
+    # Pin Native and pass an empty environment: this selftest never probes T3, even
+    # when the caller has configured a live endpoint. Fake T3 faults belong in pytest.
+    stepsAB = [s(id="implement"), s(id="review", gate="review-gate")]
+    stateAB0 = new_state("native-orchestrator", stepsAB, None)
+    policyAB = json.loads(json.dumps(stateAB0["execution"]))
+    legacyAB = read_metadata(stateAB0)
+    selectedAB = select_orchestrator(cli="native", env={}, emit=False)
+    explicitAB = []
+    finalsAB = []
+    with tempfile.TemporaryDirectory(prefix="rig-native-selftest-") as directoryAB:
+        savedRunsAB = config.RUNS_PATH
+        savedGlobalRunsAB = config.GLOBAL_RUNS_PATH
+        config.RUNS_PATH = pathlib.Path(directoryAB) / "runs.jsonl"
+        config.GLOBAL_RUNS_PATH = pathlib.Path(directoryAB) / "global-runs.jsonl"
+        try:
+            finalAB0 = run_loop(stateAB0, None, "mock", "mock", {}, 20, quiet=True)
+            for _ in range(2):
+                stateAB = new_state("native-orchestrator", stepsAB, None)
+                bridgeAB = bind_selection(selectedAB, stateAB, None, save_state)
+                finalsAB.append(run_loop(stateAB, None, "mock", "mock",
+                                         {"_orchestrator_bridge": bridgeAB}, 20, quiet=True))
+                explicitAB.append(stateAB)
+        finally:
+            config.RUNS_PATH = savedRunsAB
+            config.GLOBAL_RUNS_PATH = savedGlobalRunsAB
+    report("AB explicit Native + mock preserves transitions and verdicts",
+           all(state["history"] == stateAB0["history"]
+               and state["step_state"] == stateAB0["step_state"] for state in explicitAB), True)
+    report("AB explicit Native is deterministic and reaches DONE",
+           (finalAB0, finalsAB, explicitAB[0]["orchestrator"] == explicitAB[1]["orchestrator"]),
+           ("DONE", ["DONE", "DONE"], True))
+    report("AB missing metadata means legacy Native without changing the state",
+           (legacyAB["name"], legacyAB["selected_by"], "orchestrator" in stateAB0),
+           ("native", "legacy", False))
+    report("AB orchestrator metadata leaves execution policy unchanged",
+           all(enforce_executable_state(state) == policyAB for state in explicitAB), True)
 
     # ── Scenario FM: failure-mode taxonomy (deterministic classification from state) ──
     # classify_failure gives a reproducible MAST-style code from run-state alone:
