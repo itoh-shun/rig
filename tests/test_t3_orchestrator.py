@@ -714,22 +714,220 @@ def test_endpoint_guard_removes_bearer_and_refuses_other_endpoint():
         client.close()
 
 
-def test_sdk_factory_time_counts_toward_probe_deadline_and_never_opens_after_timeout():
+def _initialize_deadline_clock(monkeypatch):
+    from rig_workbench.orchestrate.orchestrators import t3_client
+    clock = SimpleNamespace(now=0)
+    monkeypatch.setattr(t3_client, "time", SimpleNamespace(monotonic=lambda: clock.now))
+
+    class ReadyFuture(concurrent.futures.Future):
+        def result(self, timeout=None):
+            # Model a caller that resumes only after the owner has finished probing.
+            # Deadline assertions use the injected clock, independent of scheduling.
+            return super().result(timeout=10)
+
+    monkeypatch.setattr(t3_client, "concurrent", SimpleNamespace(futures=SimpleNamespace(Future=ReadyFuture)))
+    return clock
+
+
+def _join_initialize_owner(client):
+    client.close(timeout_s=0)
+    client._thread.join(timeout=10)
+    assert not client._thread.is_alive()
+
+
+@pytest.mark.parametrize("failed_submission", [1, 2])
+@pytest.mark.parametrize("loop_closed", [True, False])
+def test_close_tolerates_loop_closing_during_submission_only(monkeypatch, failed_submission, loop_closed):
+    from rig_workbench.orchestrate.orchestrators import t3_client
+    monkeypatch.setattr(t3_client, "time", SimpleNamespace(monotonic=lambda: 0))
+
+    class ClosingLoop:
+        closed = False
+        submissions = 0
+
+        def is_running(self):
+            return True
+
+        def is_closed(self):
+            return self.closed
+
+        def call_soon_threadsafe(self, callback, *args):
+            self.submissions += 1
+            if self.submissions == failed_submission or self.closed:
+                self.closed = loop_closed
+                raise RuntimeError("submission failed")
+
+    class JoiningThread:
+        def __init__(self):
+            self.waits = []
+
+        def join(self, *, timeout):
+            self.waits.append(timeout)
+
+        def is_alive(self):
+            return True
+
+    client = McpT3Client.__new__(McpT3Client)
+    client._closed = False
+    client._close_lock = threading.Lock()
+    client._loop = ClosingLoop()
+    client._queue = SimpleNamespace(put_nowait=lambda value: None)
+    client._thread = JoiningThread()
+    if loop_closed:
+        client.close(timeout_s=0.5)
+        # Neither closed-loop race may skip either bounded thread join.
+        assert client._thread.waits == [0.5, 0.5]
+    else:
+        with pytest.raises(RuntimeError, match="submission failed"):
+            client.close(timeout_s=0.5)
+        assert client._thread.waits == ([] if failed_submission == 1 else [0.5])
+    assert client._closed
+
+
+def test_sdk_factory_time_counts_toward_probe_deadline_and_never_opens_after_timeout(monkeypatch):
+    from rig_workbench.orchestrate.orchestrators import t3_client
+    clock = _initialize_deadline_clock(monkeypatch)
     events = []
+    entered, release = threading.Event(), threading.Event()
+
     def factory():
-        time.sleep(0.4)
+        entered.set()
+        assert release.wait(timeout=10)
         return _fake_sdk(events)
-    started = time.monotonic()
-    with pytest.raises(RuntimeError):
-        McpT3Client("http://127.0.0.1/mcp", "secret", timeout_s=0.02, sdk_factory=factory)
-    # The factory takes 0.4s; returning well before that proves the deadline did not wait for
-    # it, and the wide margin keeps a loaded machine from reading scheduling delay as a wait.
-    assert time.monotonic() - started < 0.25
-    for thread in threading.enumerate():
-        if thread.name == "rig-t3-mcp":
-            thread.join(timeout=2)
+
+    class TimedOutFuture(concurrent.futures.Future):
+        def result(self, timeout=None):
+            assert entered.wait(timeout=10)
+            clock.now = 61
+            raise concurrent.futures.TimeoutError()
+
+    monkeypatch.setattr(t3_client, "concurrent", SimpleNamespace(futures=SimpleNamespace(Future=TimedOutFuture)))
+    client = McpT3Client.__new__(McpT3Client)
+    try:
+        with pytest.raises(RuntimeError, match="mcp_initialize_failed"):
+            client.__init__("http://127.0.0.1/mcp", "secret", timeout_s=60, sdk_factory=factory)
+        assert not release.is_set()
+    finally:
+        release.set()
+        _join_initialize_owner(client)
     assert events == []
-    assert not any(thread.name == "rig-t3-mcp" for thread in threading.enumerate())
+
+
+def test_sdk_factory_returning_after_deadline_never_opens_a_connection(monkeypatch):
+    clock = _initialize_deadline_clock(monkeypatch)
+    events = []
+
+    def factory():
+        clock.now = 61
+        return _fake_sdk(events)
+
+    client = McpT3Client.__new__(McpT3Client)
+    try:
+        with pytest.raises(RuntimeError, match="mcp_initialize_failed"):
+            client.__init__("http://127.0.0.1/mcp", "secret", timeout_s=60, sdk_factory=factory)
+    finally:
+        _join_initialize_owner(client)
+    assert events == []
+
+
+def test_owner_starting_after_initialize_deadline_never_invokes_sdk_factory(monkeypatch):
+    clock = _initialize_deadline_clock(monkeypatch)
+    events, factory_calls = [], []
+
+    class StartedLateClient(McpT3Client):
+        def _thread_main(self, sdk_factory, timeout_s):
+            clock.now = 61
+            super()._thread_main(sdk_factory, timeout_s)
+
+    def factory():
+        factory_calls.append(True)
+        return _fake_sdk(events)
+
+    client = StartedLateClient.__new__(StartedLateClient)
+    try:
+        with pytest.raises(RuntimeError, match="mcp_initialize_failed"):
+            client.__init__("http://127.0.0.1/mcp", "secret", timeout_s=60, sdk_factory=factory)
+    finally:
+        _join_initialize_owner(client)
+    assert factory_calls == []
+    assert events == []
+
+
+def test_ready_success_after_initialize_deadline_is_closed_and_rejected(monkeypatch):
+    from rig_workbench.orchestrate.orchestrators import t3_client
+    clock = _initialize_deadline_clock(monkeypatch)
+    events = []
+
+    class LateSuccessFuture(concurrent.futures.Future):
+        def result(self, timeout=None):
+            value = super().result(timeout=10)
+            clock.now = 61
+            return value
+
+    monkeypatch.setattr(t3_client, "concurrent", SimpleNamespace(futures=SimpleNamespace(Future=LateSuccessFuture)))
+    client = McpT3Client.__new__(McpT3Client)
+    try:
+        with pytest.raises(RuntimeError, match="mcp_initialize_failed"):
+            client.__init__("http://127.0.0.1/mcp", "secret", timeout_s=60,
+                            sdk_factory=lambda: _fake_sdk(events))
+        assert client._closed
+    finally:
+        _join_initialize_owner(client)
+    assert [name for name, *_ in events] == [
+        "http-enter", "transport-enter", "session-enter", "initialize",
+        "session-exit", "transport-exit", "http-exit",
+    ]
+
+
+@pytest.mark.parametrize("stage,expected", [
+    ("http-create", []),
+    ("http-enter", ["http-enter", "http-exit"]),
+    ("transport-create", ["http-enter", "http-exit"]),
+    ("transport-enter", ["http-enter", "transport-enter", "transport-exit", "http-exit"]),
+    ("session-create", ["http-enter", "transport-enter", "transport-exit", "http-exit"]),
+    ("session-enter", ["http-enter", "transport-enter", "session-enter", "session-exit", "transport-exit", "http-exit"]),
+    ("initialize", ["http-enter", "transport-enter", "session-enter", "initialize", "session-exit", "transport-exit", "http-exit"]),
+])
+def test_each_sdk_initialize_stage_checks_the_absolute_deadline(monkeypatch, stage, expected):
+    clock = _initialize_deadline_clock(monkeypatch)
+    events = []
+    sdk = _fake_sdk(events)
+
+    def expire(current_stage):
+        if stage == current_stage:
+            clock.now = 61
+
+    class TimedContext:
+        def __init__(self, context, name):
+            self.context, self.name = context, name
+            expire(name + "-create")
+
+        async def __aenter__(self):
+            value = await self.context.__aenter__()
+            expire(self.name + "-enter")
+            return value
+
+        async def __aexit__(self, *args):
+            return await self.context.__aexit__(*args)
+
+    class Session(sdk.session):
+        async def initialize(self):
+            await super().initialize()
+            expire("initialize")
+
+    timed_sdk = _Sdk(
+        lambda *args: TimedContext(Session(*args), "session"),
+        lambda *args, **kwargs: TimedContext(sdk.transport(*args, **kwargs), "transport"),
+        lambda **kwargs: TimedContext(sdk.http_client(**kwargs), "http"),
+        sdk.pagination,
+    )
+    client = McpT3Client.__new__(McpT3Client)
+    try:
+        with pytest.raises(RuntimeError, match="mcp_initialize_failed"):
+            client.__init__("http://127.0.0.1/mcp", "secret", timeout_s=60, sdk_factory=lambda: timed_sdk)
+    finally:
+        _join_initialize_owner(client)
+    assert [name for name, *_ in events] == expected
 
 
 @pytest.mark.parametrize("failure", ["unconfigured", "sdk_unavailable", "authentication_failed", "probe_timeout"])
