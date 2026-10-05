@@ -26,7 +26,7 @@ from .runstate import compute_next, load_state, new_state, save_state, stage_gat
 from .orchestrators.base import AgentSpec, TaskContext, OrchestratorError
 from .orchestrators.config import MISSING, parse_orchestrator_config
 from .orchestrators.bridge import read_metadata, safe_external_ref, unresolved_invocations
-from .orchestrators.credentials import t3_token
+from .orchestrators.credentials import capture_t3_token, t3_token
 from .orchestrators.selection import bind_selection, close_orchestrator, reconnect_recorded, select_orchestrator
 from .providers import metering_note
 from .secure_runtime import JAPANESE_WRITING_MODES, JAPANESE_WRITING_RECIPES
@@ -732,6 +732,9 @@ def cmd_resume(args, *, out: Presenter = CONSOLE, clock: Clock = SYSTEM_CLOCK, o
     ("world drifted") and we REFUSE to advance (exit non-zero). Side effects match
     `check` + `next` (state is written the same way); idempotent.
     """
+    # Direct library callers (pack invoke, selftest) skip main(); keep the token out of
+    # every child this command launches. Idempotent.
+    capture_t3_token()
     if any(arg.split("=", 1)[0] == "--mode" for arg in args):
         raise Refusal([
             "[ERROR] resume does not support --mode: the mode is fixed at run time "
@@ -1132,6 +1135,8 @@ RUN_USAGE = (
 @_reports_refusals
 @_progress_command
 def cmd_run(args, *, out: Presenter = CONSOLE, env: Env = OS_ENV, observer=None):
+    # Direct library callers (pack invoke, selftest) skip main(); capture before any env read.
+    capture_t3_token()
     if not args:
         out.out("[ERROR] usage: " + RUN_USAGE)
         sys.exit(1)

@@ -18,5 +18,8 @@ def capture_t3_token():
 def t3_token(env=OS_ENV):
     """Injected environments stay isolated; only the real process uses the holder."""
     if env is OS_ENV:
-        return env.get("RIG_T3_MCP_TOKEN") or _token
+        # A value that reached os.environ after entry is moved out before it can reach a
+        # child, and the newest value wins, matching the old env-first order.
+        capture_t3_token()
+        return _token
     return env.get("RIG_T3_MCP_TOKEN") or None
