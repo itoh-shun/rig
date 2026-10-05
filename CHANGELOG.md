@@ -12,8 +12,11 @@
   Auto fallback retries only calls confirmed not to have started; explicit T3 and failures
   after launch never silently downgrade. T3 calls are serialized, and resume only
   reconnects and reports unresolved calls, stopping with exit 2 without applying results.
-  The contract is verified with a fake client; a real T3 server is unverified. No live
-  server build is enabled until its contract and execution constraints are verified.
+  **Limitation:** the contract is verified with a fake client; a real T3 server is
+  unverified. The production MCP client has `contract_verified=False`, and its probe
+  returns `unverified_contract` even after a compatible connection. T3 cannot be selected
+  in this release: default `auto` falls back to Native, while explicit `t3` or
+  `fallback: none` stops before launch with exit 2.
 - **Secure Japanese-writing runs apply `--mode` (#641).** `japanese-writing` and
   `japanese-writing-revision` bind validated, canonically ordered style modes into
   generator and reviewer prompts and preserve them on resume. Resume refuses

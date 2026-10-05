@@ -61,9 +61,11 @@ the string `none`.
 
 T3 is experimental. **Its contract is verified with a fake client; execution against a
 real T3 server is unverified.** There is currently no verified server build or revision.
-The production client therefore keeps T3 unavailable even if the server connects and
-advertises the fake fixture's schemas. `auto` follows its fallback policy; explicit `t3`
-stops. Installing the SDK or setting an endpoint does not enable an unverified contract.
+The production MCP client has `contract_verified=False`. Even after connecting and
+accepting the fake fixture's schemas, the probe returns `unverified_contract`, so T3
+cannot be selected in this release. `auto` with the default `fallback: native` returns
+to Native; explicit `t3` or `fallback: none` stops before launch with exit 2. Installing
+the SDK or setting an endpoint does not enable an unverified contract.
 
 The optional streamable-HTTP transport uses the existing MCP extra:
 
