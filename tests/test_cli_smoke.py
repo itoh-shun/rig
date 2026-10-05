@@ -47,6 +47,18 @@ ISOLATED_ENV_KEYS = {
 }
 
 
+@pytest.fixture(autouse=True)
+def clear_t3_environment(monkeypatch):
+    """Tests opt in to T3 settings instead of inheriting the developer's credentials."""
+    for key in tuple(os.environ):
+        if key.startswith("RIG_T3_"):
+            monkeypatch.delenv(key, raising=False)
+
+
+def test_t3_environment_is_isolated():
+    assert not any(key.startswith("RIG_T3_") for key in os.environ)
+
+
 def run_cli(args, tmp_path):
     env = dict(
         os.environ,
@@ -1349,9 +1361,7 @@ def test_run_help_never_starts_a_run_when_called_directly(monkeypatch):
     assert printed and printed[0].startswith("usage: run <recipe>")
 
 
-def test_doctor_and_orchestrator_options_are_reachable_and_documented(tmp_path, monkeypatch):
-    for key in ("RIG_T3_MCP_URL", "RIG_T3_MCP_TOKEN", "RIG_T3_PROJECT_ID"):
-        monkeypatch.delenv(key, raising=False)
+def test_doctor_and_orchestrator_options_are_reachable_and_documented(tmp_path):
     help_result = run_rig_wb(["--help"], tmp_path)
     assert help_result.returncode == 0
     assert "doctor [--json] [--orchestrator auto|native|t3]" in help_result.stdout

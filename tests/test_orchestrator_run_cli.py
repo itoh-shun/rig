@@ -1,11 +1,24 @@
 """New-run preflight and durable selection are wired ahead of execution."""
 import json
+import os
 
 import pytest
 
 from rig_workbench.orchestrate import commands, config, runstate
 from rig_workbench.orchestrate.orchestrators.base import Availability, UnsupportedAgentSpec
 from rig_workbench.orchestrate.orchestrators.selection import select_orchestrator
+
+
+@pytest.fixture(autouse=True)
+def clear_t3_environment(monkeypatch):
+    """Tests opt in to T3 settings instead of inheriting the developer's credentials."""
+    for key in tuple(os.environ):
+        if key.startswith("RIG_T3_"):
+            monkeypatch.delenv(key, raising=False)
+
+
+def test_t3_environment_is_isolated():
+    assert not any(key.startswith("RIG_T3_") for key in os.environ)
 
 
 class Backend:

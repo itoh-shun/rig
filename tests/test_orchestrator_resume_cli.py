@@ -1,5 +1,6 @@
 """The public resume command reports durable identities and never applies T3 results."""
 import copy
+import os
 
 import pytest
 
@@ -9,6 +10,18 @@ from rig_workbench.orchestrate.orchestrators.base import (
 )
 from rig_workbench.orchestrate.orchestrators.bridge import selection_record
 from rig_workbench.orchestrate.orchestrators.selection import reconnect_recorded
+
+
+@pytest.fixture(autouse=True)
+def clear_t3_environment(monkeypatch):
+    """Tests opt in to T3 settings instead of inheriting the developer's credentials."""
+    for key in tuple(os.environ):
+        if key.startswith("RIG_T3_"):
+            monkeypatch.delenv(key, raising=False)
+
+
+def test_t3_environment_is_isolated():
+    assert not any(key.startswith("RIG_T3_") for key in os.environ)
 
 
 class Environment:
