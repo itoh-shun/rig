@@ -12,7 +12,8 @@ import pytest
 
 from rig_workbench.orchestrate import providers, runstate
 from rig_workbench.orchestrate.orchestrators.base import (
-    AgentConnectionLost, AgentNotStarted, AgentSpec, AgentStartUnknown,
+    AgentConnectionLost, AgentNotStarted, AgentSpec, AgentStartUnknown, AgentStatus,
+    Availability,
     OrchestratorUnavailable, TaskContext, UnsupportedAgentSpec,
 )
 from rig_workbench.orchestrate.orchestrators.bridge import AgentExecutionBridge, SaveCoordinator, selection_record
@@ -727,3 +728,155 @@ def test_sdk_factory_time_counts_toward_probe_deadline_and_never_opens_after_tim
             thread.join(timeout=0.2)
     assert events == []
     assert not any(thread.name == "rig-t3-mcp" for thread in threading.enumerate())
+
+
+@pytest.mark.parametrize("failure", ["unconfigured", "sdk_unavailable", "authentication_failed", "probe_timeout"])
+@pytest.mark.parametrize("preferred,fallback", [("auto", "native"), ("auto", "none"), ("t3", "native")])
+def test_probe_failure_falls_back_only_when_auto_allows_it(failure, preferred, fallback, capsys):
+    calls = []
+
+    def factory(settings):
+        calls.append(settings)
+        if failure == "sdk_unavailable":
+            raise RuntimeError("mcp_sdk_unavailable")
+        return SimpleNamespace(available=lambda: Availability(False, failure, "Connection unavailable"))
+
+    env = {} if failure == "unconfigured" else {
+        "RIG_T3_MCP_URL": "http://127.0.0.1/mcp", "RIG_T3_MCP_TOKEN": "secret",
+    }
+    if preferred == "auto" and fallback == "native":
+        selected = select_orchestrator({"fallback": fallback}, cli=preferred, env=env, factory=factory)
+        assert selected.name == "native"
+        assert selected.availability.reason_code == failure
+        assert "falling back to native" in capsys.readouterr().err
+    else:
+        with pytest.raises(OrchestratorUnavailable, match=failure):
+            select_orchestrator({"fallback": fallback}, cli=preferred, env=env, factory=factory)
+    assert len(calls) == (0 if failure == "unconfigured" else 1)
+
+
+@pytest.mark.parametrize("mismatch", ["provider", "model", "cwd", "role", "constraint", "ambiguous_target"])
+def test_unverified_agent_identity_workspace_and_constraints_are_refused_before_launch(tmp_path, mismatch):
+    client = LogicalClient(tmp_path)
+    backend = T3Orchestrator(client, "http://127.0.0.1/mcp")
+    task, spec = _task(tmp_path), _agent()
+    if mismatch == "provider":
+        spec = _agent(provider="unknown-provider")
+    elif mismatch == "model":
+        spec = AgentSpec("claude", "unknown-model", "generator", "implementer", "prompt", 5, {})
+    elif mismatch == "cwd":
+        task = _task(tmp_path / "different-checkout")
+    elif mismatch == "role":
+        spec = _agent("scheduler")
+    elif mismatch == "constraint":
+        spec = AgentSpec("claude", None, "verifier", "reviewer", "prompt", 5, {"network": False})
+    else:
+        backend._catalog["another-claude"] = {**backend._catalog["claude"], "instance_id": "another-claude"}
+    with pytest.raises(UnsupportedAgentSpec):
+        backend.spawn_agent(task, spec)
+    assert [operation for operation, _, _ in client.calls] == ["capabilities"]
+
+
+@pytest.mark.parametrize("failure", ["unknown", "disconnected", "wrong_run"])
+def test_timeout_with_cancel_failure_keeps_the_external_run_unresolved(tmp_path, failure, monkeypatch):
+    state, path, bridge, client = _durable(tmp_path)
+    monkeypatch.setattr(bridge.backend, "wait", lambda *_args, **_kwargs: AgentStatus("running"))
+    original = client.call
+
+    def call(operation, arguments, *, timeout_s):
+        if operation == "interrupt":
+            client.calls.append((operation, copy.deepcopy(arguments), timeout_s))
+            if failure == "disconnected":
+                raise OSError("secret transport detail")
+            return {**arguments, "state": "unknown"} if failure == "unknown" else {**arguments, "run_id": "another", "state": "cancelled"}
+        return original(operation, arguments, timeout_s=timeout_s)
+
+    client.call = call
+    with pytest.raises(AgentConnectionLost, match="agent_timeout_unresolved"):
+        bridge.run(_task(tmp_path), _agent(), native_dispatch=lambda *_args: pytest.fail("native launched"), record_attempt=lambda: None)
+    saved = runstate.load_state(path)
+    assert saved["orchestrator"]["invocations"]["call-1"]["cancel_state"] == "unknown"
+    assert saved["orchestrator"]["ref"]["t3"]["threads"]["call-1"] == {"thread_id": "thread-1", "run_id": "1"}
+    assert saved["stopped"]["kind"] == "BLOCKED"
+    assert not saved["orchestrator"]["invocations"]["call-1"]["result_applied"]
+    assert not any(operation == "read" for operation, _, _ in client.calls)
+    with pytest.raises(OrchestratorUnavailable):
+        bridge.run(_task(tmp_path, "next"), _agent(), native_dispatch=lambda *_args: pytest.fail("native launched"), record_attempt=lambda: None)
+
+
+@pytest.mark.parametrize("state_name", ["ready", "orchestrator_unavailable", "agent_missing", "unknown"])
+def test_t3_reconnect_distinguishes_four_states_without_launching_or_collecting(tmp_path, state_name):
+    client = LogicalClient(tmp_path)
+    backend = T3Orchestrator(client, "http://127.0.0.1/mcp")
+    handle = backend.spawn_agent(_task(tmp_path), _agent())
+    calls_before = len(client.calls)
+    if state_name == "orchestrator_unavailable":
+        backend._availability = Availability(False, "authentication_failed", "Unavailable")
+    else:
+        original = client.call
+
+        def call(operation, arguments, *, timeout_s):
+            response = original(operation, arguments, timeout_s=timeout_s)
+            if state_name == "agent_missing":
+                return {"missing": True}
+            if state_name == "unknown":
+                response["run_id"] = "unrelated"
+            return response
+
+        client.call = call
+    result = backend.resume(handle)
+    assert result.state == state_name
+    assert result.handle == handle
+    assert [operation for operation, _, _ in client.calls[calls_before:]] == ([] if state_name == "orchestrator_unavailable" else ["read"])
+    assert backend._results == {}
+
+
+def test_mixed_t3_and_native_fallback_calls_keep_distinct_invocation_records(tmp_path):
+    state, path, bridge, client = _durable(tmp_path, failure="prestart")
+    attempts = []
+
+    def native(*_args):
+        return 0, "native output"
+
+    assert bridge.run(_task(tmp_path, "fallback"), _agent(), native_dispatch=native, record_attempt=lambda: attempts.append(1)) == (0, "native output")
+    client.failure = None
+    assert bridge.run(_task(tmp_path, "remote"), _agent(), native_dispatch=lambda *_args: pytest.fail("native launched"), record_attempt=lambda: attempts.append(1)) == (0, "STATUS: done")
+    saved = runstate.load_state(path)["orchestrator"]
+    assert saved["name"] == "t3"
+    assert {key: call["orchestrator"] for key, call in saved["invocations"].items()} == {"fallback": "native", "remote": "t3"}
+    assert set(saved["ref"]["t3"]["threads"]) == {"remote"}
+    assert len(attempts) == 3
+    assert [event["invocation_id"] for event in state["history"] if event["action"] == "ORCHESTRATOR_FALLBACK"] == ["fallback"]
+
+
+@pytest.mark.parametrize("review_model", [None, "writer-model", "independent-model"])
+def test_t3_threads_preserve_alias_separation_of_duty_and_explicit_model_requirements(tmp_path, monkeypatch, review_model):
+    state, path, bridge, client = _durable(tmp_path)
+    steps = load_steps({"steps": [
+        {"id": "write", "instruction": "missing-legacy-write"},
+        {"id": "review", "instruction": "parallel-review", "gate": "acceptance-gate",
+         "personas": ["security-reviewer"], "policies": ["independent-verification"],
+         "output_contract": "review-verdict", **({"verifier_model": review_model} if review_model else {})},
+    ]})
+    original_metadata = state["orchestrator"]
+    state.clear()
+    state.update(runstate.new_state("writing", steps, "write"))
+    state["orchestrator"] = original_metadata
+    target = bridge.backend._catalog["claude"]
+    bridge.backend._catalog = {model: {**target, "instance_id": model, "model": model}
+                              for model in ("writer-model", "independent-model")}
+    client.result_updates = {"output": "判定: APPROVE"}
+    monkeypatch.setattr(providers, "telemetry_append", lambda *_args, **_kwargs: None)
+    result = providers.run_loop(state, path, "rig", "claude", {
+        "cwd": str(tmp_path), "model": "writer-model", "_orchestrator_bridge": bridge,
+    }, 10, quiet=True)
+    launches = [arguments for operation, arguments, _ in client.calls if operation == "launch"]
+    if review_model == "independent-model":
+        assert result == "DONE"
+        assert [(call["role"], call["model"]) for call in launches] == [
+            ("generator", "writer-model"), ("verifier", "independent-model")]
+    else:
+        assert result == "BLOCKED"
+        assert [(call["role"], call["model"]) for call in launches] == [("generator", "writer-model")]
+        assert "effective backend" in state["stopped"]["reason"]
+    assert all(call["provider"] == "claude" and call["new_thread"] for call in launches)

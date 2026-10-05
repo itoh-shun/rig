@@ -1,7 +1,9 @@
 """The Native execution seam preserves provider behavior and accounting."""
 import concurrent.futures
+import json
 import subprocess
 import threading
+import urllib.request
 
 import pytest
 
@@ -185,3 +187,58 @@ def test_strict_secure_and_managed_agents_modes_require_native(cli, fallback, su
     else:
         with pytest.raises(OrchestratorUnavailable):
             select_orchestrator({"fallback": fallback}, **options)
+
+
+@pytest.mark.parametrize("provider,role", [("claude", "generator"), ("mock", "generator"), ("cmd", "generator"), ("ollama", "verifier")])
+@pytest.mark.parametrize("timed_out", [False, True])
+def test_native_seam_preserves_real_dispatcher_transport_outputs_and_timeouts(monkeypatch, provider, role, timed_out):
+    transports, events, attempts = [], [], []
+    cfg = {"timeout": 7, "model": "chosen", "provider_cmd": "custom-provider", "_perf": perf.accumulator(),
+           "_progress_observer": events.append, "_orchestrator_bridge": AgentExecutionBridge()}
+
+    def run(argv, **kwargs):
+        transports.append(("process", kwargs["timeout"]))
+        if timed_out:
+            raise subprocess.TimeoutExpired(argv, kwargs["timeout"])
+        return subprocess.CompletedProcess(argv, 1, "output", "failure detail")
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def read(self):
+            return json.dumps({"choices": [{"message": {"content": "output"}}]}).encode()
+
+    def urlopen(request, timeout):
+        transports.append(("http", timeout))
+        if timed_out:
+            raise TimeoutError()
+        assert json.loads(request.data)["messages"][0]["content"] == "prompt"
+        return Response()
+
+    monkeypatch.delenv("RIG_BENCH_MOCK_SCENARIO", raising=False)
+    monkeypatch.setattr(providers.subprocess, "run", run)
+    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(providers, "_record_benchmark_provider_call", lambda *_args: attempts.append(1))
+    expected = (124, "[provider timed out after 7 seconds]") if timed_out else (0, "output") if provider == "ollama" else (1, "output\nfailure detail")
+    assert providers.run_provider(provider, role, "prompt", cfg) == expected
+    assert transports == [("http" if provider == "ollama" else "process", 7)]
+    assert attempts == [1]
+    assert [event["event"] for event in events] == ["operation_started", "operation_finished"]
+    assert events[-1]["outcome"] == ("RETURNED" if expected[0] == 0 else "FAILED")
+    assert cfg["_perf"]["context_calls"] == 1
+
+
+def test_t3_settings_use_nonempty_environment_before_manifest_and_never_manifest_credentials():
+    from rig_workbench.orchestrate.orchestrators.selection import resolve_settings
+    config = parse_orchestrator_config({"t3": {"url": "https://manifest.example/mcp", "project_id": "manifest-project"}})
+    settings = resolve_settings(config, {"RIG_T3_MCP_URL": "https://environment.example/exact-endpoint",
+        "RIG_T3_PROJECT_ID": "environment-project", "RIG_T3_MCP_TOKEN": "private-bearer"})
+    assert (settings.endpoint, settings.project_id, settings.token) == (
+        "https://environment.example/exact-endpoint", "environment-project", "private-bearer")
+    assert "private-bearer" not in repr(settings)
+    empty = resolve_settings(config, {"RIG_T3_MCP_URL": "", "RIG_T3_PROJECT_ID": "", "RIG_T3_MCP_TOKEN": ""})
+    assert (empty.endpoint, empty.project_id, empty.token) == ("https://manifest.example/mcp", "manifest-project", None)

@@ -276,3 +276,62 @@ def test_telemetry_adds_orchestrator_without_changing_backend_or_exposing_refs(m
     runstate.telemetry_append(state, "DONE")
     assert "orchestrator" not in records[-1]
     assert "orchestrator_fallbacks" not in records[-1]
+
+
+def test_handle_snapshot_failure_stops_before_wait_and_reports_known_ids(tmp_path, capsys):
+    state = _state()
+    path = tmp_path / "state.json"
+    snapshots = []
+
+    def save(current, target):
+        snapshots.append(copy.deepcopy(current))
+        if len(snapshots) == 3:
+            raise OSError("private failure detail")
+        runstate.save_state(current, target)
+
+    bridge, backend = _bridge(state, path, save)
+    with pytest.raises(OrchestratorUnavailable, match="orchestrator_snapshot_failed"):
+        bridge.run(_call(), _agent(), native_dispatch=lambda *_args: pytest.fail("native ran"), record_attempt=lambda: None)
+    assert backend.events == ["spawn"]
+    assert runstate.load_state(path)["orchestrator"]["invocations"]["call-1"]["phase"] == "starting"
+    assert state["orchestrator"]["ref"]["t3"]["threads"]["call-1"] == {"thread_id": "thread-call-1", "run_id": "run-call-1"}
+    report = capsys.readouterr().err
+    assert "thread-call-1" in report and "run-call-1" in report
+    assert "private failure detail" not in report
+    with pytest.raises(OrchestratorUnavailable):
+        bridge.run(_call("next"), _agent(), native_dispatch=lambda *_args: pytest.fail("native ran"), record_attempt=lambda: None)
+    assert backend.events == ["spawn"]
+
+
+def test_unresolved_native_fallback_reconnect_is_unknown_without_using_t3(tmp_path):
+    state = _state()
+    path = tmp_path / "state.json"
+    bridge, backend = _bridge(state, path)
+    bridge.run(_call(), _agent(), native_dispatch=lambda *_args: None, record_attempt=lambda: None)
+    state["orchestrator"]["invocations"]["call-1"].update(orchestrator="native", phase="starting")
+    del state["orchestrator"]["ref"]["t3"]["threads"]["call-1"]
+    before = copy.deepcopy(state)
+    backend.resume = lambda *_args: pytest.fail("Native fallback was looked up in T3")
+    report = reconnect_invocations(state, backend)["call-1"]
+    assert report.state == "unknown"
+    assert report.handle.orchestrator == "native"
+    assert report.handle.ref == {}
+    assert state == before
+
+
+@pytest.mark.parametrize("operation", ["fsync", "replace"])
+def test_atomic_snapshot_failure_preserves_previous_state_and_removes_temporary_files(tmp_path, monkeypatch, operation):
+    state = _state()
+    path = tmp_path / "state.json"
+    runstate.save_state(state, path)
+    before = path.read_bytes()
+    state["goal"] = "unsaved update"
+
+    def fail(*_args, **_kwargs):
+        raise OSError("disk unavailable")
+
+    monkeypatch.setattr(os, operation, fail)
+    with pytest.raises(OSError):
+        runstate.save_state(state, path)
+    assert path.read_bytes() == before
+    assert not list(tmp_path.glob(".*.tmp"))

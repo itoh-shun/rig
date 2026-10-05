@@ -169,3 +169,20 @@ def test_auto_native_fallback_preserves_existing_strict_and_secure_constraints(p
     assert stopped.value.code == 2
     output = capsys.readouterr().out
     assert "requires a private goal" in output if mode == "secure" else "deterministic" in output
+
+
+@pytest.mark.parametrize("settings", [{}, {"RIG_T3_MCP_URL": "http://remote.test/mcp", "RIG_T3_MCP_TOKEN": "secret"}])
+def test_native_fallback_diagnosis_does_not_impersonate_a_provider_endpoint_failure(settings):
+    from rig_workbench.bench_providers import _rig_infra_error
+
+    class Output:
+        def __init__(self):
+            self.lines = []
+
+        def err(self, message):
+            self.lines.append(message)
+
+    output = Output()
+    selected = select_orchestrator(env=settings, out=output)
+    assert selected.name == "native"
+    assert _rig_infra_error("completed", "\n".join(output.lines), {"notes": "error handling reviewed"}) is None
