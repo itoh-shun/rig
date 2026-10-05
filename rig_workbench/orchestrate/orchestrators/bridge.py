@@ -8,7 +8,8 @@ import re
 import threading
 import uuid
 
-from .base import AgentSpec, TaskContext
+from .base import (AgentConnectionLost, AgentNotStarted, AgentSpec, AgentStartUnknown,
+                   OrchestratorError, OrchestratorUnavailable, TaskContext)
 from .native import NativeOrchestrator
 
 
@@ -18,15 +19,104 @@ class AgentExecutionBridge:
         self.coordinator = coordinator
         self._serial = threading.Semaphore(1)
         self._consumer_serial = threading.Semaphore(1)
+        self._blocked = False
 
     def run(self, task: TaskContext, agent: AgentSpec, *,
             native_dispatch: Callable[[AgentSpec, float], tuple[int, str]],
             record_attempt: Callable[[], str | None], consumer_id="") -> tuple[int, str]:
         backend = self.backend or NativeOrchestrator(native_dispatch)
-        if "agent.parallel" not in backend.capabilities():
+        if backend.name == "t3" or "agent.parallel" not in backend.capabilities():
             with self._serial:
-                return self._run(backend, task, agent, record_attempt, consumer_id)
+                if self._blocked:
+                    raise OrchestratorUnavailable("orchestrator_blocked")
+                try:
+                    return self._run(backend, task, agent, record_attempt, consumer_id)
+                except AgentNotStarted as error:
+                    metadata = read_metadata(self.coordinator.state) if self.coordinator else {}
+                    if metadata.get("preferred") == "auto" and metadata.get("fallback") == "native" and not self.coordinator.failed:
+                        try:
+                            return self._fallback(task, agent, native_dispatch, record_attempt, error)
+                        except OrchestratorError as fallback_error:
+                            self._block(task, fallback_error)
+                            raise
+                        except Exception:
+                            fallback_error = AgentConnectionLost("native_fallback_result_unknown")
+                            self._block(task, fallback_error)
+                            raise fallback_error from None
+                    self._block(task, error)
+                    raise
+                except OrchestratorError as error:
+                    self._block(task, error)
+                    raise
+                except (Exception, KeyboardInterrupt):
+                    phase = (self.coordinator.state.get("orchestrator", {}).get("invocations", {})
+                             .get(task.invocation_id, {}).get("phase")) if self.coordinator else None
+                    error_type = AgentConnectionLost if phase == "running" else AgentStartUnknown
+                    error = error_type("unexpected_orchestrator_failure")
+                    self._block(task, error)
+                    raise error from None
         return self._run(backend, task, agent, record_attempt, consumer_id)
+
+    def _block(self, task, error):
+        self._blocked = True
+        if self.coordinator is None:
+            return
+        with self.coordinator.lock:
+            state = self.coordinator.state
+            state["stopped"] = {"kind": "BLOCKED", "source": "orchestrator", "at": task.step_id,
+                                "invocation_id": task.invocation_id, "reason": error.reason_code}
+            metadata = state.get("orchestrator", {})
+            call = metadata.get("invocations", {}).get(task.invocation_id)
+            if call is not None:
+                call["phase"] = "unknown"
+                ref = safe_external_ref(error.ref)
+                if ref:
+                    metadata["ref"]["t3"].setdefault("threads", {})[task.invocation_id] = ref
+            if not self.coordinator.failed:
+                self.coordinator.snapshot()
+
+    def _fallback(self, task, agent, native_dispatch, record_attempt, error):
+        coordinator = self.coordinator
+        with coordinator.lock:
+            call = coordinator.state["orchestrator"]["invocations"][task.invocation_id]
+            call.update(orchestrator="native", phase="starting")
+            coordinator.state["history"].append({"action": "ORCHESTRATOR_FALLBACK", "invocation_id": task.invocation_id,
+                                                  "from": "t3", "to": "native", "reason": error.reason_code})
+            coordinator.snapshot()
+        backend = NativeOrchestrator(native_dispatch)
+        journal_error = record_attempt()
+        if journal_error is not None:
+            raise OrchestratorUnavailable("benchmark_counter_failed")
+        handle = backend.spawn_agent(task, agent)
+        try:
+            status = backend.wait(handle, timeout_s=agent.timeout_s)
+        except KeyboardInterrupt:
+            backend.cancel(handle)
+            raise AgentConnectionLost("agent_interrupted", ref=handle.ref) from None
+        result = backend.collect_result(handle)
+        return self._cache_result(task, call, status, result)
+
+    def ensure_quiescent(self):
+        if self._blocked:
+            raise OrchestratorUnavailable("orchestrator_blocked")
+        if self.coordinator and self.backend and self.backend.name == "t3":
+            with self.coordinator.lock:
+                for call in read_metadata(self.coordinator.state)["invocations"].values():
+                    if call["phase"] not in ("completed", "failed", "cancelled"):
+                        raise OrchestratorUnavailable("external_agent_unresolved")
+
+    def _cancel_known(self, backend, handle):
+        from .base import CancelResult
+        try:
+            result = backend.cancel(handle) if "agent.cancel" in backend.capabilities() else CancelResult("unsupported")
+        except Exception:
+            result = CancelResult("unknown")
+        if self.coordinator:
+            with self.coordinator.lock:
+                call = self.coordinator.state["orchestrator"]["invocations"][handle.invocation_id]
+                call["cancel_state"] = result.state
+                self.coordinator.snapshot()
+        return result
 
     def _run(self, backend, task, agent, record_attempt, consumer_id):
         if backend.name == "t3":
@@ -40,7 +130,6 @@ class AgentExecutionBridge:
         return result.returncode, result.output
 
     def _run_durable(self, backend, task, agent, record_attempt, consumer_id):
-        from .base import OrchestratorUnavailable
         coordinator = self.coordinator
         if coordinator is None:
             raise OrchestratorUnavailable("persistent_state_required")
@@ -60,6 +149,8 @@ class AgentExecutionBridge:
         if error is not None:
             raise OrchestratorUnavailable("benchmark_counter_failed")
         handle = backend.spawn_agent(task, agent)
+        if safe_external_ref(handle.ref) != dict(handle.ref):
+            raise AgentStartUnknown("unsafe_external_reference", ref=safe_external_ref(handle.ref))
         with coordinator.lock:
             metadata["ref"]["t3"].setdefault("threads", {})[task.invocation_id] = dict(handle.ref)
             call["phase"] = "running"
@@ -68,18 +159,33 @@ class AgentExecutionBridge:
             except OrchestratorUnavailable:
                 # The known external identity must remain visible if disk persistence fails.
                 from ...ports.local import CONSOLE, OS_ENV
-                ids = {key: value for key, value in handle.ref.items() if key in ("thread_id", "run_id")}
-                detail = json.dumps(ids)
+                ids = safe_external_ref(handle.ref)
                 token = OS_ENV.get("RIG_T3_MCP_TOKEN")
                 if token:
-                    detail = detail.replace(token, "[redacted]")
+                    ids = {key: value.replace(token, "[redacted]") for key, value in ids.items()}
+                detail = json.dumps(ids)
                 CONSOLE.err("orchestrator snapshot failed; external reference: " + detail)
                 raise
-        status = backend.wait(handle, timeout_s=agent.timeout_s)
+        try:
+            status = backend.wait(handle, timeout_s=agent.timeout_s)
+        except KeyboardInterrupt:
+            self._cancel_known(backend, handle)
+            raise AgentConnectionLost("agent_interrupted", ref=handle.ref) from None
+        if status.phase not in ("completed", "failed", "cancelled"):
+            cancellation = self._cancel_known(backend, handle)
+            raise AgentConnectionLost("agent_timeout_unresolved" if cancellation.state not in ("cancelled", "already_terminal")
+                                      else "agent_timeout", ref=handle.ref)
         result = backend.collect_result(handle)
         if result.provider != agent.provider or result.model != agent.model:
-            from .base import AgentConnectionLost
             raise AgentConnectionLost("agent_identity_mismatch")
+        return self._cache_result(task, call, status, result)
+
+    def _cache_result(self, task, call, status, result):
+        coordinator = self.coordinator
+        from ...ports.local import OS_ENV
+        token = OS_ENV.get("RIG_T3_MCP_TOKEN")
+        if token and token in result.output:
+            raise AgentConnectionLost("secret_in_agent_result")
         output_path = pathlib.Path(coordinator.path).absolute().parent / "orchestrator-results" / f"{task.invocation_id}.json"
         from ..secure_fs import atomic_write_bytes
         payload = json.dumps({"returncode": result.returncode, "output": result.output,
@@ -98,10 +204,11 @@ class AgentExecutionBridge:
         """Apply a complete workflow consumer and its exact call markers atomically."""
         if self.backend is None or self.backend.name != "t3":
             return execute(state, cfg)
-        from .base import OrchestratorError, OrchestratorUnavailable
         if self.coordinator is None:
             raise OrchestratorUnavailable("persistent_state_required")
         with self._consumer_serial:
+            if self._blocked:
+                return None
             consumer = f"consumer-{uuid.uuid4().hex}"
             with self.coordinator.lock:
                 working = copy.deepcopy(state)
@@ -109,7 +216,7 @@ class AgentExecutionBridge:
             try:
                 result = execute(working, {**cfg, "_orchestrator_consumer_id": consumer})
             except OrchestratorError:
-                raise
+                return None
             with self.coordinator.lock:
                 metadata = state["orchestrator"]
                 for key, value in working.items():
@@ -130,12 +237,23 @@ class AgentExecutionBridge:
                 except Exception:
                     for invocation in applied:
                         metadata["invocations"][invocation]["result_applied"] = False
-                    raise
+                    self._blocked = True
+                    state["stopped"] = {"kind": "BLOCKED", "source": "orchestrator", "at": step_id,
+                                        "reason": "orchestrator_snapshot_failed"}
+                    return None
                 return result
 
 
 _COORDINATORS = {}
 _COORDINATORS_LOCK = threading.Lock()
+
+
+def safe_external_ref(ref):
+    from ...ports.local import OS_ENV
+    token = OS_ENV.get("RIG_T3_MCP_TOKEN")
+    return {key: value for key, value in ref.items() if key in ("thread_id", "run_id")
+            and isinstance(value, str) and value and all(c.isprintable() for c in value)
+            and (not token or token not in value)}
 
 
 def coordinator_lock(state):

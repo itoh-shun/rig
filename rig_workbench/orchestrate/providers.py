@@ -526,8 +526,12 @@ def run_provider(provider: str, role: str, prompt: str, cfg: dict, persona: str 
             f"call-{uuid.uuid4().hex}", cfg.get("_progress_attempt") or 1,
             str(cfg.get("cwd") or config.INVOCATION_CWD),
         )
+        constraints = {}
+        if cfg.get("reuse_session") or "env" in cfg or cfg.get("provider_cmd"):
+            # No arbitrary env/command/history is projected onto an optional transport.
+            constraints["native_configuration"] = True
         agent = AgentSpec(provider, cfg.get("model"), role, persona, prompt,
-                          cfg.get("timeout", 600), {})
+                          cfg.get("timeout", 600), constraints)
 
         def dispatch(spec, timeout_s):
             # cfg/state stay process-local. Only an invocation's dispatcher closes over them.
@@ -1827,6 +1831,9 @@ def _build_verify_prompt(state: dict, step: dict, product: str, diff: str | None
 
 
 def _run_step_checks(step: dict, st: dict, cfg: dict | None = None) -> None:
+    bridge = (cfg or {}).get("_orchestrator_bridge")
+    if bridge is not None:
+        bridge.ensure_quiescent()
     st["checks"] = []
     cwd = (cfg or {}).get("cwd") or str(config.INVOCATION_CWD)
     for index, cmd in enumerate(step["checks"], 1):

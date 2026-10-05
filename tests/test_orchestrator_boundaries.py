@@ -50,3 +50,23 @@ assert not any(name.startswith(("mcp", "rig_workbench.orchestrate.orchestrators.
 '''
     result = subprocess.run([sys.executable, "-c", source], cwd=ROOT, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
+
+
+def test_fresh_unconfigured_auto_process_does_not_load_optional_modules():
+    source = '''
+import importlib.abc
+import sys
+class BlockOptional(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname.startswith(("mcp", "rig_workbench.orchestrate.orchestrators.t3")):
+            raise AssertionError("optional integration imported: " + fullname)
+sys.meta_path.insert(0, BlockOptional())
+from rig_workbench.orchestrate.orchestrators.selection import select_orchestrator
+from rig_workbench.orchestrate.providers import run_provider
+selection = select_orchestrator(env={}, emit=False)
+assert selection.name == "native"
+assert run_provider("mock", "generator", "work", {})[0] == 0
+assert not any(name.startswith(("mcp", "rig_workbench.orchestrate.orchestrators.t3")) for name in sys.modules)
+'''
+    result = subprocess.run([sys.executable, "-c", source], cwd=ROOT, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr

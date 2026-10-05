@@ -146,3 +146,42 @@ def test_orchestrator_config_rejects_invalid_settings_without_echoing_values(val
     with pytest.raises(ValueError) as refused:
         parse_orchestrator_config(value)
     assert "SECRET" not in str(refused.value)
+
+
+@pytest.mark.parametrize("preferred", [None, "native"])
+def test_unconfigured_auto_and_explicit_native_do_not_load_t3(preferred, monkeypatch, capsys):
+    from rig_workbench.orchestrate.orchestrators import selection
+    monkeypatch.setattr(selection, "_load_t3", lambda *_args: pytest.fail("optional backend loaded"))
+    selected = selection.select_orchestrator(cli=preferred, env={})
+    assert selected.name == "native"
+    assert selected.selected_by == ("default" if preferred is None else "cli")
+    if preferred is None:
+        assert "falling back to native" in capsys.readouterr().err
+
+
+def test_explicit_native_never_probes_configured_t3():
+    from rig_workbench.orchestrate.orchestrators.selection import select_orchestrator
+    selected = select_orchestrator(cli="native", env={"RIG_T3_MCP_URL": "https://example.org/mcp", "RIG_T3_MCP_TOKEN": "secret"},
+                                  factory=lambda *_args: pytest.fail("T3 probed"))
+    assert selected.name == "native"
+
+
+def test_cli_choice_overrides_manifest_and_default_but_invalid_manifest_is_not_hidden():
+    from rig_workbench.orchestrate.orchestrators.selection import select_orchestrator
+    from rig_workbench.orchestrate.orchestrators.base import OrchestratorUnavailable
+    chosen = select_orchestrator({"preferred": "t3", "fallback": "none"}, cli="native", env={})
+    assert (chosen.name, chosen.preferred, chosen.selected_by, chosen.fallback) == ("native", "native", "cli", "none")
+    with pytest.raises(OrchestratorUnavailable):
+        select_orchestrator({"token": "secret"}, cli="native", env={})
+
+
+@pytest.mark.parametrize("cli,fallback,success", [("auto", "native", True), ("auto", "none", False), ("t3", "native", False)])
+def test_strict_secure_and_managed_agents_modes_require_native(cli, fallback, success):
+    from rig_workbench.orchestrate.orchestrators.selection import select_orchestrator
+    from rig_workbench.orchestrate.orchestrators.base import OrchestratorUnavailable
+    options = dict(cli=cli, env={}, native_only_reason="This execution mode requires Native", emit=False)
+    if success:
+        assert select_orchestrator({"fallback": fallback}, **options).name == "native"
+    else:
+        with pytest.raises(OrchestratorUnavailable):
+            select_orchestrator({"fallback": fallback}, **options)
