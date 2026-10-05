@@ -44,6 +44,7 @@ import pathlib
 import stat
 import subprocess
 import concurrent.futures as futures
+import uuid
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -52,6 +53,8 @@ from ..ports.local import CONSOLE, LOCAL_FILES, OS_ENV, SUBPROCESS
 from . import config
 from . import perf
 from .progress import notify
+from .orchestrators.base import AgentSpec, TaskContext
+from .orchestrators.bridge import AgentExecutionBridge
 from .composition import (                                              # noqa: F401 (re-exported)
     JAPANESE_MATERIAL_MAX_UTF8_BYTES, JAPANESE_MATERIAL_PROFILES, PackComposition,
     _build_artifact_review_prompt, _build_prompt, _build_step_contract,
@@ -516,14 +519,36 @@ def run_provider(provider: str, role: str, prompt: str, cfg: dict, persona: str 
     notify(observer, "operation_started", **metadata)
     outcome = "ERROR"
     try:
+        bridge = cfg.get("_orchestrator_bridge") or AgentExecutionBridge()
+        task = TaskContext(
+            str((state or {}).get("run_id") or cfg.get("_progress_run_id") or ""),
+            step_id or cfg.get("_progress_step_id") or "",
+            f"call-{uuid.uuid4().hex}", cfg.get("_progress_attempt") or 1,
+            str(cfg.get("cwd") or config.INVOCATION_CWD),
+        )
+        agent = AgentSpec(provider, cfg.get("model"), role, persona, prompt,
+                          cfg.get("timeout", 600), {})
+
+        def dispatch(spec, timeout_s):
+            # cfg/state stay process-local. Only an invocation's dispatcher closes over them.
+            bound_cfg = cfg if timeout_s == cfg.get("timeout", 600) else {**cfg, "timeout": timeout_s}
+            return _dispatch_provider(spec.provider, spec.role, spec.prompt, bound_cfg,
+                                      spec.persona, state, step_id)
+
+        def execute():
+            return bridge.run(
+                task, agent, native_dispatch=dispatch,
+                record_attempt=lambda: _record_benchmark_provider_call(provider, role, persona, step_id),
+            )
+
         perf.record_context_bytes(cfg, prompt)
         phase = _ROLE_PHASES.get(role)
         if phase is None:
             perf.record_untimed(cfg)
-            result = _dispatch_provider(provider, role, prompt, cfg, persona, state, step_id)
+            result = execute()
         else:
             with perf.timed(cfg, phase):
-                result = _dispatch_provider(provider, role, prompt, cfg, persona, state, step_id)
+                result = execute()
         outcome = "RETURNED" if result[0] == 0 else "FAILED"
         return result
     finally:
@@ -534,9 +559,6 @@ def run_provider(provider: str, role: str, prompt: str, cfg: dict, persona: str 
 def _dispatch_provider(provider: str, role: str, prompt: str, cfg: dict, persona: str = "",
                        state: dict | None = None, step_id: str | None = None, *,
                        env: Env = OS_ENV, proc: ProcessRunner = SUBPROCESS) -> tuple[int, str]:
-    journal_error = _record_benchmark_provider_call(provider, role, persona, step_id)
-    if journal_error is not None:
-        return 126, f"[benchmark call counter error: {journal_error}]"
     if provider == "mock":
         scenario = env.get("RIG_BENCH_MOCK_SCENARIO", "success")
         if scenario == "timeout":
@@ -584,6 +606,7 @@ def _dispatch_provider(provider: str, role: str, prompt: str, cfg: dict, persona
     # `"env" in cfg` rather than `cfg.get("env") or`: an explicitly empty env is a
     # request for an empty env, and falling back to `os.environ` would silently invert it.
     child_env = dict(cfg["env"] if "env" in cfg else env.snapshot(), RIG_PROVIDER_SUBPROCESS="1")
+    child_env.pop("RIG_T3_MCP_TOKEN", None)
     try:
         r = proc.run(argv, input=prompt if provider in ("cmd", "mock") else None,
                      timeout=cfg.get("timeout", 600),
