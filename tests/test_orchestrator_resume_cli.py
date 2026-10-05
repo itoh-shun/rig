@@ -94,14 +94,21 @@ def test_resume_reports_unavailable_namespace_and_unknown_attempts_without_fallb
     runstate.save_state(state, path)
     before = path.read_bytes()
     monkeypatch.setattr(commands, "load_manifest", lambda **_: {})
-    monkeypatch.setattr(commands, "reconnect_recorded", lambda *_a, **_k: (_ for _ in ()).throw(
-        OrchestratorUnavailable("orchestrator_namespace_mismatch")))
+    calls = []
+
+    def reconnect(*args, **kwargs):
+        calls.append(kwargs)
+        return reconnect_recorded(*args, **kwargs, env=Environment(),
+                                  factory=lambda _: pytest.fail("unsafe namespace was probed"))
+
+    monkeypatch.setattr(commands, "reconnect_recorded", reconnect)
     monkeypatch.setattr(commands, "_run_checks", lambda _: pytest.fail("unresolved checks"))
     with pytest.raises(SystemExit) as stopped:
         commands.cmd_resume([str(path)])
     assert stopped.value.code == 2
     assert f"call-1: {expected}" in capsys.readouterr().out
     assert path.read_bytes() == before
+    assert calls == [{"report_errors": True}]
 
 
 def test_applied_t3_invocations_keep_verify_first_resume_without_reconnecting(tmp_path, step_factory, monkeypatch, capsys):
@@ -188,6 +195,23 @@ def test_reconnect_rejects_changed_endpoint_project_and_unavailable_backend(tmp_
     with pytest.raises(OrchestratorUnavailable) as stopped:
         reconnect_recorded(state, env=env, factory=lambda _: pytest.fail("unsafe namespace was probed"))
     assert stopped.value.reason_code == reason
+    assert state == before
+
+
+@pytest.mark.parametrize("threads,expected", [
+    ([], "unknown"),
+    ({"call-1": {"thread_id": []}}, "unknown"),
+    ({"call-1": {"thread_id": "thread-1", "run_id": "run-1"}}, "orchestrator_unavailable"),
+])
+def test_shared_reconnect_failure_reporting_handles_unsafe_or_missing_references(
+    tmp_path, step_factory, threads, expected,
+):
+    state, _ = _state(tmp_path, step_factory)
+    state["orchestrator"]["ref"]["t3"]["threads"] = threads
+    before = copy.deepcopy(state)
+    report = reconnect_recorded(state, env=Environment(), report_errors=True,
+                               factory=lambda _: pytest.fail("unsafe namespace was probed"))["call-1"]
+    assert report.state == expected and report.detail == "orchestrator_namespace_mismatch"
     assert state == before
 
 

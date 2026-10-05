@@ -23,9 +23,10 @@ from .recipes import (_record_trust, auto_orchestrate, git_diff_lines, load_mani
                       load_steps, parse_frontmatter, resolve_effective, resolve_extends,
                       resolve_plan_json, resolve_recipe)
 from .runstate import compute_next, load_state, new_state, save_state, stage_gate_status
-from .orchestrators.base import AgentHandle, AgentSpec, TaskContext, OrchestratorError, ReconnectResult
+from .orchestrators.base import AgentSpec, TaskContext, OrchestratorError
 from .orchestrators.config import MISSING, parse_orchestrator_config
 from .orchestrators.bridge import read_metadata, safe_external_ref, unresolved_invocations
+from .orchestrators.credentials import t3_token
 from .orchestrators.selection import bind_selection, close_backend, reconnect_recorded, select_orchestrator
 from .providers import metering_note
 from .secure_runtime import JAPANESE_WRITING_MODES, JAPANESE_WRITING_RECIPES
@@ -740,27 +741,16 @@ def cmd_resume(args, *, out: Presenter = CONSOLE, clock: Clock = SYSTEM_CLOCK, o
     try:
         metadata = read_metadata(state)
         unresolved = unresolved_invocations(state)
-        if metadata["name"] == "t3" and not unresolved:
-            reconnect_recorded(state, load_manifest(read_only=True, out=out).get("orchestrator", MISSING))
+        reports = reconnect_recorded(
+            state, load_manifest(read_only=True, out=out).get("orchestrator", MISSING), report_errors=True,
+        ) if metadata["name"] == "t3" else {}
         if unresolved:
-            try:
-                reports = reconnect_recorded(state, load_manifest(read_only=True, out=out).get("orchestrator", MISSING))
-            except OrchestratorError as error:
-                refs = metadata["ref"].get("t3", {}).get("threads", {})
-                reports = {}
-                for invocation, call in unresolved.items():
-                    saved = refs.get(invocation, {}) if isinstance(refs, dict) else {}
-                    ref = safe_external_ref(saved) if isinstance(saved, dict) else {}
-                    unknown = call["orchestrator"] == "native" or not (ref.get("thread_id") and ref.get("run_id"))
-                    reports[invocation] = ReconnectResult(
-                        "unknown" if unknown else "orchestrator_unavailable",
-                        AgentHandle(call["orchestrator"], invocation, ref), None, error.reason_code)
             for invocation, report in reports.items():
                 ref = safe_external_ref(report.handle.ref) if report.handle else {}
                 ids = "".join(f" {key}={value}" for key, value in ref.items())
                 status = f" status={report.status.phase}" if report.status else ""
                 message = f"orchestrator reconnect: {invocation}: {report.state}{status}{ids}"
-                token = OS_ENV.get("RIG_T3_MCP_TOKEN")
+                token = t3_token()
                 out.out(message.replace(token, "[redacted]") if token else message)
             raise Refusal(["[BLOCKED] unresolved orchestrator executions; v0.1 resume reports only"], code=2)
     except OrchestratorError as error:

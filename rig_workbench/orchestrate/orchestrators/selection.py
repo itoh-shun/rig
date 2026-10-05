@@ -1,9 +1,9 @@
 """Shared execution selection; optional backends load only after configuration checks."""
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import time
 
 from ...ports.local import CONSOLE, OS_ENV
-from .base import Availability, OrchestratorUnavailable, UnsupportedAgentSpec
+from .base import Availability, OrchestratorError, OrchestratorUnavailable, UnsupportedAgentSpec
 from .bridge import AgentExecutionBridge, SaveCoordinator, selection_record
 from .config import MISSING, loopback_endpoint, parse_orchestrator_config, valid_endpoint
 from .credentials import t3_token
@@ -165,7 +165,19 @@ def bind_selection(selection, state, path, save):
     return AgentExecutionBridge(selection.backend, coordinator=coordinator)
 
 
-def reconnect_recorded(state, value=MISSING, *, env=OS_ENV, factory=None):
+def reconnect_recorded(state, value=MISSING, *, env=OS_ENV, factory=None, report_errors=False):
+    """Share namespace reconciliation and optional read-only failure reports with the CLI."""
+    from .bridge import reconnect_invocations, unresolved_invocations
+    try:
+        return _reconnect_recorded(state, value, env=env, factory=factory)
+    except OrchestratorError as error:
+        if not report_errors or not unresolved_invocations(state):
+            raise
+        return {invocation: replace(report, detail=error.reason_code)
+                for invocation, report in reconnect_invocations(state).items()}
+
+
+def _reconnect_recorded(state, value=MISSING, *, env=OS_ENV, factory=None):
     """Reconnect only the recorded namespace; never select another execution backend."""
     from .bridge import read_metadata, reconnect_invocations, safe_external_ref, unresolved_invocations
     metadata = read_metadata(state)

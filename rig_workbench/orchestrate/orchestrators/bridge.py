@@ -362,8 +362,12 @@ def reconnect_invocations(state, backend=None):
     calls = unresolved_invocations(state)
     reports = {}
     refs = metadata["ref"].get("t3", {}).get("threads", {})
+    if not isinstance(refs, dict):
+        refs = {}
     for invocation, call in calls.items():
-        handle = AgentHandle(call["orchestrator"], invocation, refs.get(invocation, {}))
+        saved = refs.get(invocation, {})
+        ref = safe_external_ref(saved) if isinstance(saved, dict) else {}
+        handle = AgentHandle(call["orchestrator"], invocation, ref)
         if call["orchestrator"] == "native" or not (handle.ref.get("thread_id") and handle.ref.get("run_id")):
             reports[invocation] = ReconnectResult("unknown", handle, None, "Invocation execution is unresolved")
         elif backend is None or not backend.available().ok:
