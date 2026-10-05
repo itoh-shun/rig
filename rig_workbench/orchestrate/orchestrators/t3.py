@@ -14,11 +14,13 @@ _TERMINAL = {"completed", "failed", "cancelled"}
 class T3Orchestrator:
     name = "t3"
 
-    def __init__(self, client, endpoint, project_id=None, *, token=None):
+    def __init__(self, client, endpoint, project_id=None, *, token=None, timeout_s=5,
+                 contract_verified=False):
         self.client = client
         self.endpoint = endpoint
         self.project_id = project_id
         self._token = token
+        self._contract_verified = contract_verified
         self._catalog = {}
         self._specs = {}
         self._targets = {}
@@ -26,15 +28,27 @@ class T3Orchestrator:
         self._deadlines = {}
         self._availability = Availability(False, "unverified_contract", "Live T3 API contract has not been verified")
         if client is not None:
-            self._probe()
+            self._probe(timeout_s)
 
     def _call(self, operation, arguments, timeout_s):
-        return self.client.call(operation, arguments, timeout_s=timeout_s)
+        if hasattr(self.client, "call"):
+            return self.client.call(operation, arguments, timeout_s=timeout_s)
+        from .t3_contract import call_logical
+        return call_logical(self.client, operation, arguments, timeout_s=timeout_s)
 
-    def _probe(self):
-        deadline = time.monotonic() + 5
+    def _probe(self, timeout_s=5):
+        deadline = time.monotonic() + timeout_s
         try:
+            if hasattr(self.client, "list_tools"):
+                from .t3_contract import validate_tools
+                tools = self.client.list_tools(timeout_s=max(0, deadline - time.monotonic()))
+                if validate_tools(tools):
+                    self._availability = Availability(False, "incompatible_schema", "T3 tools are missing or have incompatible schemas")
+                    return
             response = self._call("capabilities", {}, max(0, deadline - time.monotonic()))
+            if not hasattr(self.client, "call") and not self._contract_verified:
+                self._availability = Availability(False, "unverified_contract", "MCP connected; live T3 revision and execution constraints remain unverified")
+                return
             if response.get("contract_version") != "rig-t3-v1" or response.get("same_checkout") is not True:
                 return
             projects = response.get("projects", [])
@@ -153,24 +167,42 @@ class T3Orchestrator:
     def collect_result(self, handle):
         if handle.invocation_id in self._results:
             return self._results[handle.invocation_id]
-        remaining = self._deadlines.get(handle.invocation_id, time.monotonic()) - time.monotonic()
-        if remaining <= 0:
-            raise AgentConnectionLost("agent_timeout", ref=handle.ref)
-        try:
-            response = self._call("read", dict(handle.ref), min(5, remaining))
-        except Exception:
-            raise AgentConnectionLost("read_connection_lost", ref=handle.ref) from None
-        if response.get("phase") not in _TERMINAL:
-            raise ResultNotReady("t3_result_not_ready")
+        deadline = self._deadlines.get(handle.invocation_id, time.monotonic())
         spec = self._specs[handle.invocation_id]
-        if (response.get("thread_id") != handle.ref["thread_id"] or response.get("run_id") != handle.ref["run_id"]
-                or response.get("complete") is not True or response.get("truncated") is not False
-                or response.get("provider") != self._targets[handle.invocation_id]["provider"] or response.get("model") != spec.model
-                or type(response.get("returncode")) is not int or not isinstance(response.get("output"), str)):
-            raise AgentConnectionLost("invalid_or_incomplete_result", ref=handle.ref)
-        if self._token and self._token in response["output"]:
+        cursor, seen, chunks, terminal_identity = None, set(), [], None
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise AgentConnectionLost("agent_timeout", ref=handle.ref)
+            try:
+                arguments = dict(handle.ref)
+                if cursor is not None:
+                    arguments["cursor"] = cursor
+                response = self._call("read", arguments, min(5, remaining))
+            except Exception:
+                raise AgentConnectionLost("read_connection_lost", ref=handle.ref) from None
+            if response.get("phase") not in _TERMINAL:
+                raise ResultNotReady("t3_result_not_ready")
+            page_identity = (response.get("phase"), response.get("returncode"))
+            if terminal_identity is not None and page_identity != terminal_identity:
+                raise AgentConnectionLost("inconsistent_result_pages", ref=handle.ref)
+            terminal_identity = page_identity
+            if (response.get("thread_id") != handle.ref["thread_id"] or response.get("run_id") != handle.ref["run_id"]
+                    or response.get("provider") != self._targets[handle.invocation_id]["provider"]
+                    or response.get("model") != spec.model or type(response.get("returncode")) is not int
+                    or not isinstance(response.get("output"), str) or time.monotonic() > deadline):
+                raise AgentConnectionLost("invalid_or_incomplete_result", ref=handle.ref)
+            chunks.append(response["output"])
+            if response.get("complete") is True and response.get("truncated") is False:
+                break
+            cursor = response.get("next_cursor")
+            if not isinstance(cursor, str) or not cursor or cursor in seen:
+                raise AgentConnectionLost("invalid_or_incomplete_result", ref=handle.ref)
+            seen.add(cursor)
+        output = "".join(chunks)
+        if self._token and self._token in output:
             raise AgentConnectionLost("secret_in_agent_result", ref=handle.ref)
-        result = AgentResult(response["returncode"], response["output"], spec.provider, spec.model)
+        result = AgentResult(response["returncode"], output, spec.provider, spec.model)
         self._results[handle.invocation_id] = result
         return result
 

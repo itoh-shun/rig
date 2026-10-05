@@ -1,9 +1,12 @@
 """Logical fake T3 contracts and failure boundaries; no live server is contacted."""
+import asyncio
 import copy
 import json
 import threading
 import time
 import concurrent.futures
+from contextlib import asynccontextmanager
+from types import SimpleNamespace
 
 import pytest
 
@@ -15,6 +18,7 @@ from rig_workbench.orchestrate.orchestrators.base import (
 from rig_workbench.orchestrate.orchestrators.bridge import AgentExecutionBridge, SaveCoordinator, selection_record
 from rig_workbench.orchestrate.orchestrators.selection import select_orchestrator
 from rig_workbench.orchestrate.orchestrators.t3 import T3Orchestrator
+from rig_workbench.orchestrate.orchestrators.t3_client import McpT3Client, _Sdk
 from rig_workbench.orchestrate.recipes import load_steps
 
 
@@ -374,3 +378,352 @@ def test_capability_probe_cannot_persist_a_bearer_echo_as_project(tmp_path):
                                   factory=lambda settings: T3Orchestrator(client, settings.endpoint), emit=False)
     assert selected.name == "native"
     assert selected.record()["ref"] == {}
+
+
+def _tool_fixture():
+    from pathlib import Path
+    return json.loads((Path(__file__).parent / "fixtures/t3/rig-t3-v1-fake.json").read_text())["tools"]
+
+
+class ToolClient:
+    """Public-tool fake matching the committed schema fixture; not a live API."""
+    def __init__(self, logical, tools=None):
+        self.logical = logical
+        self.tools = _tool_fixture() if tools is None else tools
+        self.tool_calls = []
+        self.closed = False
+
+    def list_tools(self, *, timeout_s):
+        self.tool_calls.append("tools/list")
+        return self.tools
+
+    def call_tool(self, name, arguments, *, timeout_s):
+        self.tool_calls.append(name)
+        operations = {"orchestrator_capabilities": "capabilities", "t3_thread_launch": "launch",
+                      "t3_thread_wait": "wait", "t3_thread_read": "read", "t3_thread_interrupt": "interrupt",
+                      "t3_thread_list": "list"}
+        projected = {key: value for key, value in arguments.items() if key != "timeout_ms"}
+        return self.logical.call(operations[name], projected, timeout_s=timeout_s)
+
+    def close(self):
+        self.closed = True
+
+
+def test_tool_bindings_pin_workspace_provider_run_and_deadline_units(tmp_path):
+    from rig_workbench.orchestrate.orchestrators.t3_contract import T3_TOOL_BINDINGS, validate_tools
+    tools = _tool_fixture()
+    assert validate_tools(tools) == ()
+    wait = T3_TOOL_BINDINGS["wait"].encoder({"thread_id": "t", "run_id": "r"}, 0.25)
+    assert wait == {"thread_id": "t", "run_id": "r", "timeout_ms": 250}
+    logical = LogicalClient(tmp_path)
+    client = ToolClient(logical)
+    backend = T3Orchestrator(client, "http://127.0.0.1/mcp", contract_verified=True)
+    handle = backend.spawn_agent(_task(tmp_path), _agent())
+    assert logical.calls[-1][1]["cwd"] == str(tmp_path)
+    assert logical.calls[-1][1]["provider"] == "claude"
+    backend.wait(handle, timeout_s=5)
+    assert backend.collect_result(handle).output == "STATUS: done"
+    assert client.tool_calls == ["tools/list", "orchestrator_capabilities", "t3_thread_launch", "t3_thread_wait", "t3_thread_read"]
+
+
+@pytest.mark.parametrize("change", ["missing", "required", "type", "unknown_composition"])
+def test_probe_requires_all_tools_and_exact_compatible_fake_schemas(tmp_path, change):
+    tools = _tool_fixture()
+    if change == "missing":
+        del tools["t3_thread_interrupt"]
+    elif change == "required":
+        tools["t3_thread_launch"]["required"].append("credential")
+    elif change == "type":
+        tools["t3_thread_wait"]["properties"]["timeout_ms"]["type"] = "string"
+    else:
+        tools["t3_thread_launch"]["allOf"] = []
+    client = ToolClient(LogicalClient(tmp_path), tools)
+    backend = T3Orchestrator(client, "http://127.0.0.1/mcp", contract_verified=True)
+    assert backend.available().ok is False
+    assert backend.available().reason_code == "incompatible_schema"
+    assert client.tool_calls == ["tools/list"]
+
+
+def test_unverified_live_contract_is_unavailable_even_after_mcp_tools_and_capabilities(tmp_path):
+    client = ToolClient(LogicalClient(tmp_path))
+    backend = T3Orchestrator(client, "http://127.0.0.1/mcp")
+    assert backend.available().ok is False
+    assert backend.available().reason_code == "unverified_contract"
+    assert client.tool_calls == ["tools/list", "orchestrator_capabilities"]
+    assert backend.capabilities() == frozenset()
+
+
+def test_probe_budget_includes_tool_listing_and_read_only_capabilities(tmp_path, monkeypatch):
+    from rig_workbench.orchestrate.orchestrators import t3
+    clock = [0.0]
+    monkeypatch.setattr(t3.time, "monotonic", lambda: clock[0])
+    client = ToolClient(LogicalClient(tmp_path))
+    received = []
+    original_tools, original_call = client.list_tools, client.call_tool
+
+    def listing(*, timeout_s):
+        received.append(timeout_s)
+        clock[0] += 2
+        return original_tools(timeout_s=timeout_s)
+
+    def call(name, arguments, *, timeout_s):
+        received.append(timeout_s)
+        clock[0] += 4
+        return original_call(name, arguments, timeout_s=timeout_s)
+
+    client.list_tools, client.call_tool = listing, call
+    backend = T3Orchestrator(client, "http://127.0.0.1/mcp", contract_verified=True)
+    assert received == [5, 3]
+    assert backend.available().ok is False
+    assert client.tool_calls == ["tools/list", "orchestrator_capabilities"]
+
+
+def test_pagination_collects_complete_output_only_from_the_pinned_run(tmp_path):
+    client = LogicalClient(tmp_path)
+    original = client.call
+
+    def call(operation, arguments, *, timeout_s):
+        response = original(operation, arguments, timeout_s=timeout_s)
+        if operation == "read":
+            if "cursor" not in arguments:
+                response.update(output="part1 ", complete=False, truncated=True, next_cursor="page2")
+            else:
+                response.update(output="part2", complete=True, truncated=False)
+        return response
+
+    client.call = call
+    backend = T3Orchestrator(client, "http://127.0.0.1/mcp")
+    handle = backend.spawn_agent(_task(tmp_path), _agent())
+    backend.wait(handle, timeout_s=5)
+    assert backend.collect_result(handle).output == "part1 part2"
+    assert [arguments["run_id"] for operation, arguments, _ in client.calls if operation == "read"] == ["1", "1"]
+
+
+@pytest.mark.parametrize("second", [{"phase": "failed"}, {"returncode": 1}])
+def test_result_pages_cannot_change_terminal_status_or_returncode(tmp_path, second):
+    client = LogicalClient(tmp_path)
+    original = client.call
+    def call(operation, arguments, *, timeout_s):
+        response = original(operation, arguments, timeout_s=timeout_s)
+        if operation == "read":
+            if "cursor" not in arguments:
+                response.update(output="part1", complete=False, truncated=True, next_cursor="page2")
+            else:
+                response.update(second)
+        return response
+    client.call = call
+    backend = T3Orchestrator(client, "http://127.0.0.1/mcp")
+    handle = backend.spawn_agent(_task(tmp_path), _agent())
+    backend.wait(handle, timeout_s=5)
+    with pytest.raises(AgentConnectionLost, match="inconsistent_result_pages"):
+        backend.collect_result(handle)
+
+
+def test_interrupted_collection_cancels_known_run_and_retains_blocked_reference(tmp_path):
+    state, path, bridge, client = _durable(tmp_path)
+    original = client.call
+    def call(operation, arguments, *, timeout_s):
+        if operation == "read":
+            raise KeyboardInterrupt()
+        return original(operation, arguments, timeout_s=timeout_s)
+    client.call = call
+    with pytest.raises(AgentConnectionLost, match="agent_interrupted"):
+        bridge.run(_task(tmp_path), _agent(), native_dispatch=lambda *_args: pytest.fail("native launched"), record_attempt=lambda: None)
+    saved = runstate.load_state(path)
+    assert saved["stopped"]["kind"] == "BLOCKED"
+    assert saved["orchestrator"]["invocations"]["call-1"]["cancel_state"] == "cancelled"
+    assert saved["orchestrator"]["ref"]["t3"]["threads"]["call-1"]["run_id"] == "1"
+
+
+def _fake_sdk(events, *, initialize_delay=0, operation_delay=0):
+    def event(name):
+        events.append((name, threading.get_ident(), id(asyncio.get_running_loop()), id(asyncio.current_task())))
+
+    class Http:
+        def __init__(self, **kwargs):
+            self.options = kwargs
+            assert kwargs["follow_redirects"] is False
+            assert kwargs["headers"] == {"Authorization": "Bearer secret"}
+
+        async def __aenter__(self):
+            event("http-enter")
+            return self
+
+        async def __aexit__(self, *_args):
+            event("http-exit")
+
+    @asynccontextmanager
+    async def transport(endpoint, *, http_client, terminate_on_close):
+        assert endpoint == "http://127.0.0.1/mcp"
+        assert terminate_on_close is True
+        event("transport-enter")
+        try:
+            yield ("read", "write", lambda: "session")
+        finally:
+            event("transport-exit")
+
+    class Session:
+        def __init__(self, read, write):
+            assert (read, write) == ("read", "write")
+
+        async def __aenter__(self):
+            event("session-enter")
+            return self
+
+        async def __aexit__(self, *_args):
+            event("session-exit")
+
+        async def initialize(self):
+            event("initialize")
+            await asyncio.sleep(initialize_delay)
+
+        async def list_tools(self, *, params=None):
+            event("list-tools")
+            await asyncio.sleep(operation_delay)
+            if params is None:
+                return SimpleNamespace(tools=[SimpleNamespace(name="first", inputSchema={"type": "object"})], nextCursor="page2")
+            assert params.cursor == "page2"
+            return SimpleNamespace(tools=[SimpleNamespace(name="second", inputSchema={"type": "object"})], nextCursor=None)
+
+        async def call_tool(self, name, *, arguments, read_timeout_seconds):
+            event("call-tool")
+            assert read_timeout_seconds.total_seconds() > 0
+            await asyncio.sleep(operation_delay)
+            return SimpleNamespace(isError=False, structuredContent={"name": name, **arguments}, content=[])
+
+    return _Sdk(Session, transport, Http, lambda **kwargs: SimpleNamespace(**kwargs))
+
+
+def test_mcp_client_uses_one_owned_loop_and_same_task_closes_all_contexts():
+    events = []
+    client = McpT3Client("http://127.0.0.1/mcp", "secret", sdk_factory=lambda: _fake_sdk(events))
+    try:
+        assert client.list_tools(timeout_s=1) == {"first": {"type": "object"}, "second": {"type": "object"}}
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+            results = list(pool.map(lambda i: client.call_tool("tool", {"index": i}, timeout_s=1), range(8)))
+        assert [result["index"] for result in results] == list(range(8))
+    finally:
+        client.close()
+        client.close()
+    assert not client._thread.is_alive()
+    assert len({thread for _, thread, _, _ in events}) == 1
+    assert len({loop for _, _, loop, _ in events}) == 1
+    for context in ("http", "transport", "session"):
+        opening = next(item for item in events if item[0] == f"{context}-enter")
+        closing = next(item for item in events if item[0] == f"{context}-exit")
+        assert opening[1:] == closing[1:]
+    assert not any(thread.name == "rig-t3-mcp" for thread in threading.enumerate())
+
+
+def test_initialize_timeout_closes_owned_contexts_and_does_not_leak_thread():
+    events = []
+    started = time.monotonic()
+    with pytest.raises(RuntimeError) as error:
+        McpT3Client("http://127.0.0.1/mcp", "secret", timeout_s=0.02,
+                    sdk_factory=lambda: _fake_sdk(events, initialize_delay=10))
+    assert "secret" not in str(error.value)
+    assert time.monotonic() - started < 0.5
+    # Exhausted probe deadlines return immediately; the owned task finishes cleanup.
+    for thread in threading.enumerate():
+        if thread.name == "rig-t3-mcp":
+            thread.join(timeout=0.2)
+    assert [name for name, *_ in events][-3:] == ["session-exit", "transport-exit", "http-exit"]
+    assert not any(thread.name == "rig-t3-mcp" for thread in threading.enumerate())
+
+
+def test_operation_timeout_cancels_request_but_session_can_close():
+    events = []
+    client = McpT3Client("http://127.0.0.1/mcp", "secret", sdk_factory=lambda: _fake_sdk(events, operation_delay=10))
+    try:
+        with pytest.raises(RuntimeError) as error:
+            client.call_tool("slow", {}, timeout_s=0.02)
+        assert "secret" not in str(error.value)
+    finally:
+        client.close()
+    assert not client._thread.is_alive()
+
+
+def test_sdk_import_is_delayed_until_client_factory_and_missing_sdk_is_reported(monkeypatch):
+    from rig_workbench.orchestrate.orchestrators import t3_client
+    monkeypatch.setattr(t3_client, "_sdk_factory", lambda: (_ for _ in ()).throw(ImportError("secret")))
+    with pytest.raises(RuntimeError, match="mcp_sdk_unavailable") as error:
+        McpT3Client("http://127.0.0.1/mcp", "secret")
+    assert "secret" not in str(error.value)
+
+
+def test_sdk_tool_errors_and_malformed_content_do_not_echo_payloads():
+    for response in (SimpleNamespace(isError=True),
+                     SimpleNamespace(isError=False, structuredContent=None, content=[]),
+                     SimpleNamespace(isError=False, structuredContent=["secret"], content=[])):
+        with pytest.raises(ValueError) as error:
+            McpT3Client._decode_result(response)
+        assert "secret" not in str(error.value)
+
+
+def test_keyboard_interrupt_from_sync_future_reaches_the_agent_bridge(monkeypatch):
+    from rig_workbench.orchestrate.orchestrators import t3_client
+    events = []
+    client = McpT3Client("http://127.0.0.1/mcp", "secret", sdk_factory=lambda: _fake_sdk(events))
+    original_future = concurrent.futures.Future
+    class InterruptedFuture(original_future):
+        def result(self, timeout=None):
+            raise KeyboardInterrupt()
+    try:
+        monkeypatch.setattr(t3_client.concurrent.futures, "Future", InterruptedFuture)
+        with pytest.raises(KeyboardInterrupt):
+            client.call_tool("tool", {}, timeout_s=1)
+    finally:
+        client.close()
+    assert not client._thread.is_alive()
+
+
+def test_cleanup_never_adds_a_new_wait_budget_after_probe_deadline():
+    events = []
+    sdk = _fake_sdk(events)
+    original_session = sdk.session
+    class SlowCloseSession(original_session):
+        async def __aexit__(self, *args):
+            await asyncio.sleep(10)
+            return await super().__aexit__(*args)
+    slow = _Sdk(SlowCloseSession, sdk.transport, sdk.http_client, sdk.pagination)
+    client = McpT3Client("http://127.0.0.1/mcp", "secret", sdk_factory=lambda: slow)
+    started = time.monotonic()
+    client.close(timeout_s=0.02)
+    assert time.monotonic() - started < 0.15
+    client._thread.join(timeout=0.3)
+    assert not client._thread.is_alive()
+
+
+def test_endpoint_guard_removes_bearer_and_refuses_other_endpoint():
+    events, instances = [], []
+    sdk = _fake_sdk(events)
+    def http_client(**kwargs):
+        instance = sdk.http_client(**kwargs)
+        instances.append(instance)
+        return instance
+    wrapped = _Sdk(sdk.session, sdk.transport, http_client, sdk.pagination)
+    client = McpT3Client("http://127.0.0.1/mcp", "secret", sdk_factory=lambda: wrapped)
+    try:
+        request = SimpleNamespace(url="https://another.example/mcp", headers={"Authorization": "Bearer secret"})
+        guard = instances[0].options["event_hooks"]["request"][0]
+        with pytest.raises(RuntimeError, match="mcp_endpoint_changed"):
+            asyncio.run(guard(request))
+        assert "Authorization" not in request.headers
+    finally:
+        client.close()
+
+
+def test_sdk_factory_time_counts_toward_probe_deadline_and_never_opens_after_timeout():
+    events = []
+    def factory():
+        time.sleep(0.08)
+        return _fake_sdk(events)
+    started = time.monotonic()
+    with pytest.raises(RuntimeError):
+        McpT3Client("http://127.0.0.1/mcp", "secret", timeout_s=0.02, sdk_factory=factory)
+    assert time.monotonic() - started < 0.06
+    for thread in threading.enumerate():
+        if thread.name == "rig-t3-mcp":
+            thread.join(timeout=0.2)
+    assert events == []
+    assert not any(thread.name == "rig-t3-mcp" for thread in threading.enumerate())

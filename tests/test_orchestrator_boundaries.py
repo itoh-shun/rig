@@ -70,3 +70,22 @@ assert not any(name.startswith(("mcp", "rig_workbench.orchestrate.orchestrators.
 '''
     result = subprocess.run([sys.executable, "-c", source], cwd=ROOT, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
+
+
+def test_optional_loader_and_sdk_factory_are_the_only_optional_import_sites():
+    for path in MODULES.glob("*.py"):
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.Import, ast.ImportFrom)):
+                continue
+            text = ast.get_source_segment(path.read_text(), node) or ""
+            names = [item.name for item in node.names] if isinstance(node, ast.Import) else [node.module or ""]
+            if any(name == "mcp" or name.startswith("mcp.") for name in names):
+                assert path.name == "t3_client.py", (path, text)
+                factory = next(item for item in tree.body if isinstance(item, ast.FunctionDef) and item.name == "_sdk_factory")
+                assert node in tuple(ast.walk(factory)), text
+            if path.name == "selection.py" and any(name in ("t3", "t3_client", "t3_contract") for name in names):
+                loader = next(item for item in tree.body if isinstance(item, ast.FunctionDef) and item.name == "_load_t3")
+                assert node in tuple(ast.walk(loader)), text
+            if isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("mcp"):
+                assert path.name == "t3_client.py"

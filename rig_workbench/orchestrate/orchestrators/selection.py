@@ -1,5 +1,6 @@
 """Shared execution selection; optional backends load only after configuration checks."""
 from dataclasses import dataclass, field
+import time
 
 from ...ports.local import CONSOLE, OS_ENV
 from .base import Availability, OrchestratorUnavailable, UnsupportedAgentSpec
@@ -43,10 +44,17 @@ def resolve_settings(config, env=OS_ENV):
                       get("RIG_T3_MCP_TOKEN"), get("RIG_T3_PROJECT_ID") or config.project_id)
 
 
-def _load_t3(settings):
-    # This is the sole optional-backend loader. The transport arrives in stage 4.
+def _load_t3(settings, timeout_s=5):
+    # This is the sole optional-backend loader, called only after configuration checks.
     from .t3 import T3Orchestrator
-    return T3Orchestrator(None, settings.endpoint, settings.project_id)
+    from .t3_client import McpT3Client
+    deadline = time.monotonic() + timeout_s
+    client = McpT3Client(settings.endpoint, settings.token, timeout_s=timeout_s)
+    backend = T3Orchestrator(client, settings.endpoint, settings.project_id, token=settings.token,
+                             timeout_s=max(0, deadline - time.monotonic()))
+    if not backend.available().ok:
+        client.close(timeout_s=max(0, deadline - time.monotonic()))
+    return backend
 
 
 def probe_t3(settings, *, factory=None):
@@ -61,8 +69,13 @@ def probe_t3(settings, *, factory=None):
                                             or any(ord(c) < 32 or ord(c) == 127 for c in settings.project_id)):
         return Availability(False, "invalid_project", "T3 project configuration is invalid"), None
     try:
-        backend = (factory or _load_t3)(settings)
+        deadline = time.monotonic() + 5
+        backend = factory(settings) if factory else _load_t3(settings, max(0, deadline - time.monotonic()))
         availability = backend.available()
+        if time.monotonic() > deadline:
+            if getattr(backend, "client", None) is not None:
+                backend.client.close()
+            return Availability(False, "probe_timeout", "T3 compatibility probe exceeded its deadline"), None
         project = getattr(backend, "project_id", settings.project_id)
         if project is not None and settings.token in project:
             return Availability(False, "secret_in_configuration", "T3 project identity contains secret material"), None
@@ -70,6 +83,10 @@ def probe_t3(settings, *, factory=None):
             availability = Availability(availability.ok, availability.reason_code,
                                         availability.detail.replace(settings.token, "[redacted]"))
         return availability, backend
+    except RuntimeError as error:
+        if str(error) == "mcp_sdk_unavailable":
+            return Availability(False, "sdk_unavailable", "Optional MCP SDK is not installed"), None
+        return Availability(False, "probe_failed", "T3 compatibility probe failed"), None
     except Exception:
         return Availability(False, "probe_failed", "T3 compatibility probe failed"), None
 

@@ -175,7 +175,11 @@ class AgentExecutionBridge:
             cancellation = self._cancel_known(backend, handle)
             raise AgentConnectionLost("agent_timeout_unresolved" if cancellation.state not in ("cancelled", "already_terminal")
                                       else "agent_timeout", ref=handle.ref)
-        result = backend.collect_result(handle)
+        try:
+            result = backend.collect_result(handle)
+        except KeyboardInterrupt:
+            self._cancel_known(backend, handle)
+            raise AgentConnectionLost("agent_interrupted", ref=handle.ref) from None
         if result.provider != agent.provider or result.model != agent.model:
             raise AgentConnectionLost("agent_identity_mismatch")
         return self._cache_result(task, call, status, result)
