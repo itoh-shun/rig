@@ -83,7 +83,9 @@ Connection values are resolved as follows:
 
 Obtain these values from the T3 server operator. When the project is omitted, the
 adapter requires an unambiguous project from the server's contract response. The endpoint
-must use HTTPS or loopback HTTP. Credentials in the URL, query strings and fragments are
+must use HTTPS or loopback HTTP. A manifest endpoint must also be loopback; remote
+manifest URLs return `manifest_endpoint_not_loopback` without sending the token. Set
+`RIG_T3_MCP_URL` explicitly to authorize a remote endpoint. Credentials in the URL, query strings and fragments are
 rejected.
 
 For example, a trusted `.claude/rig.md` frontmatter can contain public connection settings:

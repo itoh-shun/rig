@@ -5,7 +5,7 @@ import time
 from ...ports.local import CONSOLE, OS_ENV
 from .base import Availability, OrchestratorUnavailable, UnsupportedAgentSpec
 from .bridge import AgentExecutionBridge, SaveCoordinator, selection_record
-from .config import MISSING, parse_orchestrator_config, valid_endpoint
+from .config import MISSING, loopback_endpoint, parse_orchestrator_config, valid_endpoint
 from .credentials import t3_token
 
 
@@ -14,6 +14,7 @@ class T3Settings:
     endpoint: str | None
     token: str | None = field(repr=False)
     project_id: str | None = None
+    endpoint_source: str = "manifest"
 
 
 @dataclass(frozen=True)
@@ -41,8 +42,10 @@ class Selection:
 def resolve_settings(config, env=OS_ENV):
     def get(key):
         return env.get(key) or None
-    return T3Settings(get("RIG_T3_MCP_URL") or config.url,
-                      t3_token(env), get("RIG_T3_PROJECT_ID") or config.project_id)
+    endpoint = get("RIG_T3_MCP_URL")
+    return T3Settings(endpoint or config.url,
+                      t3_token(env), get("RIG_T3_PROJECT_ID") or config.project_id,
+                      "environment" if endpoint else "manifest")
 
 
 def _load_t3(settings, timeout_s=5):
@@ -81,6 +84,9 @@ def probe_t3(settings, *, factory=None):
         return Availability(False, "unconfigured", "T3 connection URL and bearer token are required"), None
     if not valid_endpoint(settings.endpoint):
         return Availability(False, "invalid_endpoint", "T3 connection URL configuration is invalid"), None
+    if settings.endpoint_source != "environment" and not loopback_endpoint(settings.endpoint):
+        return Availability(False, "manifest_endpoint_not_loopback",
+                            "T3 manifest endpoint must be loopback; set RIG_T3_MCP_URL to authorize a remote endpoint"), None
     if settings.token in settings.endpoint or settings.project_id and settings.token in settings.project_id:
         return Availability(False, "secret_in_configuration", "T3 public connection identifiers contain secret material"), None
     if settings.project_id is not None and (not isinstance(settings.project_id, str)

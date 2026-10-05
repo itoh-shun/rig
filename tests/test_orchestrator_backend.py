@@ -242,3 +242,84 @@ def test_t3_settings_use_nonempty_environment_before_manifest_and_never_manifest
     assert "private-bearer" not in repr(settings)
     empty = resolve_settings(config, {"RIG_T3_MCP_URL": "", "RIG_T3_PROJECT_ID": "", "RIG_T3_MCP_TOKEN": ""})
     assert (empty.endpoint, empty.project_id, empty.token) == ("https://manifest.example/mcp", "manifest-project", None)
+
+
+@pytest.mark.parametrize("endpoint", [
+    "https://remote.example/mcp", "https://localhost.evil.example/mcp",
+    "https://127.0.0.1.evil.example/mcp", "https://[2001:db8::1]/mcp",
+])
+@pytest.mark.parametrize("choice,fallback", [("auto", "native"), ("auto", "none"), ("t3", "native")])
+def test_manifest_remote_endpoint_never_constructs_a_credentialed_client(endpoint, choice, fallback):
+    from rig_workbench.orchestrate.orchestrators.base import OrchestratorUnavailable
+    from rig_workbench.orchestrate.orchestrators.selection import select_orchestrator
+    value = {"fallback": fallback, "t3": {"url": endpoint}}
+    options = dict(cli=choice, env={"RIG_T3_MCP_TOKEN": "private-token"}, emit=False,
+                   factory=lambda _: pytest.fail("manifest URL received bearer credentials"))
+    if choice == "auto" and fallback == "native":
+        selected = select_orchestrator(value, **options)
+        assert selected.name == "native"
+        assert selected.availability.reason_code == "manifest_endpoint_not_loopback"
+    else:
+        with pytest.raises(OrchestratorUnavailable) as refused:
+            select_orchestrator(value, **options)
+        assert refused.value.reason_code == "manifest_endpoint_not_loopback"
+
+
+@pytest.mark.parametrize("endpoint,source", [
+    ("http://localhost/mcp", "manifest"), ("https://127.0.0.1/mcp", "manifest"),
+    ("https://[::1]/mcp", "manifest"), ("https://remote.example/mcp", "environment"),
+])
+def test_only_loopback_manifest_or_explicit_environment_urls_can_receive_token(endpoint, source):
+    from rig_workbench.orchestrate.orchestrators.base import Availability
+    from rig_workbench.orchestrate.orchestrators.selection import select_orchestrator
+    received = []
+
+    class Client:
+        def available(self):
+            return Availability(False, "auth_failed", "Authentication failed")
+
+    env = {"RIG_T3_MCP_TOKEN": "private-token"}
+    if source == "environment":
+        env["RIG_T3_MCP_URL"] = endpoint
+    value = {"t3": {"url": endpoint}}
+    selected = select_orchestrator(value, env=env, emit=False,
+                                   factory=lambda settings: received.append(settings) or Client())
+    assert selected.availability.reason_code == "auth_failed"
+    assert len(received) == 1
+    assert (received[0].endpoint, received[0].token, received[0].endpoint_source) == (endpoint, "private-token", source)
+
+
+@pytest.mark.parametrize("json_output", [False, True])
+@pytest.mark.parametrize("choice", ["auto", "t3"])
+def test_doctor_reports_blocked_manifest_remote_endpoint_without_sending_token(monkeypatch, json_output, choice):
+    from rig_workbench import doctor
+
+    class Environment:
+        def get(self, key, default=None):
+            return {"RIG_T3_MCP_TOKEN": "private-token"}.get(key, default)
+
+        def snapshot(self):
+            return {}
+
+    class Output:
+        def __init__(self):
+            self.lines = []
+
+        def out(self, text=""):
+            self.lines.append(text)
+
+    monkeypatch.setattr(doctor, "load_manifest", lambda **_: {
+        "orchestrator": {"t3": {"url": "https://remote.example/mcp"}},
+    })
+    output = Output()
+    args = ["--orchestrator", choice, *(["--json"] if json_output else [])]
+    assert doctor.main(args, env=Environment(), out=output,
+                       factory=lambda _: pytest.fail("doctor sent credentials to manifest URL")) == 0
+    text = "\n".join(output.lines)
+    assert "private-token" not in text
+    if json_output:
+        data = json.loads(text)
+        assert data["execution_backends"]["t3"]["reason_code"] == "manifest_endpoint_not_loopback"
+        assert data["selection"]["active"] == ("native" if choice == "auto" else None)
+    else:
+        assert "loopback" in text if choice == "auto" else "manifest_endpoint_not_loopback" in text

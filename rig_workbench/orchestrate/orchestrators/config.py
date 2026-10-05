@@ -15,6 +15,15 @@ class OrchestratorConfig:
     project_id: str | None = None
 
 
+def loopback_endpoint(value: str) -> bool:
+    """Only literal loopback addresses or localhost can be trusted from a manifest."""
+    try:
+        host = urlsplit(value).hostname
+        return host == "localhost" or ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
 def valid_endpoint(value: object) -> bool:
     if not isinstance(value, str) or not value or any(c.isspace() or ord(c) < 32 or ord(c) == 127 for c in value):
         return False
