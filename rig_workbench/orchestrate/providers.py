@@ -539,6 +539,7 @@ def run_provider(provider: str, role: str, prompt: str, cfg: dict, persona: str 
             return bridge.run(
                 task, agent, native_dispatch=dispatch,
                 record_attempt=lambda: _record_benchmark_provider_call(provider, role, persona, step_id),
+                consumer_id=cfg.get("_orchestrator_consumer_id", ""),
             )
 
         perf.record_context_bytes(cfg, prompt)
@@ -2639,6 +2640,20 @@ def _execute_artifact_review(
 
 def _execute_step(state: dict, step: dict, st: dict, gen_list: list[str], ver: str,
                   cfg: dict, max_parallel: int, quorum: str, log) -> None:
+    bridge = cfg.get("_orchestrator_bridge")
+    if bridge is not None:
+        return bridge.consume_transition(
+            state, step["id"], cfg,
+            lambda working, bound_cfg: _execute_step_body(
+                working, step, working["step_state"][step["id"]], gen_list, ver,
+                bound_cfg, max_parallel, quorum, log,
+            ),
+        )
+    return _execute_step_body(state, step, st, gen_list, ver, cfg, max_parallel, quorum, log)
+
+
+def _execute_step_body(state: dict, step: dict, st: dict, gen_list: list[str], ver: str,
+                       cfg: dict, max_parallel: int, quorum: str, log) -> None:
     """Execute one step: generate (separate process; judge-panel capable) -> record gate evidence (checks or parallel verification)."""
     cfg = {**cfg, "_progress_step_id": step["id"],
            "_progress_run_id": state.get("run_id"), "_progress_attempt": st.get("retries", 0) + 1}

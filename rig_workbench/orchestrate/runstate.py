@@ -19,6 +19,7 @@ from .govern_surfaces import GOVERN_SURFACES
 from .pack_surfaces import PACK_SURFACES
 from .secure_runtime import JAPANESE_WRITING_MODES, JAPANESE_WRITING_RECIPES
 from .secure_fs import atomic_append_line, atomic_write_bytes, read_bytes as read_secure_bytes
+from .orchestrators.bridge import coordinator_lock, metadata_errors
 
 # Bumped to 2 when the preflight gained the verdict-less-executor rule (#496/#497).
 # A run-state written under version 1 carries a six-field `execution` record, which
@@ -287,6 +288,11 @@ def new_state(
 
 
 def save_state(state: dict, path: pathlib.Path) -> None:
+    with coordinator_lock(state):
+        _save_state_snapshot(state, path)
+
+
+def _save_state_snapshot(state: dict, path: pathlib.Path) -> None:
     """Persist potentially sensitive run state without following filesystem links."""
     if state.get("secure_runtime"):
         persisted = json.loads(json.dumps(state, ensure_ascii=False))
@@ -318,6 +324,10 @@ def save_state(state: dict, path: pathlib.Path) -> None:
     try:
         if created_parent:
             os.fchmod(dir_fd, 0o700)
+        if (state.get("orchestrator") or {}).get("name") == "t3":
+            payload = json.dumps(state, ensure_ascii=False, indent=2).encode("utf-8")
+            _atomic_orchestrator_snapshot(path.name, dir_fd, payload)
+            return
         flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
         fd = os.open(path.name, flags, 0o600, dir_fd=dir_fd)
         try:
@@ -331,6 +341,36 @@ def save_state(state: dict, path: pathlib.Path) -> None:
                 os.close(fd)
     finally:
         os.close(dir_fd)
+
+
+def _atomic_orchestrator_snapshot(name, dir_fd, payload):
+    """T3 snapshots retain normal path policy and refuse unsafe target inodes."""
+    try:
+        existing = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        existing = None
+    if existing is not None and (not stat.S_ISREG(existing.st_mode)
+                                 or existing.st_uid != os.geteuid() or existing.st_nlink != 1):
+        raise OSError("orchestrator state must be a caller-owned regular file with one link")
+    temporary = f".{name}.{secrets.token_hex(12)}.tmp"
+    descriptor = -1
+    try:
+        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                             | getattr(os, "O_NOFOLLOW", 0), 0o600, dir_fd=dir_fd)
+        with os.fdopen(descriptor, "wb") as stream:
+            descriptor = -1
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+        os.fsync(dir_fd)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        try:
+            os.unlink(temporary, dir_fd=dir_fd)
+        except FileNotFoundError:
+            pass
 
 
 def _verdict_summary(v: dict) -> dict:
@@ -434,6 +474,10 @@ def telemetry_append(state: dict, final: str, *, caller_record: dict | None = No
             **({"run_id": state["run_id"]} if state.get("run_id") else {}),
             "recipe": state["recipe"],
             "backend": "orchestrate",
+            **({"orchestrator": state["orchestrator"]["name"],
+                "orchestrator_fallbacks": sum(h.get("action") == "ORCHESTRATOR_FALLBACK"
+                                               for h in state.get("history", []))}
+               if "orchestrator" in state and not metadata_errors(state["orchestrator"]) else {}),
             "invoker": env.get("RIG_INVOKER") or "direct",
             # Who invoked rig, alongside `invoker`, which is what launched the process — the
             # two answer different questions once another agent is the one typing. Absent
@@ -717,6 +761,9 @@ def load_state(path: pathlib.Path) -> dict:
     _validate_secure_material_profile_binding(state)
     _validate_recipe_provenance(state)
     enforce_executable_state(state)
+    if "orchestrator" in state and metadata_errors(state["orchestrator"]):
+        state["stopped"] = {"kind": "BLOCKED", "source": "orchestrator", "at": "—",
+                            "reason": "malformed_orchestrator_state"}
     return state
 
 
