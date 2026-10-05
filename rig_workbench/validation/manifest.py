@@ -26,8 +26,12 @@ import pathlib
 from typing import Protocol, runtime_checkable
 
 from .config import ROOT
-from .rig_surfaces import ASSET_RESOLVER
+from .rig_surfaces import ASSET_RESOLVER, ORCHESTRATOR_CONFIG_VALIDATOR
 from .state import _emit, parse_frontmatter
+
+
+class OrchestratorConfigValidator(Protocol):
+    def __call__(self, value: object) -> tuple[str, ...]: ...
 
 
 @runtime_checkable
@@ -202,7 +206,8 @@ def _knowledge_warnings(fm: dict, project: pathlib.Path) -> tuple[list[str], int
 
 
 def check_manifest(manifest_path: pathlib.Path | None = None, *,
-                   resolver: AssetResolver = ASSET_RESOLVER) -> None:
+                   resolver: AssetResolver = ASSET_RESOLVER,
+                   orchestrator_validator: OrchestratorConfigValidator = ORCHESTRATOR_CONFIG_VALIDATOR) -> None:
     path = manifest_path if manifest_path is not None else ROOT / ".claude" / "rig.md"
     if not path.exists():
         return  # manifest is optional (§4.1) — no PASS/WARN/FAIL when absent
@@ -216,6 +221,9 @@ def check_manifest(manifest_path: pathlib.Path | None = None, *,
 
     violations: list[str] = []
     checked = 0
+    if "orchestrator" in fm:
+        checked += 1
+        violations.extend(orchestrator_validator(fm["orchestrator"]))
 
     if "default_backend" in fm:
         checked += 1

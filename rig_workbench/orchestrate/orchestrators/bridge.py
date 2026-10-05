@@ -305,6 +305,8 @@ def metadata_errors(value):
                 or any(not isinstance(call[k], str) for k in ("step_id", "role", "persona", "provider"))
                 or call["model"] is not None and not isinstance(call["model"], str)):
             return ("orchestrator invocation metadata is invalid",)
+        if call["result_applied"] and call["phase"] not in ("completed", "failed", "cancelled"):
+            return ("orchestrator invocation result is applied before execution is terminal",)
     def contains_secret_key(item):
         if isinstance(item, dict):
             return any(key in ("token", "headers", "cfg", "client") or contains_secret_key(v) for key, v in item.items())

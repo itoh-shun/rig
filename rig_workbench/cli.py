@@ -521,7 +521,7 @@ Usage:
 
 Sub-commands:
   run <recipe> --provider <name> [--goal-stdin] ...
-                                        orchestrate: autonomous run
+                                        orchestrate: autonomous run; --orchestrator auto|native|t3
   plan <recipe> [--json] [--with ...]   orchestrate: show plan
   runs [--limit N] [--recipe R] [--html <path>]
                                         orchestrate: telemetry list / HTML dashboard
@@ -587,6 +587,7 @@ Sub-commands:
                                         artifacts = the config's `paths`; `-` reads stdin.
                                         exit 0=clean or not-configured / 1=errors
                                         / 2=unchecked (config broken, nothing to check)
+  doctor [--json] [--orchestrator auto|native|t3]  read-only execution/workspace diagnosis
   hostcheck [--json] [--strict]         host-side prerequisites rig cannot enforce
                                         (container isolation, permissions.deny, ignored state).
                                         exit 0=ok / 3=missing / 1=missing with --strict
@@ -702,6 +703,11 @@ def main() -> None:
     rest = argv[1:]
     if sub == "version" or sub == "--version":
         print(f"rig-wb {__version__}")
+        return
+    if sub == "doctor":
+        from .doctor import main as doctor_main
+
+        doctor_main(rest)
         return
     if sub == "usage":
         _show_usage(rest)

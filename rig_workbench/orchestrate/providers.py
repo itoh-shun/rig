@@ -527,7 +527,7 @@ def run_provider(provider: str, role: str, prompt: str, cfg: dict, persona: str 
             str(cfg.get("cwd") or config.INVOCATION_CWD),
         )
         constraints = {}
-        if cfg.get("reuse_session") or "env" in cfg or cfg.get("provider_cmd"):
+        if cfg.get("reuse_session") or "env" in cfg or cfg.get("provider_cmd") or cfg.get("base_url"):
             # No arbitrary env/command/history is projected onto an optional transport.
             constraints["native_configuration"] = True
         agent = AgentSpec(provider, cfg.get("model"), role, persona, prompt,

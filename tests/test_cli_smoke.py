@@ -1184,12 +1184,10 @@ def test_help_prints_that_command_and_not_the_whole_manual(command, tmp_path):
     assert "computational orchestrator" not in result.stdout
 
 
-#: The longest usage any one verb has, in lines: `plan`, whose entry carries `--json`,
-#: `--with`, `--diff-lines` and `--diff-git` with a sentence each. Measured through the
-#: process over all twenty-one verbs — the next longest are `otel` at 7 and `queue` and
-#: `run` at 6. The number is here so that a verb answering with a page again fails, which
-#: is what `models`, `probe` and `queue` did at 89 lines apiece.
-LONGEST_USAGE_LINES = 9
+#: The longest usage is now `run` at ten lines after adding --orchestrator;
+#: `plan` remains nine. Keep the ceiling close to the measured public surface so
+#: a verb answering with the whole manual (formerly 89 lines) still fails.
+LONGEST_USAGE_LINES = 10
 
 
 def test_every_registered_verb_has_a_usage_entry_to_slice():
@@ -1224,7 +1222,7 @@ def test_no_registered_verb_answers_help_with_the_whole_manual(command, tmp_path
     printed = len(result.stdout.rstrip().splitlines())
     assert printed <= LONGEST_USAGE_LINES, (
         f"`{command} --help` printed {printed} lines; the longest usage in the docstring "
-        f"is {LONGEST_USAGE_LINES} (`plan`). A number this far out means the slicer missed "
+        f"is {LONGEST_USAGE_LINES} (`run`). A number this far out means the slicer missed "
         "and the fallback answered."
     )
 
@@ -1349,3 +1347,25 @@ def test_run_help_never_starts_a_run_when_called_directly(monkeypatch):
     commands.cmd_run(["any-recipe", "--provider", "mock", "--help"], out=_Capture())
 
     assert printed and printed[0].startswith("usage: run <recipe>")
+
+
+def test_doctor_and_orchestrator_options_are_reachable_and_documented(tmp_path, monkeypatch):
+    for key in ("RIG_T3_MCP_URL", "RIG_T3_MCP_TOKEN", "RIG_T3_PROJECT_ID"):
+        monkeypatch.delenv(key, raising=False)
+    help_result = run_rig_wb(["--help"], tmp_path)
+    assert help_result.returncode == 0
+    assert "doctor [--json] [--orchestrator auto|native|t3]" in help_result.stdout
+    result = run_rig_wb(["doctor", "--json", "--orchestrator", "native"], tmp_path)
+    assert result.returncode == 0
+    assert json.loads(result.stdout)["selection"]["active"] == "native"
+    assert result.stderr == ""
+    result = run_rig_wb(["doctor", "--json", "--invalid"], tmp_path)
+    assert result.returncode == 0 and "invalid_arguments" in json.loads(result.stdout)["errors"]
+    result = run_rig_wb(["run", "--help"], tmp_path)
+    assert result.returncode == 0 and "--orchestrator auto|native|t3" in result.stdout
+    result = run_cli(["resume", "missing-state.json", "--orchestrator", "native"], tmp_path)
+    assert result.returncode == 2 and "cannot change the recorded orchestrator" in result.stderr + result.stdout
+    for args in (["--orchestrator"], ["--orchestrator", "wrong"]):
+        result = run_rig_wb(["run", "feature", "--provider", "mock", *args], tmp_path)
+        assert result.returncode == 2, result.stdout + result.stderr
+        assert not (tmp_path / "run-state.json").exists()

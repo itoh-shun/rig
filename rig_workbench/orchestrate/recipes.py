@@ -184,7 +184,7 @@ _warned_manifests: set[tuple[str, str]] = set()
 
 
 def ensure_manifest_trusted(path: pathlib.Path, require: bool = False, *,
-                            out: Presenter = CONSOLE, env: Env = OS_ENV) -> bool:
+                            out: Presenter = CONSOLE, env: Env = OS_ENV, read_only: bool = False) -> bool:
     """Consent gate for the project manifest `.claude/rig.md`. True = usable.
 
     Mirrors ensure_recipe_trusted (same trust store, hash-recorded consent via
@@ -221,6 +221,9 @@ def ensure_manifest_trusted(path: pathlib.Path, require: bool = False, *,
     digest = hashlib.sha256(resolved.read_bytes()).hexdigest()
     if _load_trust_store().get(str(resolved)) == digest:
         return True
+    if read_only:
+        out.err("[WARN] untrusted project manifest ignored (read-only diagnosis)")
+        return False
     allowed = (_consent_flag_passed("--allow-project-manifest")
                or env.get("RIG_ALLOW_PROJECT_MANIFEST") == "1")
     if allowed:
@@ -553,7 +556,8 @@ def git_diff_lines(*, proc: ProcessRunner = SUBPROCESS) -> int | None:
         return None
 
 
-def load_manifest(require: bool = False) -> dict:
+def load_manifest(require: bool = False, *, read_only: bool = False,
+                  out: Presenter = CONSOLE, env: Env = OS_ENV) -> dict:
     """Read the frontmatter of `<cwd>/.claude/rig.md` (empty dict if absent; §4.1).
 
     The manifest is gated by ensure_manifest_trusted() BEFORE any value is
@@ -567,9 +571,9 @@ def load_manifest(require: bool = False) -> dict:
     if not path.exists():
         return {}
     try:
-        if not ensure_manifest_trusted(path, require=require):
+        if not ensure_manifest_trusted(path, require=require, read_only=read_only, out=out, env=env):
             return {}
-        fm = parse_frontmatter(path)
+        fm = parse_frontmatter(path, out=out)
         return fm if isinstance(fm, dict) else {}
     except SystemExit:
         raise
