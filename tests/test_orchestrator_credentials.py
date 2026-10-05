@@ -84,3 +84,86 @@ assert credentials.t3_token() == 'direct-entry-token'
     inherited = json.loads((tmp_path / "child-env.json").read_text())
     assert "RIG_T3_MCP_TOKEN" not in inherited
     assert "direct-entry-token" not in result.stdout + result.stderr
+
+
+def _fresh(script, env_token="import-token", *args):
+    env = {key: value for key, value in os.environ.items() if not key.startswith("RIG_T3_")}
+    if env_token is not None:
+        env["RIG_T3_MCP_TOKEN"] = env_token
+    return subprocess.run([sys.executable, "-c", script, *args], cwd=ROOT, env=env,
+                          text=True, capture_output=True)
+
+
+@pytest.mark.parametrize("module", ["commands", "providers"])
+def test_importing_removes_token_before_any_function_runs(module):
+    # Library callers that reach cmd_resume (or a provider) through a decorator that reads
+    # state and launches git first must already be clean at import time.
+    script = f'''
+import os
+from rig_workbench.orchestrate import {module}
+assert "RIG_T3_MCP_TOKEN" not in os.environ
+from rig_workbench.orchestrate.orchestrators import credentials
+assert credentials.t3_token() == "import-token"
+'''
+    result = _fresh(script)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_empty_env_value_keeps_holder_and_is_removed(monkeypatch):
+    from rig_workbench.orchestrate.orchestrators import credentials
+    monkeypatch.setattr(credentials, "_token", "A")
+    for blank in ("", "   "):
+        monkeypatch.setenv("RIG_T3_MCP_TOKEN", blank)
+        assert credentials.t3_token() == "A"
+        assert "RIG_T3_MCP_TOKEN" not in os.environ
+    monkeypatch.setattr(credentials, "_token", None)
+    monkeypatch.setenv("RIG_T3_MCP_TOKEN", "")
+    assert credentials.t3_token() is None
+    assert "RIG_T3_MCP_TOKEN" not in os.environ
+
+
+def test_capture_and_read_share_one_lock(monkeypatch):
+    # Deterministic stand-in for a race: if either path runs without the shared lock,
+    # the recorded lock state is False.
+    from rig_workbench.orchestrate.orchestrators import credentials
+    held = []
+    real_pop = os.environ.pop
+
+    def pop(key, *default):
+        held.append(credentials._LOCK.locked())
+        return real_pop(key, *default)
+
+    monkeypatch.setattr(credentials, "_token", None)
+    monkeypatch.setattr(os.environ, "pop", pop)
+    monkeypatch.setenv("RIG_T3_MCP_TOKEN", "x")
+    credentials.t3_token()
+    monkeypatch.setenv("RIG_T3_MCP_TOKEN", "y")
+    credentials.capture_t3_token()
+    assert held == [True, True]
+
+
+def test_concurrent_reads_never_return_a_stale_token(monkeypatch):
+    import threading
+    from rig_workbench.orchestrate.orchestrators import credentials
+    monkeypatch.setattr(credentials, "_token", "A")
+    monkeypatch.delenv("RIG_T3_MCP_TOKEN", raising=False)
+    real_pop = os.environ.pop
+    results = {}
+
+    def slow_pop(key, *default):
+        value = real_pop(key, *default)
+        if value == "B":
+            # Thread 1 has taken B but not yet published it; thread 2 runs meanwhile.
+            threading.Event().wait(0.1)
+        return value
+
+    monkeypatch.setattr(os.environ, "pop", slow_pop)
+    os.environ["RIG_T3_MCP_TOKEN"] = "B"
+    first = threading.Thread(target=lambda: results.setdefault("first", credentials.t3_token()))
+    second = threading.Thread(target=lambda: results.setdefault("second", credentials.t3_token()))
+    first.start()
+    threading.Event().wait(0.03)
+    second.start()
+    first.join()
+    second.join()
+    assert results == {"first": "B", "second": "B"}
