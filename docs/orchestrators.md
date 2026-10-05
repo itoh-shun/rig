@@ -85,8 +85,8 @@ Obtain these values from the T3 server operator. When the project is omitted, th
 adapter requires an unambiguous project from the server's contract response. The endpoint
 must use HTTPS or loopback HTTP. A manifest endpoint must also be loopback; remote
 manifest URLs return `manifest_endpoint_not_loopback` without sending the token. Set
-`RIG_T3_MCP_URL` explicitly to authorize a remote endpoint. Credentials in the URL, query strings and fragments are
-rejected.
+`RIG_T3_MCP_URL` explicitly to authorize a remote endpoint. Credentials in the URL, query
+strings and fragments are rejected.
 
 For example, a trusted `.claude/rig.md` frontmatter can contain public connection settings:
 
@@ -101,8 +101,13 @@ orchestrator:
 
 The endpoint and project above are examples, not a verified T3 deployment. Supply the
 token through the process environment using your credential manager; do not put it in the
-manifest or run state. Rig rereads credentials on reconnect. Tokens are excluded from
-state, telemetry, diagnostics and provider subprocess environments.
+manifest or run state. At startup (the CLI entry, and when the orchestrate commands and
+providers modules are imported) Rig removes `RIG_T3_MCP_TOKEN` from its own process
+environment and keeps the value in process memory, so recipe `checks:` scripts and every
+other child process cannot see it. An empty or whitespace-only value counts as unset.
+Reconnecting uses the value held in memory; a value that appears in the environment later
+is also moved out and replaces it. Tokens are excluded from state, telemetry, diagnostics
+and provider subprocess environments.
 
 The sole tool/schema binding table is
 [`rig_workbench/orchestrate/orchestrators/t3_contract.py`](../rig_workbench/orchestrate/orchestrators/t3_contract.py).
@@ -201,7 +206,9 @@ In v0.1 resume only reports reconnect state and known external IDs:
 | `unknown` | Launch or result remains uncertain, including process-local Native fallback handles |
 
 Any unresolved invocation in a T3 run stops resume with exit 2, even if its external agent
-reports completion. Resume does not collect or apply that result, start a new thread,
+reports completion. Only a call that may have started is unresolved (an unknown result, or
+a connection lost after launch). A call confirmed not to have started is recorded as
+`not_started` and does not stop resume. Resume does not collect or apply that result, start a new thread,
 retry through Native, or run workspace checks. With no unresolved invocation, the existing
 verify-first resume checks the workspace and reports the next action. Automatic result
 recovery is a follow-up; editing `orchestrator.name` in state is not a recovery procedure.

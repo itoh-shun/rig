@@ -12,6 +12,8 @@
   Auto fallback retries only calls confirmed not to have started; explicit T3 and failures
   after launch never silently downgrade. T3 calls are serialized, and resume only
   reconnects and reports unresolved calls, stopping with exit 2 without applying results.
+  `RIG_T3_MCP_TOKEN` is removed from Rig's process environment at startup, so recipe
+  `checks:` scripts and other child processes no longer see it.
   **Limitation:** the contract is verified with a fake client; a real T3 server is
   unverified. The production MCP client has `contract_verified=False`, and its probe
   returns `unverified_contract` even after a compatible connection. T3 cannot be selected
