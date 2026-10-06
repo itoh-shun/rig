@@ -18,12 +18,14 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import json
+import pathlib
 import sys
 
 from .. import console, context_meter
 from ..ports import Presenter
 from ..ports.local import CONSOLE
-from . import wakeups
+from . import autonomy, wakeups
 from .state import die, reject, repo_root
 
 
@@ -151,3 +153,50 @@ def cmd_wakeups(args: argparse.Namespace, out: Presenter = CONSOLE) -> None:
         # judged. Same meaning `wb gate` and `wb contract` give 3.
         console.write_line(f"[NOT JUDGED] {ratchet['message']}", stream=sys.stderr)
         sys.exit(wakeups.EXIT_NOT_JUDGED)
+
+
+def cmd_autonomy(args: argparse.Namespace, out: Presenter = CONSOLE) -> None:
+    """`wb autonomy`: record an --autonomous run's judgements and brake it.
+
+    `check` exits 1 when the run must stop — the one answer a caller branches on — and 2
+    when it cannot be answered (bad usage, no journal). Every other action exits 0 once it
+    has recorded or rendered.
+    """
+    try:
+        run = autonomy.check_run_id(args.run)
+        root = repo_root()
+        if args.action == "start":
+            limits = {"max_steps": args.max_steps, "max_minutes": args.max_minutes,
+                      "max_recoveries": args.max_recoveries,
+                      "max_recoveries_per_step": args.max_recoveries_per_step}
+            record = autonomy.start(root, run, limits, args.summary)
+            out.out(f"autonomy: run '{run}' started — limits {json.dumps(record['limits'])}")
+            return
+        if args.action == "log":
+            autonomy.log(root, run, args.kind, args.summary, step=args.step,
+                         reason=args.reason, ref=args.ref, cwd=pathlib.Path.cwd())
+            out.out(f"autonomy: {args.kind} recorded for run '{run}'")
+            return
+        if args.action == "stop":
+            path = autonomy.set_stop(root, run, args.summary)
+            out.out(f"autonomy: kill switch set for run '{run}' ({path.relative_to(root)})")
+            return
+        records = autonomy.read_journal(root, run)
+        if not autonomy.start_record(records):
+            raise autonomy.UsageError(
+                f"run '{run}' has no journal; start it with `wb autonomy start --run {run}`")
+    except autonomy.UsageError as exc:
+        die(str(exc))
+    verdict = autonomy.evaluate(root, run, records)
+    if args.action == "report":
+        out.out(json.dumps({**verdict, "records": records}, ensure_ascii=False, indent=2)
+                if args.json else autonomy.render_report(run, records, verdict))
+        return
+    if args.json:
+        out.out(json.dumps(verdict, ensure_ascii=False, indent=2))
+    elif verdict["continue"]:
+        u = verdict["usage"]
+        out.out(f"[CONTINUE] steps {u['steps']} · minutes {u['minutes']} · "
+                f"recoveries {u['recoveries']}")
+    if not verdict["continue"]:
+        reject("must stop: " + "; ".join(verdict["reasons"]))

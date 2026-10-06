@@ -57,7 +57,7 @@ TOP_LEVEL_SUBCOMMANDS = frozenset({
 
 # `rig-wb wb --help` — the workbench: run-state, worktrees, sensors, the gate.
 WB_SUBCOMMANDS = frozenset({
-    "accept", "anomaly-trigger", "assurance-derive", "assurance-target", "audit",
+    "accept", "anomaly-trigger", "assurance-derive", "assurance-target", "audit", "autonomy",
     "board", "budget-plan", "change-graph", "cockpit", "compose-options",
     "confidence", "context", "contract", "dev-loop", "diff", "digest", "discard",
     "drill-corpus", "effectiveness", "expected-outcome", "gate", "gates", "gc",

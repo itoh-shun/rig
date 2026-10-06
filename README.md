@@ -967,7 +967,7 @@ cd /path/to/rig && claude --plugin-dir .   # reload after edits: /reload-plugins
 | `--design` / `--review` / `--tdd` | force the step ON (default is size-aware) |
 | `--issue <id>` | feed an existing issue into intake |
 | `--plan` | compose and present the harness, then stop (dry-run) |
-| `--autonomous` | skip step gates (the capture gate and acceptance-gate are never lifted) |
+| `--autonomous` | skip step gates (the capture gate and acceptance-gate are never lifted). Runs under `patterns/autonomous-run`: every skipped judgement is journaled with `rig-wb wb autonomy`, `check` brakes on a kill switch (`.rig/STOP`) or a ceiling, a stuck step tries a recovery ladder before escalating, and the run ends with a hand-over report |
 | `--workflow` | use the ultracode Workflow execution backend (opt-in; heavy multi-stage only) |
 | `--save-recipe <name>` | save the composed harness as a recipe (`--user` for the user tier) |
 | `--capture` | persist run learnings to the knowledge layer without the confirm dialog |

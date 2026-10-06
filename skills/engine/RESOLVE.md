@@ -77,7 +77,7 @@ RESOLVE で確定した step リスト（extends 適用後・flag override 後�
 
 ### 4.5 autonomy
 
-`--autonomous` で step ゲート OFF。指定が無ければ各 step 後に確認する step ゲート ON。
+`--autonomous` で step ゲート OFF。指定が無ければ各 step 後に確認する step ゲート ON。step ゲート OFF の RUN は `patterns/autonomous-run` に従う（journal・停止スイッチと上限・自己回復ラダー・完了レポート）。
 
 > **`--autonomous` が外すのは「step ゲート（各 step 後の確認ダイアログ）」だけ。** `acceptance-gate`（受け入れ基準を満たすまで最大 K 回収束し、K 超で user エスカレーションする品質ループ）は `--autonomous` でも変わらず動く。capture ゲートと同様に、品質保証の核は `--autonomous` で解除されない。recipe の `autonomy: autonomous`（§3.5）の「ゲートなし」も step ゲートを指す。
 

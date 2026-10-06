@@ -988,7 +988,7 @@ cd /path/to/rig && claude --plugin-dir .   # 編集後の再読み込み: /reloa
 | `--design` / `--review` / `--tdd` | 該当 step を強制 ON（既定は size-aware） |
 | `--issue <id>` | 既存 Issue を intake 入力に |
 | `--plan` | 合成ハーネスを提示して停止（ドライラン） |
-| `--autonomous` | step ゲートを省略（capture ゲート・acceptance-gate は解除されない） |
+| `--autonomous` | step ゲートを省略（capture ゲート・acceptance-gate は解除されない）。`patterns/autonomous-run` に従って走る：省いた判断を `rig-wb wb autonomy` で journal に残し、停止スイッチ（`.rig/STOP`）や上限に当たれば `check` が止め、詰まったら自己回復ラダーを試してからエスカレーションし、最後に手渡しレポートを出す |
 | `--workflow` | ultracode Workflow バックエンドを使用（opt-in・重い多段時のみ） |
 | `--save-recipe <name>` | 合成結果を recipe として保存 |
 | `--capture` | 学びを確認ダイアログなしで知識層へ |

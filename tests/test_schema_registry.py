@@ -83,6 +83,7 @@ FROZEN_SCHEMA_IDS = {
     "rig.assurance-graph/v1",
     "rig.assurance-receipt/v1",
     "rig.assurance-target/v1",
+    "rig.autonomy-journal/v1",
     "rig.byoo-import/v1",
     "rig.change-graph-assessment/v1",
     "rig.change-graph/v1",

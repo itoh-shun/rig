@@ -52,7 +52,7 @@ goal-loop は新しい制御を発明しない。**既存の2パターンを組�
 ## autonomy
 
 - 既定 `interactive` — 各周回後に gap と次手を提示して確認。影響あるアクションは委譲先 step ゲートで確認。
-- `--autonomous` — `autonomous-loop` で自走（周回ゲート省略）。ただし **capture ゲートは解除されない**。
+- `--autonomous` — `autonomous-loop` で自走（周回ゲート省略）。ただし **capture ゲートは解除されない**。周回の記録・停止スイッチと上限・自己回復・完了レポートは `patterns/autonomous-run`（`rig-wb wb autonomy`）。
 
 ## GitHub 連動ゴール（任意）
 

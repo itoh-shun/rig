@@ -11,6 +11,7 @@ cat <<'EOF'
 - the active recipe's step list — which steps are done, which remain, and the current step id;
 - the acceptance contract in force (acceptance-gate criteria / the goal-loop goal) and any unresolved REJECT or merge-blocking conditions;
 - the user's goal/intent, key decisions made, and any stuck-guard counters (no-progress rounds);
+- in autonomous mode: the autonomy run id (journal `.rig/autonomy/<run>.jsonl`) — after compaction, run `rig-wb wb autonomy check --run <run>` before the next step and keep logging to the same run (patterns/autonomous-run);
 - the context-minimal discipline: real work is delegated to subagents; the parent only dispatches, aggregates structured reports, and makes gate decisions.
 After compaction, on the first work turn, re-emit the rig run-status header and re-anchor to the current step BEFORE doing any work. Do not silently switch to direct, un-gated work (see SKILL.md §6 run-continuity).
 

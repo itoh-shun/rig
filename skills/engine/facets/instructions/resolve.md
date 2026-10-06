@@ -104,7 +104,7 @@ recipe の frontmatter に `extends: <parent-name>` が宣言されている場�
 | flag | recipe キー | 効果 | `--plan`／完了レポート修飾子 | `--list` badge |
 |---|---|---|---|---|
 | `--tdd` | `tdd` | implement step の**動作を変える**：`risk-based-testing` のリスク評価をスキップし常に TDD（red-green-refactor）＝`tdd` スキルへの委譲を強制する注入を COMPOSE で implement subagent prompt に追加する（`facets/instructions/implement.md` 本体は不変）。これが無いと `--tdd` を付けても implement が通常のリスク評価で直接実装を選ぶ（#56） | `\| tdd: on` | `· tdd` |
-| `--autonomous` | `autonomy: autonomous` | step ゲート（各 step 後の確認ダイアログ）を OFF。acceptance-gate の品質収束ループは維持（§4.5）。`--save-recipe` は指定の有無にかかわらず `autonomy` を常に明示保存する（ベース recipe の値を引き継がない・#33/#181） | `\| autonomous: on` | `· autonomous` |
+| `--autonomous` | `autonomy: autonomous` | step ゲート（各 step 後の確認ダイアログ）を OFF。acceptance-gate の品質収束ループは維持（§4.5）。代わりに `patterns/autonomous-run`（journal・`check`・自己回復ラダー・完了レポート）を RUN に組み込む。`--save-recipe` は指定の有無にかかわらず `autonomy` を常に明示保存する（ベース recipe の値を引き継がない・#33/#181） | `\| autonomous: on` | `· autonomous` |
 | `--workflow` | `backend: workflow` | RUN を Workflow バックエンドで実行（§6 実行バックエンド表）。manifest `default_backend: workflow` はプロジェクト全体の既定として同様に機能し、recipe キー・フラグで上書きできる（#52） | ヘッダ `backend:` フィールドで表示 | `· workflow` |
 | `--no-default-personas` | `no_default_personas` | manifest `default_personas` の自動投入を抑止する（最終 reviewer 集合から `★`＝manifest 由来 persona を除外・§5）。意図的に外した reviewer が再利用時に静かに復活しない（#70） | `\| no-defaults: on` | `· no-defaults` |
 | `--orchestrate` | `orchestrate` | 計算的オーケストレーション ON＝step 遷移・ゲート判定・リトライ・停止条件・状態保持を `scripts/orchestrate.py` に強制させる（`patterns/computational-orchestration`）（#129） | `\| orchestrate: on` | `· orchestrate` |

@@ -33,7 +33,7 @@ ScheduleWakeup({
 
 ### `<<autonomous-loop-dynamic>>` の正準構造
 
-次ターンへ渡すプロンプトは**必ず次の5要素を含む**。これは §6② 再アンカーの「ループ版」であり、§6④ 圧縮跨ぎの補強（PreCompact フックと2経路で状態保全）でもある。要素が欠けると、圧縮後に goal / 受け入れ基準 / 現 gap を失って再出発する。
+次ターンへ渡すプロンプトは**必ず次の6要素を含む**。これは §6② 再アンカーの「ループ版」であり、§6④ 圧縮跨ぎの補強（PreCompact フックと2経路で状態保全）でもある。要素が欠けると、圧縮後に goal / 受け入れ基準 / 現 gap を失って再出発する。
 
 1. **run-status 行**（§6① と同形式）
    `▸ rig | recipe: <名> | step: <id> (<n>/<total>) | gate: <状態> | backend: <名> | mode: autonomous`
@@ -41,6 +41,7 @@ ScheduleWakeup({
 3. **直近 gap** — 最後の現状把握（②/⑤）で判定した未達の1〜3行要約。次イテレーションが再調査せず即参照できる。
 4. **次手**（next action）— ③で決めた次の `/rig:*` 起動文字列と根拠1行。
 5. **周回カウント** — 現在の周回番号（例: round 3）と**連続無進捗カウント**（詰まりガード §6 連動）。
+6. **autonomy run id** — `patterns/autonomous-run` の journal 名（`.rig/autonomy/<run>.jsonl`）。起床後の `check`・`log`・`report` はこの id で呼ぶ。
 
 周回カウントを毎ターン引き継ぐことで、圧縮を跨いでも「連続無進捗2回でエスカレーション」の判定が正確に維持される。`--plan`・stuck-guard・capture と同じく、これも rig の正準出力フォーマットの一つ。
 
@@ -48,10 +49,12 @@ ScheduleWakeup({
 
 1. `--autonomous` が有効であることを確認する。有効でない場合はこのパターンを使わない。
 2. 現在のキャッシュ状態（ウォーム / コールド）を判断し、適切な `delaySeconds` を選択する（270 または 1200+）。
-3. 各ターンの最後に `ScheduleWakeup` を呼び出して次の起動を予約する。プロンプトは `<<autonomous-loop-dynamic>>` を使う。
-4. ループを終了する条件（タスク完了・エラー・ユーザーによる中断）を必ず定義し、条件を満たした場合は `ScheduleWakeup` を呼ばずに終了する。
+3. 各ターンの最後に `rig-wb wb autonomy check --run <run>` を呼ぶ。exit 0 のときだけ `ScheduleWakeup` で次の起動を予約する。プロンプトは `<<autonomous-loop-dynamic>>` を使う。exit 1（停止スイッチ・hard stop・上限到達）なら予約せず、`patterns/autonomous-run` §7 の停止手順へ進む。
+4. 起床直後にも `check` を呼ぶ。寝ている間に `.rig/STOP` が置かれていれば、何もせずに停止手順へ進む。
+5. ループを終了する条件（タスク完了・エラー・ユーザーによる中断・`check` の exit 1）を必ず定義し、条件を満たした場合は `ScheduleWakeup` を呼ばずに終了する。終了時は `report` を手渡す。
 
 ## 関連ブリック
 
+- `pattern: autonomous-run` — 自走 RUN の journal・停止スイッチと上限・自己回復ラダー・完了レポート（このループの土台）
 - `pattern: monitor` — 単発の完了通知を受け取るパターン（ループではなく1回限りの待機）
 - `pattern: serial` — 依存ステップを順番に実行するパターン

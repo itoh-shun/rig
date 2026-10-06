@@ -56,7 +56,7 @@ from .config import (TASK_TYPES, VALID_CRITERION_STATUS, VALID_STEP_STATUS,
                      VALID_VERDICT)
 from .confidence import cmd_confidence
 from ..assurance.compose_options import cmd_compose_options, non_negative_diff
-from .context_report import cmd_context, cmd_wakeups
+from .context_report import cmd_autonomy, cmd_context, cmd_wakeups
 from .destructive import cmd_scan_destructive
 from .detection_corpus import cmd_drill_corpus
 from .digest import cmd_digest
@@ -640,6 +640,34 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--tighten", action="store_true",
                    help="with --ratchet: lower the ceiling to the measured value; never raises it")
     p.set_defaults(func=cmd_wakeups)
+
+    p = sub.add_parser("autonomy", help="journal and brakes for an --autonomous run: record "
+                       "skipped gates, decisions, assumptions and checkpoints; check the kill "
+                       "switch and ceilings; render the hand-over report")
+    p.add_argument("action", choices=("start", "log", "check", "stop", "report"),
+                   help="start a journal, log an entry, check whether to continue, set the "
+                        "kill switch, or render the report")
+    p.add_argument("--run", required=True, help="the autonomous run id (names the journal "
+                   ".rig/autonomy/<run>.jsonl)")
+    p.add_argument("--kind", help="with log: gate-skipped, decision, assumption, "
+                   "deferred-question, recovery, checkpoint, step-done, hard-stop or finish")
+    p.add_argument("--step", help="with log: the step id this entry is about")
+    p.add_argument("--summary", help="one line, at most 500 characters")
+    p.add_argument("--reason", help="with log: why; a hard-stop needs destructive-operation, "
+                   "ambiguous-requirement, policy-requires-approval, budget-exhausted or "
+                   "capability-missing")
+    p.add_argument("--ref", help="with log --kind checkpoint: the commit to roll back to "
+                   "(default: HEAD where the command runs)")
+    p.add_argument("--max-steps", type=int, help="with start: steps before the run must stop (30)")
+    p.add_argument("--max-minutes", type=int,
+                   help="with start: minutes before the run must stop (240)")
+    p.add_argument("--max-recoveries", type=int,
+                   help="with start: recoveries in total before the run must stop (6)")
+    p.add_argument("--max-recoveries-per-step", type=int,
+                   help="with start: recoveries on one step before the run must stop (2)")
+    p.add_argument("--json", action="store_true",
+                   help="with check / report: machine-readable output (rig.autonomy-journal/v1)")
+    p.set_defaults(func=cmd_autonomy)
 
     p = sub.add_parser("audit", help="list the audit log of `accept --force` etc. (`.rig/audit.jsonl`)")
     p.add_argument("--limit", type=int, help="show only the latest N entries")

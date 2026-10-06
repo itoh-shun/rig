@@ -47,12 +47,12 @@ gap を**最も縮める最小の1手**を決める。「どの `/rig:*` コマ�
 |---|---|
 | **全基準を充足** | 完了。何を達成したか（満たした基準）を**短く**報告して終了。**過剰実装しない**（基準を満たしたらそれ以上回さない）。 |
 | **未達 & 進捗あり**（gap が縮んだ） | ②へ戻り次周回。既定（gated）は次周回前に gap と次手を提示して確認。`--autonomous` は `patterns/autonomous-loop` の `ScheduleWakeup` で次周回を予約（delaySeconds はキャッシュ温冷で 270 / 1200+）。 |
-| **未達 & 進捗ゼロが2回 / K 超** | **停止して user にエスカレーション**（SKILL §6 詰まりガード／acceptance-gate の K 規約に連動）。何が詰まっているか・選択肢を提示する。**無限ループ禁止**。 |
+| **未達 & 進捗ゼロが2回 / K 超** | **停止して user にエスカレーション**（SKILL §6 詰まりガード／acceptance-gate の K 規約に連動）。何が詰まっているか・選択肢を提示する。**無限ループ禁止**。`--autonomous` では、先に `patterns/autonomous-run` §6 の自己回復ラダー（再診断 → 縮小と再計画）を試し、`check` がラダー切れを返してからエスカレーションする。 |
 
 ## autonomy（2モード）
 
 - **gated（既定）** — 各周回後に gap と次手を提示し、確認してから次へ。影響あるアクション（書込/push/merge）は委譲先の step ゲートで確認される。
-- **autonomous（`--autonomous`）** — 周回ゲートを省き `autonomous-loop` で自走する。ただし **capture ゲートは解除されない**（学びの知識層書き込みは常に承認が要る）。
+- **autonomous（`--autonomous`）** — 周回ゲートを省き `autonomous-loop` で自走する。ただし **capture ゲートは解除されない**（学びの知識層書き込みは常に承認が要る）。周回は `patterns/autonomous-run` に従う：① の直後に `rig-wb wb autonomy start`（受け入れ基準をゴール1行に要約）、各周回の終わりに `log --kind step-done --step round-<n>` と `check`、③で可逆な選択をしたら `decision`／`assumption` を記録、人の好みに依る点は `deferred-question` に回す。達成時は `finish` を記録して `report` を手渡す。
 
 ## 原則
 

@@ -4,7 +4,7 @@
 # to parse stdin. It can only re-anchor from state retained in the compacted
 # context; it cannot reconstruct state the compactor omitted.
 
-message='[rig run-continuity] Best-effort re-anchor after context compaction: if the compacted context contains an active rig harness run, recover and re-emit its run-status line (recipe, current step and position, gate, backend, mode) before doing any work. Recover the completed and remaining steps, then continue the current step under the acceptance contract already in force. Preserve unresolved REJECT or merge-blocking conditions, the user goal and key decisions, stuck-guard counters, and the context-minimal rule that real work is delegated while the parent dispatches, aggregates reports, and decides gates. Do not silently switch to direct, un-gated work. If no rig run is active, ignore this instruction.'
+message='[rig run-continuity] Best-effort re-anchor after context compaction: if the compacted context contains an active rig harness run, recover and re-emit its run-status line (recipe, current step and position, gate, backend, mode) before doing any work. Recover the completed and remaining steps, then continue the current step under the acceptance contract already in force. Preserve unresolved REJECT or merge-blocking conditions, the user goal and key decisions, stuck-guard counters, the autonomy run id of an autonomous run (check `rig-wb wb autonomy check --run <run>` before the next step), and the context-minimal rule that real work is delegated while the parent dispatches, aggregates reports, and decides gates. Do not silently switch to direct, un-gated work. If no rig run is active, ignore this instruction.'
 
 escape_for_json() {
   printf '%s' "$1" | awk '

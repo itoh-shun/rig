@@ -1,10 +1,10 @@
 # instruction: workbench-ops
 
-**`/rig status` / `/rig diff` / `/rig accept` / `/rig confidence` / `/rig discard` / `/rig log` / `/rig board` / `/rig cockpit` / `/rig stats` / `/rig review` / `/rig note` / `/rig gc` / `/rig audit` / `/rig scan-secrets` / `/rig scan-injection` / `/rig scan-ja-prose` / `/rig digest` / `/rig context` / `/rig stream-checks` / `/rig stale-refs` / `/rig scan-destructive` / `/rig scan-anchors` / `/rig instincts` / `/rig gates` / `/rig receipt` / `/rig import` / `/rig contract` / `/rig intent` / `/rig intent-derive` / `/rig assurance-target` / `/rig assurance-derive` / `/rig synthesise` / `/rig dev-loop` / `/rig route-team` / `/rig budget-plan` / `/rig provenance` / `/rig expected-outcome` / `/rig effectiveness` / `/rig knowledge-candidate` / `/rig compose-options` / `/rig change-graph` / `/rig anomaly-trigger`**
+**`/rig status` / `/rig diff` / `/rig accept` / `/rig confidence` / `/rig discard` / `/rig log` / `/rig board` / `/rig cockpit` / `/rig stats` / `/rig review` / `/rig note` / `/rig gc` / `/rig audit` / `/rig scan-secrets` / `/rig scan-injection` / `/rig scan-ja-prose` / `/rig digest` / `/rig context` / `/rig stream-checks` / `/rig stale-refs` / `/rig scan-destructive` / `/rig scan-anchors` / `/rig instincts` / `/rig gates` / `/rig receipt` / `/rig import` / `/rig contract` / `/rig intent` / `/rig intent-derive` / `/rig assurance-target` / `/rig assurance-derive` / `/rig synthesise` / `/rig dev-loop` / `/rig route-team` / `/rig budget-plan` / `/rig provenance` / `/rig expected-outcome` / `/rig effectiveness` / `/rig knowledge-candidate` / `/rig compose-options` / `/rig change-graph` / `/rig anomaly-trigger` / `/rig autonomy`**
 
 上に挙げたサブコマンドの手順。実体は全て `scripts/workbench.py`（`patterns/isolated-worktree` 参照）への薄い委譲で、本ファイルは**表示の整形と安全確認の追加**だけを担う。判定・状態管理をここで再実装しない（§8 Native-first）。
 
-`/rig wakeups`（3.4.0）もこの instruction が扱う。
+`/rig wakeups`（3.4.0）と `/rig autonomy` もこの instruction が扱う。
 
 ## 共通ルール
 
@@ -600,6 +600,24 @@ python3 scripts/workbench.py wakeups --transcripts PATH… [--since-days N] [--j
 - `--init`：ファイルが無いときだけ、判定できる標本の実測値で作る。既存ファイルは上書きしない。`--tighten`：既存の天井を実測値まで**下げる**だけで、上げない・作らない。
 - 天井はローカルファイルにすぎない。消して `--init` し直せば高い値で作り直せるので、改ざん防止ではなく「気づかない悪化」を止める仕組みとして扱う。
 - 見えるのは渡した transcript に記録された通知だけ。レポート自身がそう明記するので、その断り書きを削らない。
+
+## `/rig autonomy <start|log|check|stop|report> --run <run> […]`
+
+```
+python3 scripts/workbench.py autonomy start  --run <run> [--summary "<goal>"] [--max-steps N] [--max-minutes N] [--max-recoveries N] [--max-recoveries-per-step N]
+python3 scripts/workbench.py autonomy log    --run <run> --kind <kind> --summary "<1行>" [--step <id>] [--reason <why>] [--ref <commit>]
+python3 scripts/workbench.py autonomy check  --run <run> [--json]
+python3 scripts/workbench.py autonomy stop   --run <run> [--summary "<理由>"]
+python3 scripts/workbench.py autonomy report --run <run> [--json]
+```
+
+`--autonomous` の RUN の記録とブレーキ。手順の正本は `patterns/autonomous-run`。journal は `.rig/autonomy/<run>.jsonl`（`rig.autonomy-journal/v1`。1行目が上限を固定する start 記録）。
+
+- `--kind` は `gate-skipped` / `decision` / `assumption` / `deferred-question` / `recovery` / `checkpoint` / `step-done` / `hard-stop` / `finish` のどれか。`hard-stop` には `--reason`（`destructive-operation` / `ambiguous-requirement` / `policy-requires-approval` / `budget-exhausted` / `capability-missing`）が必須。`checkpoint` で `--ref` を省くと、コマンドを実行した場所の HEAD を記録する。
+- `check`：続行してよければ exit 0。次のどれかに当たれば exit 1 で、理由をすべて stderr に出す：`.rig/STOP`（全 run 共通）か `.rig/autonomy/<run>.stop` がある、hard-stop が記録済み、finish が記録済み、step・経過分・回復回数（合計／現 step）のどれかが上限に達した、start 時刻が読めない。journal が無いときや run id が不正なときは exit 2。
+- 上限は `start` でだけ決まる。同じ run id で `start` をやり直すことはできない（自走中に自分の上限を引き上げさせないため）。
+- `report`：「保留した質問 → 確認してほしい前提 → 代わりに決めたこと → 省いたゲート → 回復 → チェックポイント → hard stop」の順に並べる。そのまま提示してよい。何も記録が無い run は「記録が無い」と明記する。それを「問題のない run」として言い換えない。
+- 判断はしない。コマンドの実行を横取りすることもしない。実行時に破壊的コマンドを拒否するのはホストの権限システムの役目で、成果物の良し悪しは acceptance-gate が判定する。
 
 ## `/rig effectiveness --query <json> [--json]`
 

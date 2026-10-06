@@ -699,6 +699,27 @@ def test_group2_wb_wakeups_answers_in_rig_wakeups_v1_and_writes_rig_wakeups_ceil
                     what="the ceiling `wb wakeups --init` created")
 
 
+
+def test_group2_wb_autonomy_journals_and_answers_in_rig_autonomy_journal_v1(
+        rig_git_repo, rig_cli, rig_cli_json):
+    """An --autonomous run calls `wb autonomy check --json` at every step boundary and
+    branches on `continue`, and the first journal line is what fixes the run's ceilings, so
+    both the answer and the journal header are contract."""
+    started = rig_cli("wb", "autonomy", "start", "--run", "r1", "--max-steps", "3",
+                      cwd=rig_git_repo)
+    assert started.returncode == 0, started.stderr
+    header = json.loads((rig_git_repo / ".rig" / "autonomy" / "r1.jsonl")
+                        .read_text(encoding="utf-8").splitlines()[0])
+    assert_document(header, schema="rig.autonomy-journal/v1",
+                    required={"schema", "kind", "started_at", "summary", "limits"},
+                    what="the journal header `wb autonomy start` writes")
+    payload = rig_cli_json("wb", "autonomy", "check", "--run", "r1", "--json",
+                           cwd=rig_git_repo, expect_returncode=0)
+    assert_document(payload, schema="rig.autonomy-journal/v1",
+                    required={"schema", "run", "continue", "reasons", "usage", "limits"},
+                    what="`wb autonomy check --json`")
+    assert payload["continue"] is True
+
 # ══ group3 — the organisational and external surface ═════════════════════════
 # Governance records, the two console scripts that are not `rig-wb` subcommands, and the
 # two documents rig writes into a repository's own state rather than onto stdout.

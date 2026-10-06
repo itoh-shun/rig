@@ -71,7 +71,7 @@ Extension Catalog はすべてそこにある。ブリックを引くとき・�
 | `--design` / `--review` | 該当 step を size 非依存で常時 ON にする |
 | `--visual` | verify を `visual-verify`（スクリーンショット等の視覚確認）へ委譲する |
 | `--tdd` | implement を TDD（red-green-refactor）で行う |
-| `--autonomous` | step ゲートを省き自律実行（既定は各 step で確認＝step ゲート ON）。acceptance-gate は維持（§4.5） |
+| `--autonomous` | step ゲートを省き自律実行（既定は各 step で確認＝step ゲート ON）。acceptance-gate は維持（§4.5）。省いたゲートの代わりに **`patterns/autonomous-run`** に従う：判断を journal に記録し（`rig-wb wb autonomy`）、step 境界ごとに停止スイッチと上限を `check` で判定し、詰まったら自己回復ラダーを試し、完了時にレポートを手渡す |
 | `--compose` | RUN 前に5軸（RECIPE / STEP / GATE / BACKEND / MODE）を一度に選ぶ。候補・推薦・根拠は `rig-wb wb compose-options` が返し、提示後は `--plan` 正準形式で確認する。`--autonomous` 併用時は対話せず無視 |
 | `--plan` | COMPOSE まで実行し、合成ハーネスを人間可読で提示して**停止**（実行しない）（§5） |
 | `--save-plan <path>` | `--plan` と併用し、同一内容を `<path>` にも Markdown で書き出す。`--plan` なしなら `[WARN] --save-plan は --plan と組み合わせて使用してください（無視します）` を出して無視。既存ファイルは上書き確認あり（`--autonomous` 時は自動上書き） |
@@ -236,6 +236,7 @@ RUN 規律は SKILL.md 指示の recency に依存する。**途中で質疑・�
 ### step ゲートと詰まりガード
 
 - `--autonomous` でない限り、各 step 後に結果を提示し**次へ進む確認**を取る（step ゲート）。
+- `--autonomous` のときは、step ゲートの位置で **`patterns/autonomous-run` §2**（step-done の記録 → 書き込み step 前のチェックポイント → `rig-wb wb autonomy check`）を行う。途中で質問して止まらず、§3 の判断ポリシーで保守的に決めて記録する。hard stop（§4）だけは即停止する。下の詰まりガードも、autonomous では a/b/c を聞く前に**自己回復ラダー（§6）**を試し、ラダーが切れてから正準フォーマットでエスカレーションする。
 - **同じ所で2回詰まったら**（同じエラー・同じレビュー REJECT を2巡）勝手に試行を続けず、**正準フォーマットで user に判断を仰ぐ（#12）**：
 
 ```
@@ -449,6 +450,8 @@ RUN が完了した後（またはユーザーが `--capture` フラグを明示
 | 「ultracode 指定ないけど Workflow が便利」 | --workflow フラグまたは ultracode on が明示されない限り、Workflow バックエンドを起動してはならない。opt-in 必須。 | manual バックエンドで実行する |
 | 「--autonomous だから capture も自動でいい」 | --autonomous は step ゲートを解除するだけ。capture ゲートは常に承認が必要（--capture フラグ明示の場合のみ確認ダイアログ省略）。 | capture 提案を表示し、承認を待つ |
 | 「--autonomous だから acceptance-gate も飛ばせる」 | --autonomous は step ゲート（確認ダイアログ）を解除するだけ。acceptance-gate の品質収束ループと K 超エスカレーションは --autonomous でも動く（capture ゲートと同様）。 | acceptance-gate は外さず、K 回以内で受け入れ基準を満たすよう改善するか、エスカレーション後に user へ委ねる |
+| 「--autonomous だから破壊的操作も任されている」 | --autonomous が外すのは step ゲートだけ。force push・既定ブランチへの merge・削除・デプロイ・外部投稿は、依頼文に操作名が明示されない限り hard stop（`patterns/autonomous-run` §4）。 | `rig-wb wb autonomy log --kind hard-stop --reason destructive-operation` を記録して停止し、レポートで判断を仰ぐ |
+| 「--autonomous なので記録は要らない」 | ゲートを省くと、人が判断を見る機会も消える。journal が無い自走は、終わった後に誰も検証できない。 | 判断・前提・保留した質問・チェックポイントを `rig-wb wb autonomy log` で残し、完了時に `report` を手渡す |
 | 「1ファイルだけだから直接 review する方が早い」 | 親が直接 review しても結果は同じに見えるが、context を汚染し structured-report が欠けるため、gate 判断の一貫性が失われる。 | reviewer subagent に dispatch して structured-report を受け取る |
 | 「さっき質問に答えたし、流れで自分で直していい」 | 質疑で recency が奪われた直後こそ red flag（直接実装・ゲート省略）へ逸れやすい。中断は規律解除の理由にならない。 | run-status ヘッダを再掲しハーネス状態を再宣言してから、現 step に委譲で戻る（§6 run-continuity） |
 
@@ -464,6 +467,7 @@ RUN が完了した後（またはユーザーが `--capture` フラグを明示
 | PR / push 時のガード | `facets/policies/pr-hygiene` |
 | review だけ固定で回す | `recipes/review-only` |
 | 品質を毎回一定にする（非決定→決定品質） | `patterns/acceptance-gate` |
+| `--autonomous` で走らせる（判断の記録・停止スイッチと上限・自己回復・完了レポート） | `patterns/autonomous-run` ＋ `rig-wb wb autonomy` |
 | AI の癖排除・可読性を厳しく見る（敵対レビュー） | `facets/instructions/adversarial-review` ＋ `recipes/adversarial-review` |
 | 親の越権（直接実装・無断 Workflow・サイレント書込）を止める | §6 red flags ＋ §9 アンチパターン表／§9.1 rationalization 表 |
 | 中断・質疑の後も rig 駆動を切らさない（可視化・再アンカー） | §6 run-continuity（run-status ヘッダ／再アンカー規則／step 境界バナー） |

@@ -4,6 +4,24 @@
 
 ### Added
 
+- **`--autonomous` runs keep a record, brake themselves, and finish instead of stalling.**
+  A new pattern, `patterns/autonomous-run`, replaces what the skipped step gate used to do.
+  Each judgement the gate would have shown a person is appended to
+  `.rig/autonomy/<run>.jsonl` by the new `rig-wb wb autonomy` command
+  (`rig.autonomy-journal/v1`): skipped gates, decisions, assumptions, deferred questions,
+  recoveries and checkpoints. `wb autonomy check` runs at every step boundary and before
+  every scheduled wake-up. It exits 1 on a kill switch (`.rig/STOP`, or `wb autonomy stop`
+  for a single run), on a recorded hard stop, or when a ceiling is reached: steps, minutes,
+  total recoveries, or recoveries on the current step. The ceilings are fixed once at
+  `start`. A run asks nothing mid-run unless it hits a hard stop. Otherwise it takes the
+  conservative option, records it, and defers the question to the end. When stuck, it tries
+  a recovery ladder (re-diagnose, then shrink and re-plan) before the stuck-guard
+  escalation, and it ends with `wb autonomy report`. Destructive operations, policy
+  approvals and the other development-loop escalations still stop the run. The
+  acceptance gate and the capture gate are unchanged. `/rig:goal --autonomous` and
+  `patterns/autonomous-loop` use the same journal, and the PreCompact hooks keep the run id
+  across compaction.
+
 - **Secure Japanese-writing runs apply `--mode` (#641).** `japanese-writing` and
   `japanese-writing-revision` bind validated, canonically ordered style modes into
   generator and reviewer prompts and preserve them on resume. Resume refuses
