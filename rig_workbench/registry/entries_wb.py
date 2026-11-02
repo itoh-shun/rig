@@ -807,7 +807,7 @@ WB_CAPABILITIES: tuple[Capability, ...] = (
         verb="gc",
         intent="reclaim the space taken by verification screenshots nobody is going to look at again",
         preconditions=("git-repo",),
-        effect_line="一定日数を過ぎた visual/ の一時画像ディレクトリを削除します（--dry-run なら候補を並べるだけ）。ソース・worktree・branch には触りません",
+        effect_line="一定日数を過ぎた visual/ の一時画像ディレクトリを削除し、消えた rig worktree に残った Codex の仲介役を止めます（--dry-run なら候補を並べるだけ）。ソース・worktree・branch には触りません",
         effect_class="writes-state",
         network="never",
         flags=(
@@ -815,7 +815,7 @@ WB_CAPABILITIES: tuple[Capability, ...] = (
             Flag(name="--dry-run", type="bool", help="only list the candidates, deleting nothing"),
         ),
         output_schema=None,
-        exit_codes=(ExitCode(code=0, meaning="the old images are gone, or listed under --dry-run"), _ERROR),
+        exit_codes=(ExitCode(code=0, meaning="the old images are gone and orphaned Codex brokers stopped, or listed under --dry-run"), _ERROR),
     ),
     Capability(
         id="wb.audit",

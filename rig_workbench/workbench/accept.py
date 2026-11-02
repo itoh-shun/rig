@@ -3,22 +3,25 @@
 
 import argparse
 import datetime
+import functools
 import json
 import pathlib
 import re
 import shutil
 import sys
+from collections.abc import Callable
 
 # `ast_diff` is stdlib-only and also runnable directly as
 # `python3 scripts/ast_diff.py <base.py> <new.py>`; reuse it here rather than
 # duplicating its logic (#280). It has to live inside the package to be importable:
 # reaching a sibling `scripts/` dir through sys.path works in a checkout but
 # resolves to a non-existent `site-packages/scripts` once installed.
-from .. import ast_diff
+from .. import ast_diff, codex_broker
 from ..govern import enforce as govern_enforce
 from .config import CHECK_ICON, RECOMMENDATION, VALID_VERDICT
 from .state import (_diff_lines, audit_append, build_acceptance,
-                    current_identity, die, drift_lines, effective_base,
+                    current_identity, default_worktree_path, die, drift_lines,
+                    effective_base,
                     gate_status, git, load_access_control,
                     load_json, load_or_create_provenance_key, load_task, now_iso,
                     parse_diff_md, reject, repo_root,
@@ -961,6 +964,9 @@ def _cmd_discard_locked(args: argparse.Namespace, root: pathlib.Path) -> None:
         # already gone — the outcome the operator wanted is the one they already have.
         cleanup_note = f"worktree was already absent ({state['detail']})"
         print(f"◇ {cleanup_note}")
+        # No backend runs here, so nothing else would stop a Codex broker that is still
+        # serving the vanished directory.
+        codex_broker.stop_for_worktree(handle.path)
     elif handle:
         state["backend"].remove(root, handle)
     if task.get("branch"):
@@ -998,12 +1004,27 @@ def _dir_age_days(p: pathlib.Path) -> float:
     return (datetime.datetime.now().timestamp() - p.stat().st_mtime) / 86400.0
 
 
+def rig_worktree_bases(root: pathlib.Path) -> list[pathlib.Path]:
+    """The directories rig creates this repository's worktrees in.
+
+    `wb new` puts them where `default_worktree_path` says; `orchestrate --isolate` under
+    `.rig/worktrees/`. Nothing outside these two is a worktree rig made.
+    """
+    return [default_worktree_path(root, "_").parent, root / ".rig" / "worktrees"]
+
+
 def cmd_gc(args: argparse.Namespace) -> None:
-    """Age-based disposal of temporary visual-verification artifacts (see `patterns/visual-artifacts`).
+    """Age-based disposal of temporary visual-verification artifacts (see `patterns/visual-artifacts`),
+    and Codex brokers left running by rig worktrees that are already gone.
 
     Task status (accepted/discarded/running) is irrelevant — the images are a
     regenerable verification means, not permanent records. Never touches
     sources, worktrees, or branches.
+
+    The brokers are the Codex plugin's `app-server-broker.mjs` processes (see
+    `codex_broker`). Only one whose working directory lies under this repository's rig
+    worktree bases and is no longer a worktree is stopped; a broker serving anything else,
+    or serving a rig worktree that still exists, is somebody's running session.
     """
     root = repo_root()
     threshold_days = 14
@@ -1022,17 +1043,29 @@ def cmd_gc(args: argparse.Namespace) -> None:
         candidates.extend(p for p in adhoc.iterdir() if p.is_dir())
 
     to_remove = [p for p in candidates if _dir_age_days(p) >= threshold_days]
+    orphans = codex_broker.find_orphans(rig_worktree_bases(root))
 
     print(f"## rig gc (threshold: {threshold_days} days{', dry-run' if args.dry_run else ''})")
-    if not to_remove:
+    if not to_remove and not orphans:
         print("Nothing to remove.")
         return
-    for p in sorted(to_remove):
-        rel = p.relative_to(root)
-        age = _dir_age_days(p)
-        prefix = "[dry-run] " if args.dry_run else ""
-        print(f"  {prefix}remove: {rel}/ ({age:.1f} days old)")
-        if not args.dry_run:
-            shutil.rmtree(p, ignore_errors=True)
-    verb = "candidate(s) (not removed due to --dry-run)" if args.dry_run else "removed"
-    print(f"\n{len(to_remove)} {verb}.")
+    # One list, one print: each line says what it is about to do, and the action runs
+    # only outside --dry-run.
+    actions: list[tuple[str, Callable[[], object]]] = [
+        (f"remove: {p.relative_to(root)}/ ({_dir_age_days(p):.1f} days old)",
+         functools.partial(shutil.rmtree, p, ignore_errors=True))
+        for p in sorted(to_remove)]
+    actions += [(f"stop Codex broker: pid {b.pid} cwd {b.cwd} ({b.reason})",
+                 functools.partial(codex_broker.stop, b)) for b in orphans]
+    for line, action in actions:
+        outcome = None if args.dry_run else action()
+        print(f"  {'[dry-run] ' if args.dry_run else ''}{line}"
+              + (f" -> {outcome}" if isinstance(outcome, str) else ""))
+    summary = []
+    if to_remove:
+        verb = "candidate(s) (not removed due to --dry-run)" if args.dry_run else "removed"
+        summary.append(f"{len(to_remove)} {verb}.")
+    if orphans:
+        verb = "(not stopped due to --dry-run)" if args.dry_run else "stopped"
+        summary.append(f"{len(orphans)} Codex broker(s) {verb}.")
+    print("\n" + "\n".join(summary))

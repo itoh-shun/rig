@@ -16,7 +16,7 @@
 1. **`.gitignore` 対象**——`.rig/` 全体が gitignore 対象（`/rig:init` が導入先リポジトリへの追加を提案する。`patterns/isolated-worktree` と同じ扱い）なので、`visual/` 配下は自動的にコミット対象外になる。
 2. **discard で即時削除**——`workbench.py discard` は worktree/branch に加えて `.rig/runs/<task-id>/visual/` も削除する。画像は「見て判断するための一時証拠」であり、判断結果（pass/fail・指摘内容）は `diff.md`/`log.md` に散文で残る。破棄する試みの生ピクセルまで残す理由はない（run log の JSON/MD 本体は discard 後も残る——画像だけが対象）。
 3. **accept は画像を消さない**——accept された task の `visual/` は事後確認のためにその場では残すが、恒久保存を保証するものではない（③の age-based gc の対象になる）。
-4. **age-based gc（既定14日）**——`workbench.py gc [--older-than <N>d] [--dry-run]` が `.rig/runs/*/visual/` と `.rig/visual/adhoc/*` を走査し、既定で作成から14日超のものを削除する。task の status（accepted/discarded/running）は問わない——画像は再生成可能な検証手段であり、恒久的な記録ではないため。`--dry-run` で削除対象を確認してから実行できる。承認ダイアログは不要（`.rig/` 配下の gitignore 済み disposable artifact のみを対象とし、ソースコード・worktree・branch には一切触れないため）。
+4. **age-based gc（既定14日）**——`workbench.py gc [--older-than <N>d] [--dry-run]` が `.rig/runs/*/visual/` と `.rig/visual/adhoc/*` を走査し、既定で作成から14日超のものを削除する。task の status（accepted/discarded/running）は問わない——画像は再生成可能な検証手段であり、恒久的な記録ではないため。`--dry-run` で削除対象を確認してから実行できる。承認ダイアログは不要（`.rig/` 配下の gitignore 済み disposable artifact のみを対象とし、ソースコード・worktree・branch には一切触れないため）。同じ `gc` は、削除済みの rig worktree を作業場所にしたまま残った Codex の仲介役も止める（`facets/instructions/workbench-ops` の `/rig gc` 節）。
 5. **恒久保存が要る場合は明示的に退避する**——リグレッションの証拠として長期保存したい screenshot がある場合は、`visual/` の外（例えば `docs/screenshots/` 等バージョン管理する場所）へユーザーが明示的にコピーする。rig 側は「一時検証成果物は消える」を既定にする。
 
 ## 原則

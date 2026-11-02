@@ -12,6 +12,34 @@
   `emoji` with a warning. Invalid selections and unsupported recipes are refused.
   The 3.4.2 warning that `--mode` is accepted but not applied is gone.
 
+### Fixed
+
+- **Removing a rig worktree stops the Codex brokers serving it.** The Codex plugin for
+  Claude Code starts a detached `app-server-broker.mjs` per working tree, with
+  `codex app-server` and every MCP server under it, and only its own `SessionEnd` hook
+  stops one — for the session's cwd and no other. A worktree Codex had worked in kept its
+  broker after rig removed it: measured on one machine at ten brokers serving deleted
+  directories, the oldest 22 hours, with up to 60 MCP servers under one of them.
+  Every removal path (`discard`, including cleanup after `accept` and a worktree that is
+  already gone, the `wb new`/`import` rollback, the Orca backend, and
+  `orchestrate --isolate` teardown, which runs `python -m rig_workbench.codex_broker`
+  through its `ProcessRunner` because that pillar may reach only the ports) now stops them first, the way the plugin does: send
+  `broker/shutdown`, then SIGTERM to the process group (which reaches `codex app-server`
+  and the MCP servers even after the broker itself exited, and is never rig's own
+  group), and remove `broker.json` and the session files. Brokers are found both by the
+  plugin's state directory (`<slug>-<sha256(realpath)[:16]>`) and by `--cwd` in the
+  process table. Nothing is messaged or signalled on unverified input: the process must
+  run as the current user, still be `app-server-broker.mjs serve` with the endpoint its
+  state file recorded (a state file with no endpoint vouches for nothing), and have its
+  `--cwd` inside the tree being removed; state roots, directories and files are read only
+  when the current user owns them, the shared `$TMPDIR/codex-companion` fallback only when
+  nobody else can write to it, and the shutdown line goes only to a socket the current
+  user owns. Without the plugin nothing happens, and a broker that cannot be stopped
+  never blocks the removal.
+  `rig-wb wb gc` also stops brokers already orphaned this way — only those whose working
+  directory lies under this repository's rig worktree bases and is gone or no longer a
+  worktree — and lists them under `--dry-run`. `rig_workbench/codex_broker.py`.
+
 ## [3.4.2] - 2026-09-30
 
 ### Fixed
