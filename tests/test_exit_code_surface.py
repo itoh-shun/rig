@@ -857,6 +857,36 @@ def test_specific_design_constraints_exits_zero_when_the_project_declared_nothin
     assert "未設定" in result.stdout
 
 
+# ── specific: share-check (0 / 1 / 2) ────────────────────────────────────────
+_SHARE_CLEAN = """<title>週次報告</title>
+<style>:root{--bg:#fff;--text:#111}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--bg:#111;--text:#eee}}
+:root[data-theme="dark"]{--bg:#111;--text:#eee}
+body{background:var(--bg);color:var(--text)}</style>
+<main><h1>週次報告</h1><svg viewBox="0 0 1 1"></svg></main>
+"""
+
+
+def test_specific_share_check_keeps_clean_error_and_unchecked_apart(rig_cli, tmp_path):
+    """The page that may be published, the page that may not, and the run that read
+    nothing. The third is 2 so that an empty `share/` never reads as a page that passed."""
+    (tmp_path / "clean.html").write_text(_SHARE_CLEAN, encoding="utf-8")
+    (tmp_path / "leaky.html").write_text(
+        _SHARE_CLEAN.replace("</main>", '<img alt="x" src="https://example.com/a.png"></main>'),
+        encoding="utf-8")
+    (tmp_path / "empty").mkdir()
+
+    clean = rig_cli("share-check", "clean.html", cwd=tmp_path)
+    assert clean.returncode == 0, clean.stdout + clean.stderr
+
+    leaky = rig_cli("share-check", "leaky.html", cwd=tmp_path)
+    assert leaky.returncode == 1, leaky.stdout + leaky.stderr
+    assert "[external-resource]" in leaky.stdout
+
+    unchecked = rig_cli("share-check", "empty", cwd=tmp_path)
+    assert unchecked.returncode == 2, unchecked.stdout + unchecked.stderr
+
+
 # ── specific: ja-lint (0 / 1 / 2) ────────────────────────────────────────────
 def test_specific_ja_lint_keeps_clean_error_and_unchecked_apart(rig_cli, tmp_path):
     """The same three-way split as design-constraints, on prose.

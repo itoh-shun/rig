@@ -216,7 +216,8 @@ CLI_CALLERS = ("rig_cli", "rig_cli_json", "orchestrate")
 #: was deleted (say so in review) or the extractor no longer understands the shape.
 MEASURED_COMMANDS = frozenset({
     "bench", "design-constraints", "gh-check", "ja-lint", "next", "check", "init",
-    "verdict", "govern can", "govern init", "validate", "wb accept", "wb contract",
+    "verdict", "govern can", "govern init", "share-check", "validate", "wb accept",
+    "wb contract",
     "wb discard", "wb gate", "wb gates", "wb new", "wb scan-secrets", "wb status",
 })
 
@@ -1122,7 +1123,7 @@ COMMANDS_THAT_NAME_NO_CAPABILITY = (
 
 #: The brief's §9 count of the vocabulary a newcomer meets. Pinned so that a command added
 #: or removed brings someone back to this file to say which.
-SLASH_COMMAND_COUNT = 30
+SLASH_COMMAND_COUNT = 31
 
 #: How many distinct capabilities the twenty-one mapped commands reach between them. A
 #: floor rather than an exact count: it fails if the scan decays or commands are unwired,

@@ -1,14 +1,14 @@
 """The verbs `rig-wb <verb>` dispatches at the top level, declared once.
 
 `rig_workbench/cli.py:main` reaches these two ways and nothing else: an explicit
-`if sub == "..."` branch (twenty of them, `version` through `validate`), and membership of
+`if sub == "..."` branch (twenty-one of them, `version` through `validate`), and membership of
 `_orch_delegates`, a set handed straight to `rig_workbench/orchestrate/cli.py`'s `COMMANDS`
 (eighteen names, of which `validate` is also an explicit branch and the explicit branch wins,
-so seventeen of them are only reachable that way). Twenty plus seventeen is the thirty-seven
+so seventeen of them are only reachable that way). Twenty-one plus seventeen is the thirty-eight
 declared below, and the arithmetic is the derivation: no third path exists, and a verb that
 is in neither place prints `Unknown sub-command` and exits 2.
 
-**A few of the thirty-seven are dispatchable and advertised nowhere, on purpose.** What
+**A few of the thirty-eight are dispatchable and advertised nowhere, on purpose.** What
 `rig-wb --help` lists is frozen as `TOP_LEVEL_SUBCOMMANDS` in
 `tests/test_cli_surface_contract.py`; what it leaves out is named verb by verb, each with
 its reason, as `TOP_LEVEL_VERBS_MISSING_FROM_HELP` in
@@ -74,7 +74,7 @@ _ERROR = ExitCode(code=2, meaning="rig could not produce an answer: bad usage or
 
 
 CLI_CAPABILITIES: tuple[Capability, ...] = (
-    # ── the twenty explicit `sub == "..."` branches, in dispatch order ───────
+    # ── the twenty-one explicit `sub == "..."` branches, in dispatch order ───────
     Capability(
         id="version",
         parent=None,
@@ -293,6 +293,27 @@ CLI_CAPABILITIES: tuple[Capability, ...] = (
             ExitCode(code=0, meaning="clean, or nothing was configured to check"),
             ExitCode(code=1, meaning="errors were found in the prose"),
             ExitCode(code=2, meaning="unchecked: the configuration is broken"),
+        ),
+    ),
+    Capability(
+        id="share-check",
+        parent=None,
+        verb="share-check",
+        intent="stop a shared HTML page from going out with an outside resource, no dark mode, a placeholder or a secret in it",
+        preconditions=("artifact-paths-given",),
+        effect_line="共有する HTML を Artifact のページ契約と共有の規則で検査します（--report 指定時のみ書き出します）",
+        effect_class=WRITES_STATE,
+        network=NETWORK_NEVER,
+        flags=(
+            Flag(name="artifact", type="string-list", help="the HTML files or directories to check"),
+            Flag(name="--report", type="path", help="write the findings here"),
+            Flag(name="--strict", type="bool", help="count warnings as failures too"),
+            Flag(name="--json", type="bool", help="emit the findings as JSON"),
+        ),
+        exit_codes=(
+            ExitCode(code=0, meaning="checked, and no error-severity finding"),
+            ExitCode(code=1, meaning="error-severity findings, or warnings under --strict"),
+            ExitCode(code=2, meaning="unchecked: no path, no HTML found, or a file could not be read"),
         ),
     ),
     Capability(
