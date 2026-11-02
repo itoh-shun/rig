@@ -442,7 +442,9 @@ python3 scripts/workbench.py gc [--older-than 14d] [--dry-run]
 
 視覚検証成果物（`.rig/runs/<task_id>/visual/` と `.rig/visual/adhoc/*`、`patterns/visual-artifacts` が正本）の age-based 処分。閾値は既定14日（`--older-than <N>d` で変更、例 `7d`）。task の status（accepted/discarded/running）は問わない——画像は再生成可能な検証手段であって恒久記録ではない。**ソース・worktree・branch には一切触れない**。
 
-1. まず `--dry-run` で呼び、`[dry-run] remove: <path>/ (<age> days old)` の候補一覧をそのままユーザーに提示する。
+同じ実行で、**消えた rig worktree に残った Codex の仲介役**（Codex プラグインの `app-server-broker.mjs` と、その下の `codex app-server`・MCP サーバー）も止める。対象は、作業ディレクトリがこのリポジトリの rig worktree 置き場（`default_worktree_path` の親と `.rig/worktrees/`）の下にあり、そのディレクトリが消えているか、もう worktree でないものだけ。生きている worktree や rig の外のディレクトリを作業場所にしている仲介役は止めない。止め方はプラグインの `SessionEnd` フックと同じ（`broker/shutdown` → 終わらなければプロセスグループに SIGTERM → 状態ファイル削除。`rig_workbench/codex_broker.py`）。`discard` など worktree を消す経路では、削除の直前に同じ処理が自動で走る。
+
+1. まず `--dry-run` で呼び、`[dry-run] remove: <path>/ (<age> days old)` と `[dry-run] stop Codex broker: pid <N> cwd <path> (<理由>)` の候補一覧をそのままユーザーに提示する。
 2. ユーザーの確認を得てから `--dry-run` なしで再実行する（discard と同じプレビュー→実行の二段。スクリプト自体は `--dry-run` なしで即削除するため、確認はこの instruction 側の責務）。
 3. `Nothing to remove.` の場合はそのまま伝えて終了する。
 

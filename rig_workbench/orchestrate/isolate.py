@@ -3,6 +3,7 @@
 import re
 import pathlib
 import subprocess
+import sys
 
 from ..ports import Clock, ProcessRunner
 from ..ports.local import SUBPROCESS, SYSTEM_CLOCK
@@ -77,6 +78,13 @@ def teardown_isolation(iso: dict, final: str, *, proc: ProcessRunner = SUBPROCES
                            "--untracked-files=no"]).stdout.strip()
 
     def _remove(delete_branch: bool) -> None:
+        # Stop any Codex broker still serving the worktree before it goes, or it outlives
+        # the directory with its whole process tree (rig_workbench/codex_broker.py). Run
+        # through the port rather than imported: this pillar may reach only the ports.
+        # The cwd is the directory holding the package, so `-m` resolves it from a checkout
+        # as well as from an install.
+        proc.run([sys.executable, "-m", "rig_workbench.codex_broker", wdir],
+                 cwd=str(pathlib.Path(__file__).resolve().parents[2]), timeout=60)
         proc.run(["git", "-C", root, "worktree", "remove", "--force", wdir])
         if delete_branch:
             proc.run(["git", "-C", root, "branch", "-D", branch])

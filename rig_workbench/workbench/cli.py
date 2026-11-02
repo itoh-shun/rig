@@ -486,7 +486,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="emit the presets as a rig.gates/v1 envelope (rig_workbench/jsonio.py)")
     p.set_defaults(func=cmd_gates)
 
-    p = sub.add_parser("gc", help="age-based disposal of temporary visual-verification images (visual/) (patterns/visual-artifacts)")
+    p = sub.add_parser("gc", help="age-based disposal of temporary visual-verification images (visual/) (patterns/visual-artifacts), "
+                                    "and Codex brokers left running by removed rig worktrees")
     p.add_argument("--older-than", help="remove items older than this many days (e.g. 14d; default 14d)")
     p.add_argument("--dry-run", action="store_true", help="only show candidates, without deleting")
     p.set_defaults(func=cmd_gc)

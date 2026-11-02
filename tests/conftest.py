@@ -108,6 +108,12 @@ _fail_safe_default("RIG_PACK_TRUST_STORE", "pack-trust", "trusted-pack-assets.js
 
 _fail_safe_default("RIG_TRUST_STORE", "recipe-trust", "trusted-recipes.json")
 
+# The Codex plugin's broker state (rig_workbench/codex_broker.py). Every worktree removal
+# now looks there first and deletes the `broker.json` of a broker it stops, so a suite that
+# removes hundreds of tmp worktrees would otherwise be reading — and on a hash collision,
+# deleting from — the developer's own `~/.claude/plugins/data/codex-*/state`.
+_fail_safe_default("RIG_CODEX_STATE_ROOTS", "codex-state")
+
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 

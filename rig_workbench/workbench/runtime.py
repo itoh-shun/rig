@@ -44,6 +44,7 @@ import shutil
 import subprocess
 import sys
 
+from .. import codex_broker
 from . import orca
 from .injection import INVISIBLE_RE
 from .state import default_worktree_path, git
@@ -163,6 +164,9 @@ class NativeGitWorktreeBackend(WorktreeBackend):
     def remove(self, root: pathlib.Path, handle: WorktreeHandle, *,
                strict: bool = True) -> None:
         wt = pathlib.Path(handle.path)
+        # Before the directory goes: a Codex broker serving it outlives the removal
+        # otherwise, with its whole process tree (see `codex_broker`).
+        codex_broker.stop_for_worktree(handle.path)
         if wt.is_dir():
             git(["worktree", "remove", "--force", str(wt)], cwd=root, check=strict)
 
@@ -293,6 +297,7 @@ class OrcaWorktreeBackend(WorktreeBackend):
 
     def remove(self, root: pathlib.Path, handle: WorktreeHandle, *,
                strict: bool = True) -> None:
+        codex_broker.stop_for_worktree(handle.path)
         identity = handle.ref.get("orca_worktree_id")
         if not self._safe(identity):
             if strict:
