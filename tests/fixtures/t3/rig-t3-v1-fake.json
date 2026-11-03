@@ -1,0 +1,136 @@
+{
+  "fixture_kind": "Rig logical fake contract only; no live T3 revision verified",
+  "contract_version": "rig-t3-v1",
+  "tools": {
+    "orchestrator_capabilities": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "t3_thread_launch": {
+      "type": "object",
+      "properties": {
+        "prompt": {
+          "type": "string"
+        },
+        "provider_instance": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "role": {
+          "type": "string",
+          "enum": [
+            "generator",
+            "verifier"
+          ]
+        },
+        "persona": {
+          "type": "string"
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "project_id": {
+          "type": "string"
+        },
+        "constraints": {
+          "type": "object"
+        },
+        "new_thread": {
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "required": [
+        "prompt",
+        "provider_instance",
+        "provider",
+        "model",
+        "role",
+        "persona",
+        "cwd",
+        "project_id",
+        "constraints",
+        "new_thread"
+      ],
+      "additionalProperties": false
+    },
+    "t3_thread_wait": {
+      "type": "object",
+      "properties": {
+        "thread_id": {
+          "type": "string"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "timeout_ms": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "thread_id",
+        "run_id",
+        "timeout_ms"
+      ],
+      "additionalProperties": false
+    },
+    "t3_thread_read": {
+      "type": "object",
+      "properties": {
+        "thread_id": {
+          "type": "string"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "cursor": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "thread_id",
+        "run_id"
+      ],
+      "additionalProperties": false
+    },
+    "t3_thread_interrupt": {
+      "type": "object",
+      "properties": {
+        "thread_id": {
+          "type": "string"
+        },
+        "run_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "thread_id",
+        "run_id"
+      ],
+      "additionalProperties": false
+    },
+    "t3_thread_list": {
+      "type": "object",
+      "properties": {
+        "project_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "project_id"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

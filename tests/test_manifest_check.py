@@ -412,3 +412,47 @@ def test_a_resolver_failure_reaches_the_user_as_a_manifest_check_fail(tmp_path, 
     report = "\n".join(out.lines)
     assert "manifest check — unexpected error" in report
     assert "RuntimeError: pack collection is unreadable" in report
+
+
+@pytest.mark.parametrize("value,valid", [
+    ({}, True),
+    ({"preferred": "auto", "fallback": "native"}, True),
+    ({"preferred": "native", "fallback": "none"}, True),
+    ({"preferred": "t3", "fallback": "none"}, True),
+    ({"t3": {"url": "https://example.test/mcp", "project_id": "project"}}, True),
+    ({"t3": {"url": "http://127.0.0.1:3773/mcp"}}, True),
+    ({"t3": {"url": "http://[::1]/mcp"}}, True),
+    ({"t3": {"url": "http://localhost/mcp"}}, True),
+    (None, False), (False, False), ([], False), ("native", False),
+    ({"preferred": "wrong"}, False), ({"preferred": None}, False),
+    ({"preferred": True}, False), ({"fallback": "t3"}, False),
+    ({"fallback": None}, False), ({"fallback": False}, False),
+    ({"unknown": "secret"}, False), ({"token": "secret"}, False),
+    ({"t3": None}, False), ({"t3": []}, False),
+    ({"t3": {"token": "secret"}}, False),
+    ({"t3": {"headers": {"Authorization": "secret"}}}, False),
+    ({"t3": {"tools": {}}}, False), ({"t3": {"args": []}}, False),
+    ({"t3": {"url": "http://remote.test/mcp"}}, False),
+    ({"t3": {"url": "https://user:secret@example.test/mcp"}}, False),
+    ({"t3": {"url": "https://example.test/mcp?token=secret"}}, False),
+    ({"t3": {"url": "https://example.test/mcp#secret"}}, False),
+    ({"t3": {"url": "https://example.test:99999/mcp"}}, False),
+    ({"t3": {"url": ""}}, False), ({"t3": {"url": False}}, False),
+    ({"t3": {"project_id": ""}}, False), ({"t3": {"project_id": False}}, False),
+    ({"t3": {"project_id": "secret\n"}}, False),
+])
+def test_orchestrator_accepts_only_declared_values_and_subkeys(tmp_path, value, valid):
+    import yaml
+    manifest = _write_manifest(tmp_path, yaml.safe_dump({"orchestrator": value}))
+    check_manifest(manifest)
+    assert validation_state._fail == (0 if valid else 1)
+    if not valid:
+        assert "orchestrator" in validation_state.results[0]
+        assert "secret" not in validation_state.results[0]
+
+
+@pytest.mark.parametrize("orchestrator", ["", "orchestrator: {}\n", "orchestrator:\n  preferred: native\n"])
+def test_orchestrator_defaults_do_not_change_other_manifest_keys(tmp_path, orchestrator):
+    manifest = _write_manifest(tmp_path, "default_backend: manual\ncustom_top_level: tolerated\n" + orchestrator)
+    check_manifest(manifest)
+    assert validation_state._fail == 0 and validation_state._pass == 1

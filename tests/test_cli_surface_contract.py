@@ -49,7 +49,7 @@ import pytest
 # TOP_LEVEL_VERBS_MISSING_FROM_HELP, each with its reason.
 TOP_LEVEL_SUBCOMMANDS = frozenset({
     "approve", "asvs", "baseline", "bench", "bench-invariance", "check",
-    "coverage", "dashboard", "design-constraints", "eval", "fleet", "gh-check",
+    "coverage", "dashboard", "design-constraints", "doctor", "eval", "fleet", "gh-check",
     "githooks", "govern", "hostcheck", "init", "ja-lint", "mutation", "next",
     "otel", "pack", "perf", "plan", "queue", "run", "runs", "selftest",
     "sensor-bench", "usage", "validate", "verdict", "version", "wb",

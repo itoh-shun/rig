@@ -390,7 +390,15 @@ BASELINE_EFFECT_SITES: dict[str, dict[str, int]] = {
         # SUBPROCESS="1")`), so `snapshot()` is equivalent — `ProcessRunner.run`'s `env=`
         # replaces rather than extends, and a site that passed a partial dict would have been a
         # rewrite, not a swap. It was measured to be the only one.
-        "env": 3,
+        #
+        # 3 -> 4 is the orchestrator backend's `credentials.py`, and it is a declared
+        # exception rather than a site waiting for a port. `os.environ.pop("RIG_T3_MCP_TOKEN")`
+        # *removes* the bearer token from the process environment so no child inherits it.
+        # `Env` is read-only on purpose ("no setter"), so a read through the port would leave
+        # the token in place; giving the port a `pop` would add a mutation to the one
+        # interface whose value is that it has none, for a single caller. The read side of the
+        # same token (`credentials.py`'s `env.get`) does go through `Env`.
+        "env": 4,
         # 6 -> 2, and **nothing was added to `Clock`**. Four sites fit the port as it already
         # stands: `runstate.py`'s telemetry `ts` is character for character what `stamp()`
         # returns; `runstate.make_run_id` and `isolate.setup_isolation` take `now()` and apply

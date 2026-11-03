@@ -44,6 +44,7 @@ import pathlib
 import stat
 import subprocess
 import concurrent.futures as futures
+import uuid
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -52,6 +53,10 @@ from ..ports.local import CONSOLE, LOCAL_FILES, OS_ENV, SUBPROCESS
 from . import config
 from . import perf
 from .progress import notify
+from .orchestrators.base import AgentSpec, TaskContext
+from .orchestrators.bridge import AgentExecutionBridge
+from .orchestrators.credentials import capture_t3_token
+
 from .composition import (                                              # noqa: F401 (re-exported)
     JAPANESE_MATERIAL_MAX_UTF8_BYTES, JAPANESE_MATERIAL_PROFILES, PackComposition,
     _build_artifact_review_prompt, _build_prompt, _build_step_contract,
@@ -77,6 +82,8 @@ from .secure_runtime import (
     run_secure_provider,
 )
 from .secure_fs import atomic_write_bytes, read_bytes as read_secure_bytes
+
+capture_t3_token()  # at import: before any child process this module launches can inherit it
 
 
 class PatchApplier(Protocol):
@@ -516,14 +523,41 @@ def run_provider(provider: str, role: str, prompt: str, cfg: dict, persona: str 
     notify(observer, "operation_started", **metadata)
     outcome = "ERROR"
     try:
+        bridge = cfg.get("_orchestrator_bridge") or AgentExecutionBridge()
+        task = TaskContext(
+            str((state or {}).get("run_id") or cfg.get("_progress_run_id") or ""),
+            step_id or cfg.get("_progress_step_id") or "",
+            f"call-{uuid.uuid4().hex}", cfg.get("_progress_attempt") or 1,
+            str(cfg.get("cwd") or config.INVOCATION_CWD),
+        )
+        constraints = {}
+        if cfg.get("reuse_session") or "env" in cfg or cfg.get("provider_cmd") or cfg.get("base_url"):
+            # No arbitrary env/command/history is projected onto an optional transport.
+            constraints["native_configuration"] = True
+        agent = AgentSpec(provider, cfg.get("model"), role, persona, prompt,
+                          cfg.get("timeout", 600), constraints)
+
+        def dispatch(spec, timeout_s):
+            # cfg/state stay process-local. Only an invocation's dispatcher closes over them.
+            bound_cfg = cfg if timeout_s == cfg.get("timeout", 600) else {**cfg, "timeout": timeout_s}
+            return _dispatch_provider(spec.provider, spec.role, spec.prompt, bound_cfg,
+                                      spec.persona, state, step_id)
+
+        def execute():
+            return bridge.run(
+                task, agent, native_dispatch=dispatch,
+                record_attempt=lambda: _record_benchmark_provider_call(provider, role, persona, step_id),
+                consumer_id=cfg.get("_orchestrator_consumer_id", ""),
+            )
+
         perf.record_context_bytes(cfg, prompt)
         phase = _ROLE_PHASES.get(role)
         if phase is None:
             perf.record_untimed(cfg)
-            result = _dispatch_provider(provider, role, prompt, cfg, persona, state, step_id)
+            result = execute()
         else:
             with perf.timed(cfg, phase):
-                result = _dispatch_provider(provider, role, prompt, cfg, persona, state, step_id)
+                result = execute()
         outcome = "RETURNED" if result[0] == 0 else "FAILED"
         return result
     finally:
@@ -534,9 +568,6 @@ def run_provider(provider: str, role: str, prompt: str, cfg: dict, persona: str 
 def _dispatch_provider(provider: str, role: str, prompt: str, cfg: dict, persona: str = "",
                        state: dict | None = None, step_id: str | None = None, *,
                        env: Env = OS_ENV, proc: ProcessRunner = SUBPROCESS) -> tuple[int, str]:
-    journal_error = _record_benchmark_provider_call(provider, role, persona, step_id)
-    if journal_error is not None:
-        return 126, f"[benchmark call counter error: {journal_error}]"
     if provider == "mock":
         scenario = env.get("RIG_BENCH_MOCK_SCENARIO", "success")
         if scenario == "timeout":
@@ -584,6 +615,7 @@ def _dispatch_provider(provider: str, role: str, prompt: str, cfg: dict, persona
     # `"env" in cfg` rather than `cfg.get("env") or`: an explicitly empty env is a
     # request for an empty env, and falling back to `os.environ` would silently invert it.
     child_env = dict(cfg["env"] if "env" in cfg else env.snapshot(), RIG_PROVIDER_SUBPROCESS="1")
+    child_env.pop("RIG_T3_MCP_TOKEN", None)
     try:
         r = proc.run(argv, input=prompt if provider in ("cmd", "mock") else None,
                      timeout=cfg.get("timeout", 600),
@@ -1803,6 +1835,9 @@ def _build_verify_prompt(state: dict, step: dict, product: str, diff: str | None
 
 
 def _run_step_checks(step: dict, st: dict, cfg: dict | None = None) -> None:
+    bridge = (cfg or {}).get("_orchestrator_bridge")
+    if bridge is not None:
+        bridge.ensure_quiescent()
     st["checks"] = []
     cwd = (cfg or {}).get("cwd") or str(config.INVOCATION_CWD)
     for index, cmd in enumerate(step["checks"], 1):
@@ -2616,6 +2651,20 @@ def _execute_artifact_review(
 
 def _execute_step(state: dict, step: dict, st: dict, gen_list: list[str], ver: str,
                   cfg: dict, max_parallel: int, quorum: str, log) -> None:
+    bridge = cfg.get("_orchestrator_bridge")
+    if bridge is not None:
+        return bridge.consume_transition(
+            state, step["id"], cfg,
+            lambda working, bound_cfg: _execute_step_body(
+                working, step, working["step_state"][step["id"]], gen_list, ver,
+                bound_cfg, max_parallel, quorum, log,
+            ),
+        )
+    return _execute_step_body(state, step, st, gen_list, ver, cfg, max_parallel, quorum, log)
+
+
+def _execute_step_body(state: dict, step: dict, st: dict, gen_list: list[str], ver: str,
+                       cfg: dict, max_parallel: int, quorum: str, log) -> None:
     """Execute one step: generate (separate process; judge-panel capable) -> record gate evidence (checks or parallel verification)."""
     cfg = {**cfg, "_progress_step_id": step["id"],
            "_progress_run_id": state.get("run_id"), "_progress_attempt": st.get("retries", 0) + 1}
